@@ -26,8 +26,8 @@ const leadFields = (f: FormData) => ({
 export async function submitLeadAction(_prev: ActionState, f: FormData): Promise<ActionState> {
   const meta = await requestMeta();
   return toActionState(
-    () =>
-      submitPublicLead(
+    async () =>
+      void await submitPublicLead(
         { ...leadFields(f), source: str(f, "source") ?? "WEBSITE_CONTACT", consent: f.get("consent") === "on" },
         { ip: meta.ip, honeypot: str(f, "website"), formStartedAt: Number(f.get("startedAt")) || undefined },
       ),
@@ -37,21 +37,21 @@ export async function submitLeadAction(_prev: ActionState, f: FormData): Promise
 
 export async function createLeadAction(_prev: ActionState, f: FormData): Promise<ActionState> {
   const ctx = await getCurrentContext();
-  const res = await toActionState(() => createManualLead(ctx, { ...leadFields(f), source: str(f, "source") ?? "MANUAL" }));
-  if (res.status === "ok" && res.data) redirect(`/app/crm/${(res.data as { id: string }).id}`);
+  const res = await toActionState(async () => (await createManualLead(ctx, { ...leadFields(f), source: str(f, "source") ?? "MANUAL" })).id);
+  if (res.status === "ok" && res.data) redirect(`/app/crm/${res.data}`);
   return res;
 }
 
 export async function moveStageAction(_prev: ActionState, f: FormData): Promise<ActionState> {
   const ctx = await getCurrentContext();
-  const res = await toActionState(() => moveLeadStage(ctx, { leadId: str(f, "leadId"), stageId: str(f, "stageId"), lostReason: str(f, "lostReason") }), "Etapa atualizada.");
+  const res = await toActionState(async () => void await moveLeadStage(ctx, { leadId: str(f, "leadId"), stageId: str(f, "stageId"), lostReason: str(f, "lostReason") }), "Etapa atualizada.");
   revalidatePath("/app/crm", "layout");
   return res;
 }
 
 export async function addActivityAction(_prev: ActionState, f: FormData): Promise<ActionState> {
   const ctx = await getCurrentContext();
-  const res = await toActionState(() => addLeadActivity(ctx, { leadId: str(f, "leadId"), kind: str(f, "kind"), body: str(f, "body") }), "Registro adicionado.");
+  const res = await toActionState(async () => void await addLeadActivity(ctx, { leadId: str(f, "leadId"), kind: str(f, "kind"), body: str(f, "body") }), "Registro adicionado.");
   revalidatePath(`/app/crm/${str(f, "leadId")}`);
   return res;
 }

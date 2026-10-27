@@ -1,13 +1,22 @@
 import { db } from "@/server/db";
 import { audit } from "@/server/audit";
 import { requirePermission, type AuthContext } from "@/server/auth/context";
-import { notFound } from "@/server/errors";
+import { AppError, notFound } from "@/server/errors";
 
 /** Revoga o vínculo de um usuário com a organização do contexto e encerra suas sessões nela. */
 export async function revokeMembership(ctx: AuthContext | null, membershipId: string) {
   requirePermission(ctx, "user:manage");
   const m = await db.membership.findFirst({ where: { id: membershipId, organizationId: ctx.organizationId } });
   if (!m) throw notFound();
+  if (m.userId === ctx.userId) throw new AppError("FORBIDDEN", "Você não pode revogar o próprio acesso.");
+  if (m.revokedAt) throw new AppError("CONFLICT", "Este acesso já foi revogado.");
+  const role = await db.role.findUniqueOrThrow({ where: { id: m.roleId } });
+  if (role.permissions.includes("user:manage")) {
+    const otherManagers = await db.membership.count({
+      where: { organizationId: m.organizationId, revokedAt: null, id: { not: m.id }, role: { permissions: { has: "user:manage" } } },
+    });
+    if (otherManagers === 0) throw new AppError("CONFLICT", "Não é possível revogar o último administrador da organização.");
+  }
   await db.$transaction(async (tx) => {
     await tx.membership.update({ where: { id: m.id }, data: { revokedAt: new Date() } });
     await tx.session.updateMany({

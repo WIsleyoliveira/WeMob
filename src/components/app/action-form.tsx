@@ -1,12 +1,13 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
+import { ConfirmDialog } from "@/components/ui/confirm-dialog";
 import type { ActionState } from "@/server/action-result";
 import { cn } from "@/lib/cn";
 
-/** Formulário ligado a uma server action, com estado de envio e mensagens de retorno. */
+/** Formulário ligado a uma server action, com estado de envio, confirmação opcional e mensagens de retorno. */
 export function ActionForm({
   action,
   submitLabel,
@@ -27,12 +28,21 @@ export function ActionForm({
   children?: React.ReactNode;
 }) {
   const [state, formAction, pending] = useActionState<ActionState, FormData>(action, { status: "idle" });
+  const [asking, setAsking] = useState(false);
+  const confirmed = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
   return (
     <form
+      ref={formRef}
       action={formAction}
+      aria-busy={pending}
       className={cn("flex flex-col gap-3", className)}
       onSubmit={(e) => {
-        if (confirm && !window.confirm(confirm)) e.preventDefault();
+        if (confirm && !confirmed.current) {
+          e.preventDefault();
+          setAsking(true);
+        }
+        confirmed.current = false;
       }}
     >
       {children}
@@ -44,10 +54,25 @@ export function ActionForm({
           )}
         </Alert>
       )}
-      {state.status === "ok" && state.message && <Alert tone="success">{state.message}</Alert>}
+      {state.status === "ok" && state.message && <Alert tone="success"><span className="break-all">{state.message}</span></Alert>}
       <div>
         <Button type="submit" variant={variant} size={size} disabled={pending}>{pending ? pendingLabel : submitLabel}</Button>
       </div>
+      {confirm && (
+        <ConfirmDialog
+          open={asking}
+          title="Confirmar ação"
+          description={confirm}
+          confirmLabel={submitLabel}
+          tone={variant === "danger" ? "danger" : "primary"}
+          onCancel={() => setAsking(false)}
+          onConfirm={() => {
+            setAsking(false);
+            confirmed.current = true;
+            formRef.current?.requestSubmit();
+          }}
+        />
+      )}
     </form>
   );
 }

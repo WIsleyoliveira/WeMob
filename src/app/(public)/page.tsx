@@ -101,7 +101,7 @@ export default function Home() {
             <p className="mt-2 text-navy-500">Você investe, é o proprietário conforme contrato e fica com o resultado das recargas, utilizando a marca Sansol Mob.</p>
           </div>
           <div className="rounded-[var(--radius-card)] border border-navy-100 p-7">
-            <p className="font-display text-5xl font-bold text-tiffany-500">50/50</p>
+            <p className="font-display text-5xl font-bold text-tiffany-600">50/50</p>
             <h3 className="mt-3 font-display text-xl font-semibold text-navy-900">Parceria</h3>
             <p className="mt-2 text-navy-500">Sansol Mob e parceiro investem juntos e dividem custos e resultado líquido da unidade.</p>
           </div>

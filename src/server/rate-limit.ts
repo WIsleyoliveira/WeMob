@@ -12,5 +12,9 @@ export async function hit(key: string, limit: number, windowMs: number): Promise
       "count" = CASE WHEN "RateLimitBucket"."windowStart" = EXCLUDED."windowStart" THEN "RateLimitBucket"."count" + 1 ELSE 1 END,
       "windowStart" = EXCLUDED."windowStart"
     RETURNING "count"`;
+  if (Math.random() < 0.01) {
+    // Limpeza oportunista de janelas antigas (evita crescimento indefinido da tabela).
+    await db.$executeRaw`DELETE FROM "RateLimitBucket" WHERE "windowStart" < ${new Date(Date.now() - 86400000)}`;
+  }
   return rows[0].count <= limit;
 }

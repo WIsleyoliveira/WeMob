@@ -3,6 +3,8 @@ export const PERMISSIONS = [
   "lead:read",
   "lead:write",
   "lead:assign",
+  "lead:export",
+  "crm:configure",
   "commercial_model:read",
   "commercial_model:write",
   "commercial_model:approve",

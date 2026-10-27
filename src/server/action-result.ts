@@ -1,5 +1,6 @@
 import { ZodError } from "zod";
 import { AppError } from "./errors";
+import { log } from "./log";
 
 export type ActionState<T = unknown> =
   | { status: "idle" }
@@ -24,7 +25,7 @@ export async function toActionState<T>(fn: () => Promise<T>, okMessage?: string)
     }
     if (e instanceof AppError) return { status: "error", message: e.message };
     if (e && typeof e === "object" && "digest" in e) throw e; // redirect/notFound do Next
-    console.error(JSON.stringify({ level: "error", msg: "action_failed", error: e instanceof Error ? e.message : String(e) }));
+    log.error("action_failed", { error: e instanceof Error ? e.message : String(e) });
     return { status: "error", message: "Não foi possível concluir a operação. Tente novamente." };
   }
 }

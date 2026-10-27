@@ -1,5 +1,5 @@
 import { requirePage } from "@/server/auth/current";
-import { listModels } from "@/server/modules/commercial/service";
+import { listModels, versionState } from "@/server/modules/commercial/service";
 import { approveVersionAction, createDraftVersionAction } from "@/app/actions/commercial";
 import { FEE_BASE_LABEL, FEE_BASES } from "@/domain/commercial/types";
 import { PageHeader } from "@/components/ui/page-header";
@@ -12,7 +12,7 @@ import { brl, date, pct } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-const STATUS = { DRAFT: ["Rascunho", "amber"], APPROVED: ["Vigente", "green"], RETIRED: ["Encerrada", "neutral"] } as const;
+const STATUS = { DRAFT: ["Rascunho", "amber"], SCHEDULED: ["Agendada", "tiffany"], EFFECTIVE: ["Vigente", "green"], ENDED: ["Encerrada", "neutral"] } as const;
 const p100 = (d: { toNumber(): number }) => String(+(d.toNumber() * 100).toFixed(4));
 
 export default async function ModelosAdminPage() {
@@ -29,7 +29,7 @@ export default async function ModelosAdminPage() {
       />
       <div className="flex flex-col gap-6">
         {models.map((m) => {
-          const current = m.versions.find((v) => v.status === "APPROVED") ?? m.versions[0];
+          const current = m.versions.find((v) => versionState(v) === "EFFECTIVE") ?? m.versions[0];
           return (
             <Card key={m.id}>
               <CardHeader title={m.name} description={m.description} />
@@ -39,7 +39,7 @@ export default async function ModelosAdminPage() {
                   {m.versions.map((v) => (
                     <tr key={v.id}>
                       <td className="font-semibold">v{v.version}</td>
-                      <td><Badge tone={STATUS[v.status][1]}>{STATUS[v.status][0]}</Badge></td>
+                      <td><Badge tone={STATUS[versionState(v)][1]}>{STATUS[versionState(v)][0]}</Badge></td>
                       <td className="tabular text-right">{brl(v.referenceInvestment.toString())}</td>
                       <td className="tabular text-right">{pct(v.partnerCapitalShare.toNumber(), 0)} / {pct(v.partnerResultShare.toNumber(), 0)}</td>
                       <td>{pct(v.royaltyRate.toNumber())} <span className="text-xs text-navy-400">s/ {FEE_BASE_LABEL[v.royaltyBase].toLowerCase()}</span></td>

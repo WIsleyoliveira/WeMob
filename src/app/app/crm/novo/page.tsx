@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { requirePage } from "@/server/auth/current";
 import { BUSINESS_TYPES } from "@/server/modules/leads/service";
 import { createLeadAction } from "@/app/actions/leads";
@@ -11,8 +10,7 @@ export default async function NovoLeadPage() {
   await requirePage("lead:write");
   return (
     <>
-      <p className="mb-2 text-sm"><Link href="/app/crm" className="text-navy-500 hover:text-navy-900">← CRM</Link></p>
-      <PageHeader title="Novo lead" description="O sistema bloqueia duplicidade por e-mail ou telefone de leads em aberto." />
+      <PageHeader breadcrumbs={[{ label: "CRM", href: "/app/crm" }, { label: "Novo lead" }]} title="Novo lead" description="O sistema bloqueia duplicidade por e-mail ou telefone de leads em aberto." />
       <Card className="max-w-3xl">
         <CardBody>
           <ActionForm action={createLeadAction} submitLabel="Cadastrar lead">

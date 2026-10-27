@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { requirePage } from "@/server/auth/current";
-import { LEAD_SOURCES, listLeads, listStages, STALE_LEAD_DAYS } from "@/server/modules/leads/service";
+import { LEAD_SOURCES, listLeads, listLeadsPage, listStages, STALE_LEAD_DAYS } from "@/server/modules/leads/service";
+import { PRIORITY_LABEL } from "@/server/modules/crm/details";
 import { moveStageAction } from "@/app/actions/leads";
 import { PageHeader } from "@/components/ui/page-header";
 import { ButtonLink, buttonClass } from "@/components/ui/button";
@@ -9,19 +10,31 @@ import { Badge } from "@/components/ui/badge";
 import { Table } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActionForm } from "@/components/app/action-form";
-import { date } from "@/lib/format";
+import { brl, date } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
 export const dynamic = "force-dynamic";
 
-type SP = { q?: string; stageId?: string; source?: string; view?: string };
+type SP = { q?: string; stageId?: string; source?: string; view?: string; page?: string; sort?: string; dir?: string };
 
 export default async function CrmPage({ searchParams }: { searchParams: Promise<SP> }) {
   const ctx = await requirePage("lead:read");
   const sp = await searchParams;
   const view = sp.view === "lista" ? "lista" : "kanban";
   const filter = { q: sp.q || undefined, stageId: sp.stageId || undefined, source: (sp.source || undefined) as keyof typeof LEAD_SOURCES | undefined };
-  const [stages, leads] = await Promise.all([listStages(ctx), listLeads(ctx, filter)]);
+  const [stages, leads, page] = await Promise.all([
+    listStages(ctx),
+    view === "kanban" ? listLeads(ctx, filter) : Promise.resolve([]),
+    view === "lista" ? listLeadsPage(ctx, { ...filter, page: sp.page, sort: sp.sort, dir: sp.dir }) : Promise.resolve(null),
+  ]);
+  const canExport = ctx.permissions.has("lead:export");
+  const exportQs = new URLSearchParams(Object.entries(filter).filter(([, v]) => v) as [string, string][]).toString();
+  const sortLink = (col: string) => {
+    const dir = page?.sort === col && page.dir === "desc" ? "asc" : "desc";
+    return `/app/crm?${new URLSearchParams({ ...Object.fromEntries(Object.entries(sp).filter(([, x]) => x)), view: "lista", sort: col, dir, page: "1" })}`;
+  };
+  const pageLink = (n: number) => `/app/crm?${new URLSearchParams({ ...Object.fromEntries(Object.entries(sp).filter(([, x]) => x)), view: "lista", page: String(n) })}`;
+  const sortMark = (col: string) => (page?.sort === col ? (page.dir === "desc" ? " ↓" : " ↑") : "");
   const canWrite = ctx.permissions.has("lead:write");
   const staleCutoff = Date.now() - STALE_LEAD_DAYS * 86400000;
   const isStale = (l: (typeof leads)[number]) => !l.stage.isWon && !l.stage.isLost && l.stageChangedAt.getTime() < staleCutoff;
@@ -32,7 +45,12 @@ export default async function CrmPage({ searchParams }: { searchParams: Promise<
       <PageHeader
         title="CRM comercial"
         description="Leads do site e cadastros manuais. Reenvios do mesmo contato são agrupados no lead existente."
-        actions={canWrite && <ButtonLink href="/app/crm/novo">Novo lead</ButtonLink>}
+        actions={
+          <>
+            {canExport && <a href={`/api/crm/leads-csv?${exportQs}`} className={buttonClass({ variant: "secondary" })}>Exportar CSV</a>}
+            {canWrite && <ButtonLink href="/app/crm/novo">Novo lead</ButtonLink>}
+          </>
+        }
       />
       <form className="mb-5 flex flex-wrap items-center gap-2" method="get">
         <input type="hidden" name="view" value={view} />
@@ -53,7 +71,7 @@ export default async function CrmPage({ searchParams }: { searchParams: Promise<
         </div>
       </form>
 
-      {leads.length === 0 ? (
+      {(view === "kanban" ? leads.length === 0 : page?.total === 0) ? (
         <EmptyState title="Nenhum lead encontrado" description="Leads chegam pelo formulário de estudo de viabilidade do site ou podem ser cadastrados manualmente." action={canWrite && <ButtonLink href="/app/crm/novo">Cadastrar lead</ButtonLink>} />
       ) : view === "kanban" ? (
         <div className="flex gap-3 overflow-x-auto pb-4">
@@ -91,20 +109,36 @@ export default async function CrmPage({ searchParams }: { searchParams: Promise<
       ) : (
         <div className="rounded-[var(--radius-card)] border border-navy-100 bg-white">
           <Table>
-            <thead><tr><th>Lead</th><th>Local</th><th>Origem</th><th>Etapa</th><th>Responsável</th><th>Criado</th></tr></thead>
+            <thead><tr>
+              <th><Link href={sortLink("contactName")}>Lead{sortMark("contactName")}</Link></th><th>Local</th><th>Origem</th><th>Etapa</th>
+              <th><Link href={sortLink("priority")}>Prioridade{sortMark("priority")}</Link></th>
+              <th className="text-right"><Link href={sortLink("estimatedValue")}>Valor est.{sortMark("estimatedValue")}</Link></th>
+              <th><Link href={sortLink("expectedCloseDate")}>Previsão{sortMark("expectedCloseDate")}</Link></th>
+              <th>Responsável</th><th><Link href={sortLink("createdAt")}>Criado{sortMark("createdAt")}</Link></th>
+            </tr></thead>
             <tbody>
-              {leads.map((l) => (
+              {page!.items.map((l) => (
                 <tr key={l.id}>
                   <td><Link href={`/app/crm/${l.id}`} className="font-medium text-navy-900 hover:text-brand-700">{l.companyName ?? l.contactName}</Link><p className="text-xs text-navy-500">{l.email}</p></td>
                   <td>{l.city ? `${l.city}/${l.state ?? ""}` : "—"}</td>
                   <td className="text-xs">{LEAD_SOURCES[l.source]}</td>
                   <td><Badge tone={l.stage.isWon ? "green" : l.stage.isLost ? "red" : "neutral"}>{l.stage.name}</Badge> {isStale(l) && <Badge tone="amber">parado</Badge>}</td>
+                  <td><Badge tone={l.priority === "HIGH" ? "red" : l.priority === "LOW" ? "neutral" : "amber"}>{PRIORITY_LABEL[l.priority]}</Badge></td>
+                  <td className="tabular text-right">{l.estimatedValue ? brl(l.estimatedValue.toString()) : "—"}</td>
+                  <td className="tabular text-xs">{l.expectedCloseDate ? date(l.expectedCloseDate) : "—"}</td>
                   <td>{l.assignee?.name ?? <span className="text-navy-400">—</span>}</td>
                   <td className="tabular text-xs">{date(l.createdAt)}</td>
                 </tr>
               ))}
             </tbody>
           </Table>
+          <div className="flex flex-wrap items-center justify-between gap-2 border-t border-navy-100 px-4 py-3 text-sm text-navy-500">
+            <span>{page!.total} leads · página {page!.page} de {page!.pages}</span>
+            <span className="flex gap-2">
+              {page!.page > 1 && <Link className={buttonClass({ variant: "secondary", size: "sm" })} href={pageLink(page!.page - 1)}>← Anterior</Link>}
+              {page!.page < page!.pages && <Link className={buttonClass({ variant: "secondary", size: "sm" })} href={pageLink(page!.page + 1)}>Próxima →</Link>}
+            </span>
+          </div>
         </div>
       )}
       <p className="mt-3 text-xs text-navy-400">Para marcar como perdido, abra o lead e informe o motivo da perda.</p>

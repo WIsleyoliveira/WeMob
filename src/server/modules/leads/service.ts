@@ -10,6 +10,7 @@ import { requireOperator, requirePermission, type AuthContext } from "@/server/a
 export const PRIVACY_POLICY_VERSION = "2026-10-27";
 export const MIN_FORM_FILL_MS = 2500;
 export const STALE_LEAD_DAYS = 7;
+export const GLOBAL_LEAD_LIMIT_PER_HOUR = 300;
 
 export const BUSINESS_TYPES = {
   FUEL_STATION: "Posto de combustível",
@@ -81,6 +82,10 @@ export async function submitPublicLead(
   if (meta.ip && !(await hit(`lead-ip:${keyedHash(meta.ip)}`, 5, 60 * 60 * 1000))) {
     throw new AppError("RATE_LIMITED", "Recebemos muitas solicitações deste endereço. Tente novamente mais tarde.");
   }
+  // Teto global: protege o CRM mesmo quando o IP não é confiável/conhecido.
+  if (!(await hit("lead-global", GLOBAL_LEAD_LIMIT_PER_HOUR, 60 * 60 * 1000))) {
+    throw new AppError("RATE_LIMITED", "Estamos recebendo muitas solicitações no momento. Tente novamente em alguns minutos.");
+  }
   const data = publicLeadSchema.parse(raw);
   const org = await getOperatorOrganization();
 
@@ -135,27 +140,57 @@ export const leadFilterSchema = z.object({
   assigneeId: z.string().optional(),
 });
 
+export const leadPageSchema = leadFilterSchema.extend({
+  page: z.coerce.number().int().min(1).max(10000).default(1),
+  sort: z.enum(["createdAt", "contactName", "expectedCloseDate", "estimatedValue", "priority"]).default("createdAt"),
+  dir: z.enum(["asc", "desc"]).default("desc"),
+});
+export const LEAD_PAGE_SIZE = 25;
+const NULLABLE_SORT = new Set(["expectedCloseDate", "estimatedValue"]);
+
+/** Lista paginada e ordenável (visão tabular). */
+export async function listLeadsPage(ctx: AuthContext | null, raw: unknown = {}) {
+  requirePermission(ctx, "lead:read");
+  const f = leadPageSchema.parse(raw);
+  const where = leadWhere(ctx.organizationId, f);
+  const [items, total] = await Promise.all([
+    db.lead.findMany({
+      where,
+      include: { stage: true, assignee: { select: { id: true, name: true } } },
+      orderBy: [{ [f.sort]: NULLABLE_SORT.has(f.sort) ? { sort: f.dir, nulls: "last" } : f.dir }, { id: "asc" }],
+      skip: (f.page - 1) * LEAD_PAGE_SIZE,
+      take: LEAD_PAGE_SIZE,
+    }),
+    db.lead.count({ where }),
+  ]);
+  return { items, total, page: f.page, pageSize: LEAD_PAGE_SIZE, pages: Math.max(1, Math.ceil(total / LEAD_PAGE_SIZE)), sort: f.sort, dir: f.dir };
+}
+
+export function leadWhere(organizationId: string, f: z.infer<typeof leadFilterSchema>) {
+  return {
+    organizationId,
+    deletedAt: null,
+    stageId: f.stageId,
+    source: f.source,
+    assigneeId: f.assigneeId,
+    ...(f.q
+      ? {
+          OR: [
+            { contactName: { contains: f.q, mode: "insensitive" as const } },
+            { companyName: { contains: f.q, mode: "insensitive" as const } },
+            { emailNormalized: { contains: f.q.toLowerCase() } },
+            { city: { contains: f.q, mode: "insensitive" as const } },
+          ],
+        }
+      : {}),
+  };
+}
+
 export async function listLeads(ctx: AuthContext | null, rawFilter: unknown = {}) {
   requirePermission(ctx, "lead:read");
   const f = leadFilterSchema.parse(rawFilter);
   return db.lead.findMany({
-    where: {
-      organizationId: ctx.organizationId,
-      deletedAt: null,
-      stageId: f.stageId,
-      source: f.source,
-      assigneeId: f.assigneeId,
-      ...(f.q
-        ? {
-            OR: [
-              { contactName: { contains: f.q, mode: "insensitive" } },
-              { companyName: { contains: f.q, mode: "insensitive" } },
-              { emailNormalized: { contains: f.q.toLowerCase() } },
-              { city: { contains: f.q, mode: "insensitive" } },
-            ],
-          }
-        : {}),
-    },
+    where: leadWhere(ctx.organizationId, f),
     include: { stage: true, assignee: { select: { id: true, name: true } } },
     orderBy: { createdAt: "desc" },
     take: 500,
@@ -174,6 +209,7 @@ export async function getLead(ctx: AuthContext | null, id: string) {
     include: {
       stage: true,
       assignee: { select: { id: true, name: true } },
+      company: { include: { convertedOrganization: { select: { id: true, name: true, kind: true } } } },
       activities: { orderBy: { createdAt: "desc" }, include: { author: { select: { name: true } } } },
     },
   });
@@ -208,7 +244,7 @@ export async function moveLeadStage(ctx: AuthContext | null, raw: unknown) {
         kind: "STAGE_CHANGE",
         authorId: ctx.userId,
         body: stage.isLost ? lostReason : undefined,
-        data: { from: lead.stage.name, to: stage.name, daysInPreviousStage: daysBetween(lead.stageChangedAt, new Date()) },
+        data: { from: lead.stage.name, to: stage.name, fromId: lead.stageId, toId: stage.id, daysInPreviousStage: daysBetween(lead.stageChangedAt, new Date()) },
       },
     });
     await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "lead.stage_changed", entityType: "Lead", entityId: lead.id, data: { from: lead.stageId, to: stage.id } }, tx);

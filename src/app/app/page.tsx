@@ -7,13 +7,12 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Stat } from "@/components/ui/stat";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { num, pct } from "@/lib/format";
+import { dateTime, num, pct } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
-export default async function Dashboard({ searchParams }: { searchParams: Promise<{ negado?: string }> }) {
+export default async function Dashboard() {
   const ctx = await requirePage();
-  const sp = await searchParams;
   const [funnel, sites, sims] = await Promise.all([
     ctx.permissions.has("lead:read") ? pipelineSummary(ctx) : null,
     ctx.permissions.has("site:read") ? listSites(ctx) : null,
@@ -24,7 +23,6 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   return (
     <>
       <PageHeader title={`Olá, ${ctx.userName.split(" ")[0]}`} description="Indicadores calculados somente a partir de dados registrados na plataforma." />
-      {sp.negado && <Alert tone="danger" className="mb-6">Você não tem permissão para acessar aquela área.</Alert>}
 
       {funnel && (
         <section className="mb-8">
@@ -36,14 +34,32 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
             <Stat label="Taxa de conversão" value={funnel.conversionRate === null ? "—" : pct(funnel.conversionRate)} definition="Ganhos ÷ (ganhos + perdidos). Sem negócios encerrados, não é calculada." source="CRM (etapas de ganho/perda)" updatedAt={funnel.computedAt} />
           </div>
           <Card className="mt-4">
-            <CardHeader title="Funil por etapa" actions={<Link href="/app/crm" className="text-sm font-medium text-brand-700 hover:underline">Abrir CRM →</Link>} />
-            <CardBody className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
-              {funnel.stages.map((s) => (
-                <Link key={s.id} href={`/app/crm?stageId=${s.id}&view=lista`} className="rounded-lg border border-navy-100 p-3 hover:border-navy-300">
-                  <p className="truncate text-xs text-navy-500">{s.name}</p>
-                  <p className="tabular font-display text-xl font-semibold">{s.count}</p>
-                </Link>
-              ))}
+            <CardHeader
+              title="Leads por etapa do funil"
+              description={`Quantidade atual de leads (unidade: leads) em cada etapa · todos os períodos · fonte: CRM · ${dateTime(funnel.computedAt)}`}
+              actions={<Link href="/app/crm" className="text-sm font-medium text-brand-700 hover:underline">Abrir CRM →</Link>}
+            />
+            <CardBody>
+              {funnel.total === 0 ? (
+                <p className="text-sm text-navy-500">Nenhum lead registrado ainda.</p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {funnel.stages.map((s) => {
+                    const max = Math.max(...funnel.stages.map((x) => x.count), 1);
+                    return (
+                      <li key={s.id}>
+                        <Link href={`/app/crm?stageId=${s.id}&view=lista`} className="group grid grid-cols-[minmax(7rem,10rem)_1fr_3rem] items-center gap-3 text-sm">
+                          <span className="truncate text-navy-700 group-hover:text-navy-900">{s.name}</span>
+                          <span className="h-2.5 rounded-full bg-navy-50" aria-hidden>
+                            <span className={`block h-full rounded-full ${s.isLost ? "bg-navy-300" : s.isWon ? "bg-brand-600" : "bg-tiffany-500"}`} style={{ width: `${(s.count / max) * 100}%` }} />
+                          </span>
+                          <span className="tabular text-right font-semibold text-navy-900">{s.count}</span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </CardBody>
           </Card>
         </section>

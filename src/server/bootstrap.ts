@@ -19,13 +19,13 @@ export async function ensureOperator(db: PrismaClient, name = "Sansol Mob") {
 }
 
 export const DEFAULT_STAGES = [
-  { key: "novo", name: "Novo lead" },
-  { key: "qualificacao", name: "Qualificação" },
-  { key: "estudo", name: "Estudo de viabilidade" },
-  { key: "proposta", name: "Proposta enviada" },
-  { key: "negociacao", name: "Negociação" },
-  { key: "ganho", name: "Ganho", isWon: true },
-  { key: "perdido", name: "Perdido", isLost: true },
+  { key: "novo", name: "Novo lead", probability: 0.05 },
+  { key: "qualificacao", name: "Qualificação", probability: 0.1 },
+  { key: "estudo", name: "Estudo de viabilidade", probability: 0.25 },
+  { key: "proposta", name: "Proposta enviada", probability: 0.5 },
+  { key: "negociacao", name: "Negociação", probability: 0.7 },
+  { key: "ganho", name: "Ganho", isWon: true, probability: 1 },
+  { key: "perdido", name: "Perdido", isLost: true, probability: 0 },
 ];
 
 export async function ensureStages(db: PrismaClient, organizationId: string) {

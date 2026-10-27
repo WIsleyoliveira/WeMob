@@ -21,7 +21,7 @@
   --color-navy-100: #e3e9f1;
   --color-navy-200: #c7d2e1;
   --color-navy-300: #9aabc4;
-  --color-navy-400: #6a7f9e;
+  --color-navy-400: #5c7190; /* 4.98:1 em branco */
   --color-navy-500: #4a5f7f;
   --color-navy-600: #384b67;
   --color-navy-700: #2a3a52;
@@ -32,7 +32,13 @@
   --color-tiffany-300: #7fe0dc;
   --color-tiffany-400: #3fcbc6;
   --color-tiffany-500: #12b3ad;
-  --color-tiffany-600: #0b8f8b;
+  --color-tiffany-600: #0a7c78; /* 5.04:1 em branco */
+
+  /* Semânticos */
+  --color-success: var(--color-brand-600);
+  --color-danger: #dc2626;
+  --color-warning: #b45309;
+  --color-info: var(--color-tiffany-600);
 
   --radius-card: 14px;
   --shadow-card: 0 1px 2px rgb(13 24 40 / 0.04), 0 4px 16px -8px rgb(13 24 40 / 0.10);
@@ -62,3 +68,8 @@ body { background: var(--bg); color: var(--text); }
 }
 
 .tabular { font-variant-numeric: tabular-nums; }
+
+@media print {
+  aside, header, nav, .print\:hidden { display: none !important; }
+  body { background: #fff; }
+}

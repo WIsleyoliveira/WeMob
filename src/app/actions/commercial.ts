@@ -10,8 +10,8 @@ const n = (v: FormDataEntryValue | null) => (v === null || v === "" ? undefined 
 export async function createDraftVersionAction(_prev: ActionState, f: FormData): Promise<ActionState> {
   const ctx = await getCurrentContext();
   const res = await toActionState(
-    () =>
-      createDraftVersion(ctx, String(f.get("modelId")), {
+    async () => {
+      await createDraftVersion(ctx, String(f.get("modelId")), {
         referenceInvestment: n(f.get("referenceInvestment")),
         partnerCapitalShare: pctToFraction(f.get("partnerCapitalShare")),
         partnerResultShare: pctToFraction(f.get("partnerResultShare")),
@@ -24,7 +24,8 @@ export async function createDraftVersionAction(_prev: ActionState, f: FormData):
         maintenancePolicy: f.get("maintenancePolicy"),
         sourceNote: f.get("sourceNote") || undefined,
         effectiveFrom: f.get("effectiveFrom") || undefined,
-      }),
+      });
+    },
     "Versão criada em rascunho. Outro administrador deve aprová-la.",
   );
   revalidatePath("/app/modelos");
@@ -33,7 +34,7 @@ export async function createDraftVersionAction(_prev: ActionState, f: FormData):
 
 export async function approveVersionAction(_prev: ActionState, f: FormData): Promise<ActionState> {
   const ctx = await getCurrentContext();
-  const res = await toActionState(() => approveVersion(ctx, String(f.get("versionId"))), "Versão aprovada e vigente para novas simulações e contratos.");
+  const res = await toActionState(async () => void (await approveVersion(ctx, String(f.get("versionId")))), "Versão aprovada: vale para novas simulações e contratos a partir da data de vigência.");
   revalidatePath("/app/modelos");
   return res;
 }

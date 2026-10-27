@@ -8,6 +8,25 @@ import { commercialVersionDraftSchema, type CommercialTerms } from "@/domain/com
 import { ENGINE_VERSION, runViability, viabilityInputSchema } from "@/domain/viability/engine";
 import { getOperatorOrganization } from "@/server/modules/leads/service";
 
+/** Versão vigente em `now`: aprovada, já iniciada e ainda não encerrada. */
+export function effectiveWhere(now: Date) {
+  return {
+    status: "APPROVED" as const,
+    AND: [
+      { OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }] },
+      { OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] },
+    ],
+  };
+}
+
+export type VersionState = "DRAFT" | "SCHEDULED" | "EFFECTIVE" | "ENDED";
+export function versionState(v: { status: string; effectiveFrom: Date | null; effectiveTo: Date | null }, now = new Date()): VersionState {
+  if (v.status === "DRAFT") return "DRAFT";
+  if (v.status === "RETIRED" || (v.effectiveTo && v.effectiveTo <= now)) return "ENDED";
+  if (v.effectiveFrom && v.effectiveFrom > now) return "SCHEDULED";
+  return "EFFECTIVE";
+}
+
 export function toTerms(v: CommercialModelVersion & { model: CommercialModel }): CommercialTerms {
   return {
     modelKey: v.model.key,
@@ -32,9 +51,8 @@ export async function getPublicTerms() {
   const now = new Date();
   const versions = await db.commercialModelVersion.findMany({
     where: {
-      status: "APPROVED",
       model: { organizationId: org.id },
-      OR: [{ effectiveFrom: null }, { effectiveFrom: { lte: now } }],
+      ...effectiveWhere(now),
     },
     include: { model: true },
     orderBy: { model: { key: "asc" } },
@@ -81,10 +99,13 @@ export async function approveVersion(ctx: AuthContext | null, versionId: string)
   if (v.createdById === ctx.userId) throw new AppError("FORBIDDEN", "A aprovação deve ser feita por um usuário diferente de quem criou a versão.");
   const now = new Date();
   const effectiveFrom = v.effectiveFrom && v.effectiveFrom > now ? v.effectiveFrom : now;
+  const scheduled = await db.commercialModelVersion.findFirst({ where: { modelId: v.modelId, status: "APPROVED", effectiveFrom: { gt: now } } });
+  if (scheduled) throw new AppError("CONFLICT", `Já existe a versão v${scheduled.version} agendada para este modelo. Aguarde sua vigência.`);
   return db.$transaction(async (tx) => {
+    // A versão vigente continua valendo até o início da nova (sem lacuna de condições).
     await tx.commercialModelVersion.updateMany({
-      where: { modelId: v.modelId, status: "APPROVED" },
-      data: { status: "RETIRED", effectiveTo: effectiveFrom },
+      where: { modelId: v.modelId, status: "APPROVED", OR: [{ effectiveTo: null }, { effectiveTo: { gt: effectiveFrom } }] },
+      data: effectiveFrom > now ? { effectiveTo: effectiveFrom } : { status: "RETIRED", effectiveTo: effectiveFrom },
     });
     const approved = await tx.commercialModelVersion.update({
       where: { id: v.id, status: "DRAFT" },
@@ -150,7 +171,7 @@ export async function getSimulation(ctx: AuthContext | null, id: string) {
 export async function listApprovedVersions(ctx: AuthContext | null) {
   requirePermission(ctx, "simulation:run");
   const vs = await db.commercialModelVersion.findMany({
-    where: { model: { organizationId: ctx.organizationId }, status: { in: ["APPROVED", "DRAFT"] } },
+    where: { model: { organizationId: ctx.organizationId }, OR: [effectiveWhere(new Date()), { status: "DRAFT" }] },
     include: { model: true },
     orderBy: [{ model: { key: "asc" } }, { version: "desc" }],
   });

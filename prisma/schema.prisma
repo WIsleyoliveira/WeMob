@@ -36,6 +36,10 @@ model Organization {
   sitesAsPartner   Site[]            @relation("SitePartner")
   auditEvents      AuditEvent[]
   simulations      Simulation[]
+  companies        Company[]          @relation("CompanyOwnerOrg")
+  convertedFrom    Company[]          @relation("CompanyConvertedOrg")
+  tasks            CrmTask[]
+  proposals        Proposal[]
 }
 
 model User {
@@ -50,8 +54,10 @@ model User {
 
   memberships   Membership[]
   sessions      Session[]
+  resetTokens   PasswordResetToken[]
   assignedLeads Lead[]         @relation("LeadAssignee")
   activities    LeadActivity[]
+  tasksAssigned CrmTask[]      @relation("TaskAssignee")
 }
 
 model Role {
@@ -98,6 +104,20 @@ model Session {
   @@index([userId])
 }
 
+/// Token de uso único para redefinição de senha. Só o hash é persistido.
+model PasswordResetToken {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  tokenHash   String    @unique
+  expiresAt   DateTime
+  usedAt      DateTime?
+  createdById String? // administrador que gerou o link (null = solicitação do próprio usuário)
+  createdAt   DateTime  @default(now())
+
+  @@index([userId])
+}
+
 model RateLimitBucket {
   key         String   @id
   windowStart DateTime
@@ -131,6 +151,8 @@ model PipelineStage {
   position       Int
   isWon          Boolean      @default(false)
   isLost         Boolean      @default(false)
+  /// Probabilidade de ganho usada na previsão de receita (0 a 1). Configurável.
+  probability    Decimal      @default(0) @db.Decimal(5, 4)
 
   leads Lead[]
 
@@ -178,6 +200,12 @@ model Lead {
   interestModel     String? // chave do modelo comercial de interesse
   message           String?
   lostReason        String?
+  priority          LeadPriority  @default(MEDIUM)
+  estimatedValue    Decimal?      @db.Decimal(14, 2)
+  expectedCloseDate DateTime?
+  nextStep          String?
+  companyId         String?
+  company           Company?      @relation(fields: [companyId], references: [id])
   consentAt         DateTime?
   consentPolicyVer  String?
   createdAt         DateTime      @default(now())
@@ -185,10 +213,18 @@ model Lead {
   deletedAt         DateTime?
 
   activities LeadActivity[]
+  tasks      CrmTask[]
+  proposals  Proposal[]
 
   @@index([organizationId, stageId])
   @@index([organizationId, emailNormalized])
   @@index([organizationId, phoneNormalized])
+}
+
+enum LeadPriority {
+  LOW
+  MEDIUM
+  HIGH
 }
 
 enum LeadActivityKind {
@@ -200,6 +236,10 @@ enum LeadActivityKind {
   EMAIL
   DUPLICATE_SUBMISSION
   ASSIGNMENT
+  TASK
+  PROPOSAL
+  CONVERSION
+  UPDATE
 }
 
 model LeadActivity {
@@ -318,4 +358,106 @@ model Site {
 
   @@index([operatorId])
   @@index([partnerOrganizationId])
+}
+
+// ───────────────────────── CRM: empresas, contatos, tarefas, propostas ─────────────────────────
+
+model Company {
+  id                      String        @id @default(cuid())
+  organizationId          String
+  organization            Organization  @relation("CompanyOwnerOrg", fields: [organizationId], references: [id])
+  name                    String
+  nameNormalized          String
+  document                String? // CNPJ/CPF somente dígitos
+  businessType            BusinessType?
+  city                    String?
+  state                   String?
+  convertedOrganizationId String?
+  convertedOrganization   Organization? @relation("CompanyConvertedOrg", fields: [convertedOrganizationId], references: [id])
+  createdAt               DateTime      @default(now())
+  updatedAt               DateTime      @updatedAt
+
+  contacts Contact[]
+  leads    Lead[]
+
+  @@unique([organizationId, document])
+  @@index([organizationId, nameNormalized])
+}
+
+model Contact {
+  id              String   @id @default(cuid())
+  companyId       String
+  company         Company  @relation(fields: [companyId], references: [id])
+  name            String
+  email           String?
+  emailNormalized String?
+  phone           String?
+  role            String?
+  createdAt       DateTime @default(now())
+
+  @@unique([companyId, emailNormalized])
+}
+
+model CrmTask {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  leadId         String
+  lead           Lead         @relation(fields: [leadId], references: [id])
+  title          String
+  dueAt          DateTime
+  assigneeId     String?
+  assignee       User?        @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  completedAt    DateTime?
+  createdById    String?
+  createdAt      DateTime     @default(now())
+
+  @@index([organizationId, completedAt, dueAt])
+  @@index([leadId])
+}
+
+enum ProposalStatus {
+  DRAFT
+  SENT
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+model Proposal {
+  id             String         @id @default(cuid())
+  organizationId String
+  organization   Organization   @relation(fields: [organizationId], references: [id])
+  leadId         String
+  lead           Lead           @relation(fields: [leadId], references: [id])
+  number         String
+  title          String
+  status         ProposalStatus @default(DRAFT)
+  sentAt         DateTime?
+  decidedAt      DateTime?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  versions ProposalVersion[]
+
+  @@unique([organizationId, number])
+  @@index([organizationId, status])
+}
+
+/// Versões imutáveis: editar uma proposta cria nova versão.
+model ProposalVersion {
+  id             String   @id @default(cuid())
+  proposalId     String
+  proposal       Proposal @relation(fields: [proposalId], references: [id])
+  version        Int
+  items          Json // [{ description, quantity, unitPrice, total }]
+  total          Decimal  @db.Decimal(14, 2)
+  validUntil     DateTime
+  conditions     String
+  modelVersionId String?
+  simulationId   String?
+  createdById    String?
+  createdAt      DateTime @default(now())
+
+  @@unique([proposalId, version])
 }

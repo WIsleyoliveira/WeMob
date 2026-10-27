@@ -1,5 +1,5 @@
 import { requirePage } from "@/server/auth/current";
-import { db } from "@/server/db";
+import { listAuditEvents } from "@/server/modules/audit/service";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card } from "@/components/ui/card";
 import { Table } from "@/components/ui/table";
@@ -9,9 +9,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AuditoriaPage() {
   const ctx = await requirePage("audit:read");
-  const events = await db.auditEvent.findMany({ where: { organizationId: ctx.organizationId }, orderBy: { createdAt: "desc" }, take: 200 });
-  const actorIds = [...new Set(events.map((e) => e.actorUserId).filter(Boolean))] as string[];
-  const actors = new Map((await db.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
+  const events = await listAuditEvents(ctx);
   return (
     <>
       <PageHeader title="Auditoria" description="Últimas 200 ações críticas registradas nesta organização. Registros não são editáveis pela interface." />
@@ -24,7 +22,7 @@ export default async function AuditoriaPage() {
                 <td className="tabular text-xs">{dateTime(e.createdAt)}</td>
                 <td><code className="text-xs">{e.action}</code></td>
                 <td className="text-xs">{e.entityType}{e.entityId ? ` · ${e.entityId.slice(-8)}` : ""}</td>
-                <td>{e.actorUserId ? actors.get(e.actorUserId) ?? "—" : <span className="text-navy-400">sistema / site</span>}</td>
+                <td>{e.actorUserId ? e.actorName ?? "—" : <span className="text-navy-400">sistema / site</span>}</td>
               </tr>
             ))}
           </tbody>

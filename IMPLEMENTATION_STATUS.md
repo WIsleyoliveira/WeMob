@@ -1,8 +1,113 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-27 · Etapa concluída: **Fase 1 (auditoria) + Fase 2 (fundação) + primeira fatia da Fase 3**.
+Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**. Próxima: **P05 (motor financeiro)**.
+
+Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P02 — Auditoria e correção da fundação (2026-10-27)
+
+### Achados comprovados e correções
+| # | Achado | Como foi comprovado | Correção | Status |
+|---|---|---|---|---|
+| A1 | Aprovar versão com vigência futura encerrava a versão atual imediatamente → modelo ficava **sem condição vigente** até a data | Teste `audit-findings.test.ts` falhou antes da correção | Versão atual permanece até `effectiveFrom` da nova; consultas usam janela `effectiveFrom ≤ agora < effectiveTo`; bloqueio de 2 versões agendadas; UI mostra Rascunho/Agendada/Vigente/Encerrada | testado |
+| A2 | Administrador podia **revogar o próprio acesso** (lock-out) | Teste falhou antes da correção | Bloqueio de auto-revogação, de revogação duplicada e do último administrador | testado |
+| A3 | **Não havia recuperação de senha** nem troca de senha | Revisão de código | Link de uso único (1 h, só hash persistido) gerado pelo admin; troca de senha com senha atual; ambos encerram sessões; solicitação pública neutra | testado |
+| A4 | Admin de uma organização poderia redefinir senha de usuário que **também pertence a outro tenant** (tomada de conta entre tenants) | Revisão de código (risco de design ao criar A3) | Bloqueado quando o usuário tem vínculos em outras organizações | testado |
+| A5 | `X-Forwarded-For` aceito sem proxy confiável → limite por IP contornável forjando o cabeçalho | Revisão de código | IP só é lido com `TRUST_PROXY=1`; teto global de 300 leads/h sempre ativo | implementado (sem teste automatizado: depende de cabeçalhos HTTP) |
+| A6 | Tabela de rate limit crescia indefinidamente | Revisão de código | Limpeza oportunista de janelas > 24 h | implementado |
+| A7 | Logs sem redação de campos sensíveis | Revisão de código | `src/server/log.ts` com redação recursiva (password, token, secret, cookie, card…) | testado |
+| A8 | Página de auditoria consultava o banco direto (fora da camada de serviço) | Revisão de código | `modules/audit/service.ts` com `requirePermission` | implementado |
+| A9 | Após nova migração, o servidor **de desenvolvimento** continua com Prisma Client antigo em memória (`globalThis`) e falha com erro genérico | Reproduzido no navegador (`Cannot read properties of undefined (reading 'findUnique')`) | Documentado: reiniciar `npm run dev` após `prisma migrate dev`. Produção não é afetada (processo novo a cada deploy) | documentado |
+
+### Verificado sem defeito
+Sessões revogáveis e revalidadas a cada requisição; RBAC no servidor em todos os serviços; isolamento de leads, unidades e modelos por organização; validação Zod em toda entrada; erros internos não vazam para o cliente; `.env` fora do git; nenhuma credencial no código; seed recusa produção; migrações apenas aditivas.
+
+### Migração
+`20261027*_password_reset_tokens` (aditiva) com `down.sql` de reversão manual no mesmo diretório.
+
+### Comandos e resultados reais (P02)
+```
+npx vitest run tests/integration/audit-findings.test.ts   → 2 failed (antes das correções)
+npx vitest run                                             → Test Files 5 passed · Tests 52 passed
+npm run lint                                               → 0 problemas
+npm run typecheck                                          → 0 erros
+npm run build                                              → Compiled successfully
+```
+Navegador (localhost): /recuperar-senha → mensagem neutra "envio de e-mails não configurado"; /redefinir-senha com token inválido → "Link inválido ou expirado".
+
+### Simulado / bloqueado
+- **Simulado:** envio de e-mail de redefinição — testado só com adaptador *fake* dentro do teste.
+- **Bloqueado:** envio real de e-mail, convite de usuários e MFA (sem provedor de e-mail).
+
 
 Legenda: ✅ implementado e testado · 🟡 parcial · ⏳ pendente · ⛔ bloqueado por dependência externa
+
+## P04 — CRM e máquina de vendas (2026-10-27)
+
+### Implementado e testado
+| Funcionalidade | Onde | Testes |
+|---|---|---|
+| Empresas e contatos; vínculo de lead reaproveitando empresa por CNPJ/CPF ou nome normalizado; contato sem duplicar e-mail | `modules/crm/details.ts`, `/app/crm/empresas` | "reaproveita empresa…" |
+| Qualificação: prioridade, valor estimado, previsão de fechamento, próximo passo | detalhe do lead | "valida qualificação…" |
+| Tarefas/lembretes com responsável (só da organização), vencidas destacadas, "minhas" × equipe | `modules/crm/tasks.ts`, `/app/crm/tarefas` | 2 testes |
+| Propostas numeradas (`PROP-AAAA-NNNN`, sem colisão concorrente), itens com total em Decimal, validade, condições, vínculo a versão de modelo; **versões imutáveis**; máquina de estados (rascunho → enviada → aceita/recusada; cancelada) com atualização condicional contra corrida | `modules/crm/proposals.ts`, `/app/crm/propostas*` | 5 testes |
+| Versão para impressão / "Salvar como PDF" do navegador (sem gerador de PDF no servidor) | `/app/crm/propostas/[id]/imprimir` | verificado no navegador |
+| Conversão de lead ganho em organização parceira/investidora, idempotente (inclusive concorrente) e reaproveitando organização com mesmo documento | `convertLeadToPartner` | "converte só lead ganho, uma única vez" |
+| Funil configurável: nome e probabilidade por etapa, nova etapa antes de "Ganho"; Ganho=100%/Perdido=0% fixos; permissão `crm:configure` | `modules/crm/stages.ts`, `/app/crm/configurar` | "configuração do funil exige permissão…" |
+| Lista paginada (25/página) e ordenável (nome, prioridade, valor, previsão, criação) | `listLeadsPage` | "valida qualificação e ordena/pagina" |
+| Exportação CSV com permissão `lead:export` (admin), mesmos filtros da lista, proteção contra injeção de fórmulas, BOM UTF-8 e auditoria | `/api/crm/leads-csv` | "exportação exige permissão…" + navegador (200, text/csv) |
+| Métricas com fórmulas explícitas: leads por origem, alcance e conversão por etapa, taxa de ganho, tempo médio até ganho, propostas em aberto, pipeline ponderado (selo "Projeção") | `modules/crm/metrics.ts`, `/app/crm/metricas` | "calcula conversão…" |
+| Isolamento: outra organização não lê/altera propostas, não cria proposta em lead alheio, não recebe tarefa | — | "outra organização…", "não atribui tarefa…" |
+| Auditoria: proposta criada/revisada/status, lead convertido/exportado, empresa vinculada, etapa criada/alterada | `AuditEvent` | parcial (exportação) |
+
+### Exemplo reproduzível (teste "calcula conversão…")
+Lead A: Novo → Qualificação → Perdido. Lead B (R$ 100.000): Novo → Proposta (50%).
+Alcance: Novo 2, Qualificação 2 (B pulou etapas e conta como alcançado), Proposta 1. Taxa de ganho = 0 ÷ 1 = 0%. Pipeline ponderado = 100.000 × 0,50 = **R$ 50.000,00**.
+
+### Migração
+`*_crm_expansion` (aditiva: 4 tabelas, colunas novas anuláveis/com default, probabilidades iniciais) + `down.sql`.
+
+### Defeitos encontrados e corrigidos nesta etapa
+- Ordenação com `nulls: last` em coluna não anulável quebrava a lista (detectado por teste).
+- Indicador "Propostas em aberto" estourava o card (detectado por captura).
+
+### Comandos e resultados (P04)
+`npx vitest run` → 6 arquivos, **65 testes passando** · `npm run lint` 0 · `npm run typecheck` 0 · `npm run build` OK.
+Navegador (localhost): proposta criada → marcada como enviada → ações "aceite/recusa/cancelar" com confirmação; impressão renderizada; métricas; CSV; 375 px sem overflow em métricas, proposta, lead, lista e configuração.
+
+### Simulado / bloqueado / pendente
+- **Bloqueado:** envio de proposta por e-mail/WhatsApp e lembretes externos (adaptadores "não configurado"; a proposta mostra isso explicitamente).
+- **Bloqueado:** assinatura eletrônica (P08, depende de provedor).
+- **Pendente:** importação de leads (CSV) — não implementada nesta etapa; arrastar-e-soltar no kanban (mudança de etapa é por seletor).
+- **Pendente:** perfil comercial não exporta CSV por padrão (decisão de privacidade; ajustável em perfis).
+
+## P03 — Design system premium e experiência (2026-10-27)
+
+### Implementado
+- Tokens revisados por **contraste medido** (WCAG 2.1): `navy-400` #6a7f9e → #5c7190 (3,87–4,08 → 4,55–4,98:1); `tiffany-600` #0b8f8b → #0a7c78 (3,95 → 5,04:1); textos `navy-400/500` sobre fundo escuro → `navy-300` (2,96 → 8,23:1); destaque "50/50" da home → `tiffany-600` (axe: 2,59 → corrigido). Tokens semânticos `success/danger/warning/info`.
+- Novos componentes: `Breadcrumbs`, `Skeleton`/`PageSkeleton`, `StateMessage` (vazio, erro, sem permissão, integração indisponível), `ConfirmDialog` (`<dialog>` nativo, substitui `window.confirm`).
+- Fronteiras de rota: `app/loading.tsx`, `app/error.tsx`, `error.tsx` global, `not-found.tsx`, página `/app/sem-permissao` (antes: redirecionamento com alerta).
+- Navegação com ícones `lucide-react` (único conjunto), "Pular para o conteúdo" no backoffice, breadcrumbs nas páginas internas, link "Minha conta".
+- Painel: funil em barras com **unidade, período, fonte e horário**; barras clicáveis abrem a lista filtrada.
+- Documentação: `docs/design-system.md`.
+
+### Defeitos encontrados e corrigidos nesta etapa
+| Defeito | Evidência | Correção |
+|---|---|---|
+| Server actions devolviam registros Prisma inteiros ao cliente (com `Decimal`) → erro de serialização e exposição desnecessária de dados | 8 erros no console ao criar rascunho de versão | Actions retornam apenas o necessário (nada ou `id`) |
+| `<dialog>` sem fundo (reset do Tailwind) | Inspeção do estilo computado | `bg-white` explícito; verificado por captura |
+| Troca em massa de cor atingiu texto em fundo branco no cabeçalho do backoffice (regressão introduzida e corrigida nesta etapa) | Captura de tela | Restaurado `navy-500` |
+
+### Testado
+- Navegador (localhost): diálogo de aprovação abre, Esc fecha, confirmar envia → servidor aplica a regra dos quatro olhos ("usuário diferente de quem criou").
+- 375 px sem rolagem horizontal: `/app`, `/app/modelos`, `/app/conta`, `/app/sem-permissao`, `/recuperar-senha`, 404.
+- axe-core 4.10.2 (WCAG 2 A/AA) na home: 1 violação de contraste → corrigida.
+- `npm run lint` 0 · `npm run typecheck` 0 · `npm run build` OK · `npx vitest run` 52/52.
+
+### Pendente / bloqueado
+- **Pendente:** axe nas demais páginas — a injeção do script em lote no navegador foi bloqueada pela política de segurança do ambiente; planejado como teste automatizado (Playwright + @axe-core/playwright) no P10.
+- **Pendente:** modo escuro para monitoramento (fará sentido com dados de telemetria, P06); portal do motorista ainda não existe (P07).
+- **Observação:** rascunho "v2 — Compra integral" criado no banco de **desenvolvimento** durante o teste do diálogo (sem efeito em condições vigentes).
 
 ## 1. Diagnóstico inicial (Fase 1)
 - Repositório **vazio** em 2026-10-27: nenhum código, banco, rota ou teste preexistente. Nada a preservar.

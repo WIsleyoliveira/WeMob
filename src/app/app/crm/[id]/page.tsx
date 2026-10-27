@@ -4,12 +4,17 @@ import { requirePage } from "@/server/auth/current";
 import { AppError } from "@/server/errors";
 import { BUSINESS_TYPES, LEAD_SOURCES, getLead, listAssignableUsers, listStages } from "@/server/modules/leads/service";
 import { addActivityAction, assignLeadAction, moveStageAction } from "@/app/actions/leads";
+import { completeTaskAction, convertLeadAction, createTaskAction, linkCompanyAction, updateLeadDetailsAction } from "@/app/actions/crm";
+import { PRIORITY_LABEL } from "@/server/modules/crm/details";
+import { listLeadTasks } from "@/server/modules/crm/tasks";
+import { listProposals, PROPOSAL_STATUS_LABEL } from "@/server/modules/crm/proposals";
+import { ButtonLink } from "@/components/ui/button";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { ActionForm } from "@/components/app/action-form";
-import { dateTime } from "@/lib/format";
+import { brl, date, dateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +32,15 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
   });
   const canWrite = ctx.permissions.has("lead:write");
   const canAssign = ctx.permissions.has("lead:assign");
-  const [stages, users] = await Promise.all([listStages(ctx), canAssign ? listAssignableUsers(ctx) : []]);
+  const [stages, users, tasks, proposals] = await Promise.all([
+    listStages(ctx),
+    canAssign ? listAssignableUsers(ctx) : [],
+    listLeadTasks(ctx, lead.id),
+    listProposals(ctx, { leadId: lead.id }),
+  ]);
+  const company = lead.company;
+  const isoDate = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "");
+  const now = Date.now();
 
   const fields: [string, React.ReactNode][] = [
     ["Contato", lead.contactName],
@@ -37,6 +50,11 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
     ["Tipo", lead.businessType ? BUSINESS_TYPES[lead.businessType] : "—"],
     ["Local", lead.city ? `${lead.city}/${lead.state ?? ""}` : "—"],
     ["Modelo de interesse", lead.interestModel ?? "—"],
+    ["Prioridade", PRIORITY_LABEL[lead.priority]],
+    ["Valor estimado", lead.estimatedValue ? brl(lead.estimatedValue.toString()) : "—"],
+    ["Previsão de fechamento", lead.expectedCloseDate ? date(lead.expectedCloseDate) : "—"],
+    ["Próximo passo", lead.nextStep ?? "—"],
+    ["Empresa vinculada", company ? <Link key="c" href={`/app/crm/empresas/${company.id}`} className="text-brand-700 underline">{company.name}</Link> : "—"],
     ["Origem", LEAD_SOURCES[lead.source]],
     ["Campanha", lead.campaign ?? "—"],
     ["Consentimento LGPD", lead.consentAt ? `${dateTime(lead.consentAt)} (política ${lead.consentPolicyVer})` : "Não registrado (cadastro manual)"],
@@ -44,8 +62,8 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
 
   return (
     <>
-      <p className="mb-2 text-sm"><Link href="/app/crm" className="text-navy-500 hover:text-navy-900">← CRM</Link></p>
       <PageHeader
+        breadcrumbs={[{ label: "CRM", href: "/app/crm" }, { label: lead.companyName ?? lead.contactName }]}
         title={lead.companyName ?? lead.contactName}
         description={<span className="flex flex-wrap items-center gap-2"><Badge tone={lead.stage.isWon ? "green" : lead.stage.isLost ? "red" : "tiffany"}>{lead.stage.name}</Badge> desde {dateTime(lead.stageChangedAt)} · responsável: {lead.assignee?.name ?? "não atribuído"}</span>}
         actions={<Link href={`/app/simulador?leadId=${lead.id}`} className="text-sm font-medium text-brand-700 hover:underline">Simular para este lead →</Link>}
@@ -60,6 +78,53 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
               </dl>
               {lead.message && <p className="mt-4 whitespace-pre-wrap rounded-lg bg-navy-50 p-3 text-sm text-navy-700">{lead.message}</p>}
               {lead.lostReason && <p className="mt-3 text-sm text-red-700">Motivo da perda: {lead.lostReason}</p>}
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader title="Tarefas e lembretes" />
+            <CardBody className="flex flex-col gap-4">
+              {tasks.length === 0 ? <p className="text-sm text-navy-500">Nenhuma tarefa.</p> : (
+                <ul className="divide-y divide-navy-50">
+                  {tasks.map((t) => {
+                    const overdue = !t.completedAt && t.dueAt.getTime() < now;
+                    return (
+                      <li key={t.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                        <span className={t.completedAt ? "text-navy-400 line-through" : "text-navy-900"}>
+                          {t.title} <span className="text-xs text-navy-500">· {dateTime(t.dueAt)} · {t.assignee?.name ?? "—"}</span>
+                          {overdue && <Badge tone="red" className="ml-2">atrasada</Badge>}
+                        </span>
+                        {!t.completedAt && canWrite && (
+                          <ActionForm action={completeTaskAction} submitLabel="Concluir" size="sm" variant="secondary"><input type="hidden" name="taskId" value={t.id} /></ActionForm>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+              {canWrite && (
+                <ActionForm action={createTaskAction} submitLabel="Adicionar tarefa" variant="secondary" size="sm">
+                  <input type="hidden" name="leadId" value={lead.id} />
+                  <div className="grid gap-3 sm:grid-cols-[1fr_12rem]">
+                    <Field label="Tarefa" htmlFor="task-title"><Input id="task-title" name="title" required minLength={3} placeholder="Ex.: Agendar visita técnica" /></Field>
+                    <Field label="Vencimento" htmlFor="task-due"><Input id="task-due" name="dueAt" type="datetime-local" required /></Field>
+                  </div>
+                </ActionForm>
+              )}
+            </CardBody>
+          </Card>
+          <Card>
+            <CardHeader title="Propostas" actions={canWrite && <ButtonLink href={`/app/crm/propostas/nova?leadId=${lead.id}`} size="sm">Nova proposta</ButtonLink>} />
+            <CardBody>
+              {proposals.length === 0 ? <p className="text-sm text-navy-500">Nenhuma proposta.</p> : (
+                <ul className="divide-y divide-navy-50 text-sm">
+                  {proposals.map((p) => (
+                    <li key={p.id} className="flex flex-wrap items-center justify-between gap-2 py-2">
+                      <Link href={`/app/crm/propostas/${p.id}`} className="font-medium text-navy-900 hover:text-brand-700">{p.number} — {p.title}</Link>
+                      <span className="flex items-center gap-2"><span className="tabular">{brl(p.versions[0]?.total.toString())}</span><Badge>{PROPOSAL_STATUS_LABEL[p.status]}</Badge></span>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </CardBody>
           </Card>
           <Card>
@@ -85,6 +150,43 @@ export default async function LeadPage({ params }: { params: Promise<{ id: strin
           </Card>
         </div>
         <div className="flex flex-col gap-6">
+          {canWrite && (
+            <Card>
+              <CardHeader title="Qualificação comercial" />
+              <CardBody>
+                <ActionForm action={updateLeadDetailsAction} submitLabel="Salvar qualificação" variant="secondary">
+                  <input type="hidden" name="leadId" value={lead.id} />
+                  <Field label="Prioridade" htmlFor="priority">
+                    <Select id="priority" name="priority" defaultValue={lead.priority}>{Object.entries(PRIORITY_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>
+                  </Field>
+                  <Field label="Valor estimado (R$)" htmlFor="estimatedValue" hint="Base da previsão de receita ponderada.">
+                    <Input id="estimatedValue" name="estimatedValue" inputMode="decimal" defaultValue={lead.estimatedValue?.toString() ?? ""} />
+                  </Field>
+                  <Field label="Previsão de fechamento" htmlFor="expectedCloseDate"><Input id="expectedCloseDate" name="expectedCloseDate" type="date" defaultValue={isoDate(lead.expectedCloseDate)} /></Field>
+                  <Field label="Próximo passo" htmlFor="nextStep"><Input id="nextStep" name="nextStep" maxLength={300} defaultValue={lead.nextStep ?? ""} /></Field>
+                </ActionForm>
+              </CardBody>
+            </Card>
+          )}
+          {canWrite && (
+            <Card>
+              <CardHeader title="Empresa e conversão" description={company?.convertedOrganization ? `Convertida em organização: ${company.convertedOrganization.name}` : undefined} />
+              <CardBody className="flex flex-col gap-4">
+                <ActionForm action={linkCompanyAction} submitLabel={company ? "Atualizar vínculo" : "Vincular empresa"} variant="secondary">
+                  <input type="hidden" name="leadId" value={lead.id} />
+                  <Field label="Nome da empresa" htmlFor="company-name"><Input id="company-name" name="name" required defaultValue={company?.name ?? lead.companyName ?? ""} /></Field>
+                  <Field label="CNPJ/CPF" htmlFor="company-doc" hint="Evita duplicidade entre empresas."><Input id="company-doc" name="document" inputMode="numeric" defaultValue={company?.document ?? ""} /></Field>
+                </ActionForm>
+                {lead.stage.isWon && company && !company.convertedOrganization && (
+                  <ActionForm action={convertLeadAction} submitLabel="Converter em organização" confirm="Criar (ou reaproveitar) a organização parceira/investidora desta empresa?">
+                    <input type="hidden" name="leadId" value={lead.id} />
+                    <Select name="kind" defaultValue="PARTNER" aria-label="Tipo de organização"><option value="PARTNER">Parceiro (50/50)</option><option value="INVESTOR">Investidor (compra integral)</option></Select>
+                  </ActionForm>
+                )}
+                {!lead.stage.isWon && <p className="text-xs text-navy-500">A conversão em organização fica disponível quando o lead estiver na etapa de ganho.</p>}
+              </CardBody>
+            </Card>
+          )}
           {canWrite && (
             <Card>
               <CardHeader title="Etapa" />

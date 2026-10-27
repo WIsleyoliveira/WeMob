@@ -51,7 +51,7 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
             </ul>
           </div>
         </div>
-        <p className="border-t border-white/5 px-4 py-4 text-center text-xs text-navy-500">© {new Date().getFullYear()} Sansol Mob. Projeções não constituem garantia de rentabilidade.</p>
+        <p className="border-t border-white/5 px-4 py-4 text-center text-xs text-navy-300">© {new Date().getFullYear()} Sansol Mob. Projeções não constituem garantia de rentabilidade.</p>
       </footer>
     </div>
   );
