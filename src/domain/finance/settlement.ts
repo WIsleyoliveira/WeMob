@@ -14,13 +14,19 @@
  *     · base negativa + rateio mensal  → repasse negativo = aporte devido pelo parceiro
  *     · base negativa + compensação    → repasse 0 e prejuízo levado ao próximo período
  *   resultado da operadora = resultado operacional − repasse
+ *   já repassado via split = Σ splits LIQUIDADOS (DONE) do parceiro no período (Asaas)
+ *   saldo do repasse  = repasse − já repassado via split   (positivo: a pagar; negativo: a receber do parceiro)
+ *   tarifas do gateway = Σ (valor − líquido) informado pelo gateway — informativo: cobertas pela taxa de sistema
  * Cada linha é arredondada a 2 casas (ROUND_HALF_UP) e os totais somam as linhas arredondadas.
  * Resultado gerencial: não substitui escrituração contábil nem apuração fiscal.
  */
 import Decimal from "decimal.js";
 
-/** 1.1.0: receita de recarga lançada manualmente passa a compor "receita de recarga" (antes: "outras receitas"); total inalterado. */
-export const SETTLEMENT_ENGINE_VERSION = "settlement-1.1.0";
+/**
+ * 1.1.0: receita de recarga lançada manualmente passa a compor "receita de recarga" (antes: "outras receitas").
+ * 1.2.0: split liquidado no gateway é descontado do repasse (saldo do repasse) e tarifas reais do gateway são exibidas.
+ */
+export const SETTLEMENT_ENGINE_VERSION = "settlement-1.2.0";
 
 export type Base = "GROSS_REVENUE" | "NET_REVENUE" | "OPERATING_RESULT";
 export type LossTreatment = "SHARE_MONTHLY" | "CARRY_FORWARD";
@@ -51,6 +57,10 @@ export interface SiteInput {
   expenses: { category: string; amount: string }[];
   /** Prejuízo acumulado vindo do fechamento anterior (compensação). */
   lossCarriedIn: string;
+  /** Valores já transferidos ao parceiro pelo split do gateway (liquidados) nas cobranças do período. */
+  splitAlreadyTransferred?: string;
+  /** Tarifas cobradas pelo gateway nas cobranças do período (informativo). */
+  gatewayFees?: string;
 }
 
 export interface SiteLine {
@@ -76,6 +86,9 @@ export interface SiteLine {
   partnerShare: string;
   lossCarriedOut: string;
   operatorResult: string;
+  partnerSplitReceived: string;
+  partnerBalance: string;
+  gatewayFees: string;
 }
 
 const D = (v: Decimal.Value) => new Decimal(v);
@@ -139,14 +152,18 @@ export function computeSiteLine(site: SiteInput, taxRules: { name: string; rate:
     partnerShare: s2(partnerShare),
     lossCarriedOut: s2(lossCarriedOut),
     operatorResult: s2(operatingResult.minus(partnerShare)),
+    partnerSplitReceived: s2(D(site.splitAlreadyTransferred ?? 0)),
+    partnerBalance: s2(partnerShare.minus(site.splitAlreadyTransferred ?? 0)),
+    gatewayFees: s2(D(site.gatewayFees ?? 0)),
   };
 }
 
-const TOTAL_KEYS = ["chargingRevenue", "otherRevenue", "gross", "taxTotal", "platformFee", "netRevenue", "royalty", "expenses", "operatingResult", "partnerShare", "operatorResult"] as const;
+const TOTAL_KEYS = ["chargingRevenue", "otherRevenue", "gross", "taxTotal", "platformFee", "netRevenue", "royalty", "expenses", "operatingResult", "partnerShare", "operatorResult", "partnerSplitReceived", "partnerBalance", "gatewayFees"] as const;
 export type Totals = Record<(typeof TOTAL_KEYS)[number], string>;
 
-export function totals(lines: Pick<SiteLine, (typeof TOTAL_KEYS)[number]>[], extraNetworkExpenses = "0"): Totals & { networkExpenses: string; networkResult: string } {
-  const t = Object.fromEntries(TOTAL_KEYS.map((k) => [k, sum(lines.map((l) => l[k])).toFixed(2)])) as Totals;
+/** Snapshots anteriores à 1.2.0 não têm os campos de split/tarifa: tratados como zero/repasse integral. */
+export function totals(lines: Partial<Pick<SiteLine, (typeof TOTAL_KEYS)[number]>>[], extraNetworkExpenses = "0"): Totals & { networkExpenses: string; networkResult: string } {
+  const t = Object.fromEntries(TOTAL_KEYS.map((k) => [k, sum(lines.map((l) => l[k] ?? (k === "partnerBalance" ? l.partnerShare ?? 0 : 0))).toFixed(2)])) as Totals;
   return { ...t, networkExpenses: D(extraNetworkExpenses).toFixed(2), networkResult: D(t.operatorResult).minus(extraNetworkExpenses).toFixed(2) };
 }
 

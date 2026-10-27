@@ -17,6 +17,10 @@ export const PERMISSIONS = [
   "payment:read",
   "payment:refund",
   "payment:reconcile",
+  "payment:review",
+  "payment:split_configure",
+  "payment:recipients_manage",
+  "payment:enable_production",
   "contract:read",
   "contract:write",
   "contract:approve",
@@ -40,10 +44,12 @@ export type Permission = (typeof PERMISSIONS)[number];
 
 const all = [...PERMISSIONS];
 /**
- * Comandos em carregadores de PRODUÇÃO: somente superadministrador (e ainda exigem OCPP_ALLOW_PRODUCTION_COMMANDS=1).
+ * Comandos em carregadores de PRODUÇÃO e habilitação de pagamentos reais: somente superadministrador
+ * (e ainda exigem OCPP_ALLOW_PRODUCTION_COMMANDS=1 / ASAAS_PRODUCTION_ENABLED=1, respectivamente).
  * O portal do parceiro é exclusivo de organizações parceiras/investidoras (perfis partner/investor).
  */
-const allButProductionCommands = all.filter((p) => p !== "station:command_production" && p !== "partner_portal:read");
+const SUPERADMIN_ONLY: Permission[] = ["station:command_production", "payment:enable_production"];
+const allButProductionCommands = all.filter((p) => !SUPERADMIN_ONLY.includes(p) && p !== "partner_portal:read");
 const staffAll = all.filter((p) => p !== "partner_portal:read");
 
 /** Perfis de sistema iniciais. Perfis adicionais podem ser criados por organização (tabela Role). */
@@ -56,7 +62,7 @@ export const SYSTEM_ROLES: Record<string, { name: string; permissions: Permissio
   },
   finance: {
     name: "Financeiro",
-    permissions: ["dashboard:read", "commercial_model:read", "simulation:run", "simulation:read", "site:read", "audit:read", "payment:read", "payment:refund", "payment:reconcile",
+    permissions: ["dashboard:read", "commercial_model:read", "simulation:run", "simulation:read", "site:read", "audit:read", "payment:read", "payment:refund", "payment:reconcile", "payment:review", "payment:split_configure", "payment:recipients_manage",
       "contract:read", "contract:write", "contract:approve", "finance:read", "finance:write", "finance:close", "finance:approve", "finance:export"],
   },
   commercial: {

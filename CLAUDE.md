@@ -21,6 +21,7 @@ npm run ocpp:server         # OCPP 1.6-J WebSocket server (separate process, por
 npm run ocpp:simulate -- <identity> <senha> [ciclo|interativo]   # simulated charger (SIMULATED stations only)
 npm run dev:users           # dev DB only: 2 admins + finance + partner test users (password in .env.dev-users, git-ignored)
 npm run setup:first-admin   # any env: roles/operator/defaults + FIRST superadmin from ADMIN_EMAIL/ADMIN_PASSWORD; refuses if one exists
+npm run asaas:homologar     # official Asaas SANDBOX check (refuses production); report in docs/homologacao/
 ```
 - Port 3000 may be taken by another local project; `.claude/launch.json` has `sansol-dev-3001`.
 
@@ -53,6 +54,8 @@ Single Next.js 15 App Router app (TypeScript, Prisma/PostgreSQL, Zod, decimal.js
 **Finance/contracts (P08):** contract terms live in immutable `ContractVersion`s (four-eyes approval; effective = approved with latest `effectiveFrom ≤ date`). Settlement math is pure in `src/domain/finance/settlement.ts` (bump `SETTLEMENT_ENGINE_VERSION` when semantics change). Monthly closing (`modules/finance/closing.ts`): preview → request → approval by another person, which recomputes and compares the SHA-256 of the snapshot (mismatch → `SUPERSEDED`). Approved periods are locked (`lockOpenPeriod` advisory lock + check) — corrections only via `ADJUSTMENT` entries in an open period. Partial unique indexes (one APPROVED/PENDING closing per period, one unresolved alert per dedupeKey, one open WO per plan) exist only in the migration SQL. Production revenue = captured − refunded payments of PRODUCTION sessions; TEST/SIMULATED never enter closings. No payout provider: never initiate transfers.
 
 **Support/alerts (P09):** tickets copy the SLA policy at creation; pauses are `PAUSE`/`RESUME` events (reason required). Alert engine (`modules/alerts/engine.ts`) + notification outbox (`notifications.ts`, consent opt-in, no channel adapter configured) + `AutomationRun` log; the cycle runs every minute inside `npm run ocpp:server`. Partner portal (`modules/partner/portal.ts`) must only ever return the partner's own lines from closing snapshots.
+
+**Asaas (P13, guide in `docs/asaas.md`):** `PAYMENT_PROVIDER=asaas` + `ASAAS_*` env vars select the official sandbox or production; production also needs `ASAAS_PRODUCTION_ENABLED=1` AND an approved `GatewayActivation` (`productionReadiness`). All HTTP goes through `payments/asaas/client.ts`; Pix is `PREPAID` (charge up front, refund the unused difference once). Charge creation is idempotent by `externalReference = charge:<chargeRequestId>` + `PaymentOperation`; on TIMEOUT never retry blindly — look up by externalReference. Local status comes only from `GET /payments/{id}` (webhooks just trigger the fetch). Split % applies to Asaas `netValue`, not gross. Tests use `tests/support/fake-asaas.ts` via `__setAsaasFetchForTests` — never the real API. Driver CPF is encrypted with `DATA_ENCRYPTION_KEY`.
 
 ## Environment
 

@@ -30,7 +30,7 @@ export interface ClosingResult {
   totals: ReturnType<typeof totals>;
   byPartner: ReturnType<typeof byPartner>;
   /** Origem dos números (para auditoria e para detectar mudança entre prévia e aprovação). */
-  sources: { payments: { id: string; net: string }[]; entries: { id: string; amount: string; category: string; siteId: string | null }[] };
+  sources: { payments: { id: string; net: string; splitDone?: string }[]; entries: { id: string; amount: string; category: string; siteId: string | null }[] };
 }
 
 export interface Validations {
@@ -64,7 +64,12 @@ export async function computeClosing(operatorId: string, period: string, tx: Tx 
     }),
     tx.payment.findMany({
       where: { environment: "PRODUCTION", status: { in: [...SETTLED] }, session: { environment: "PRODUCTION", stoppedAt: { gte: start, lt: end }, station: { operatorId } } },
-      select: { id: true, amountCaptured: true, amountRefunded: true, reconciledAt: true, session: { select: { stationId: true, station: { select: { siteId: true, ocppIdentity: true } } } } },
+      select: {
+        id: true, amountCaptured: true, amountRefunded: true, feeAmount: true, reconciledAt: true,
+        session: { select: { stationId: true, station: { select: { siteId: true, ocppIdentity: true } } } },
+        refunds: { where: { status: "REQUESTED" }, select: { id: true } },
+        splits: { select: { organizationId: true, status: true, totalValue: true } },
+      },
       orderBy: { id: "asc" },
     }),
     tx.financialEntry.findMany({ where: { operatorId, competence: period, status: { not: "CANCELLED" }, category: { in: OPERATING_CATEGORIES } }, orderBy: { id: "asc" } }),
@@ -78,6 +83,10 @@ export async function computeClosing(operatorId: string, period: string, tx: Tx 
   if (pendingPayments > 0) warnings.push(`${pendingPayments} pagamento(s) de sessões do período ainda não capturado(s): não entram na receita.`);
   const unreconciled = payments.filter((p) => !p.reconciledAt).length;
   if (unreconciled > 0) warnings.push(`${unreconciled} pagamento(s) incluído(s) ainda não conciliado(s) com o provedor.`);
+  const refundsInFlight = payments.filter((p) => p.refunds.length).length;
+  if (refundsInFlight > 0) warnings.push(`${refundsInFlight} pagamento(s) com estorno em andamento: a receita considera só estornos concluídos.`);
+  const splitsOpen = payments.flatMap((p) => p.splits).filter((x) => !["DONE", "CANCELLED", "REFUNDED"].includes(x.status)).length;
+  if (splitsOpen > 0) warnings.push(`${splitsOpen} split(s) ainda não liquidado(s): não descontados do repasse deste período.`);
 
   const prevLines = new Map(((prevClosing?.result as unknown as ClosingResult | undefined)?.lines ?? []).map((l) => [`${l.siteId}:${l.contract?.contractId}`, l]));
   const lines: SiteLine[] = [];
@@ -139,6 +148,10 @@ export async function computeClosing(operatorId: string, period: string, tx: Tx 
       manualRevenue: siteEntries.filter((e) => REVENUE_CATEGORIES.includes(e.category)).map((e) => ({ category: e.category, amount: e.amount.toString() })),
       expenses: siteEntries.filter((e) => !REVENUE_CATEGORIES.includes(e.category)).map((e) => ({ category: e.category, amount: e.amount.toString() })),
       lossCarriedIn: contract ? prevLines.get(`${site.id}:${contract.contractId}`)?.lossCarriedOut ?? "0" : "0",
+      splitAlreadyTransferred: contract
+        ? sitePayments.flatMap((p) => p.splits).filter((x) => x.status === "DONE" && x.organizationId === site.partnerOrganizationId).reduce((a, x) => a.plus(x.totalValue?.toString() ?? 0), new Decimal(0)).toFixed(2)
+        : "0",
+      gatewayFees: sitePayments.reduce((a, p) => a.plus(p.feeAmount?.toString() ?? 0), new Decimal(0)).toFixed(2),
     };
     lines.push(computeSiteLine(input, taxRules.map((r) => ({ name: r.name, rate: r.rate.toString() }))));
   }
@@ -155,7 +168,7 @@ export async function computeClosing(operatorId: string, period: string, tx: Tx 
     totals: totals(lines, netExpensesTotal),
     byPartner: byPartner(lines),
     sources: {
-      payments: payments.map((p) => ({ id: p.id, net: new Decimal(p.amountCaptured.toString()).minus(p.amountRefunded.toString()).toFixed(2) })),
+      payments: payments.map((p) => ({ id: p.id, net: new Decimal(p.amountCaptured.toString()).minus(p.amountRefunded.toString()).toFixed(2), splitDone: p.splits.filter((x) => x.status === "DONE").reduce((a, x) => a.plus(x.totalValue?.toString() ?? 0), new Decimal(0)).toFixed(2) })),
       entries: entries.map((e) => ({ id: e.id, amount: e.amount.toFixed(2), category: e.category, siteId: e.siteId })),
     },
   };
@@ -211,7 +224,8 @@ export async function approveClosing(ctx: AuthContext | null, closingId: string,
     const { end } = periodRange(c.period);
     for (const l of result.lines) {
       if (!l.contract || !l.partnerOrganizationId) continue;
-      const share = new Decimal(l.partnerShare);
+      // Saldo = repasse contratual − o que já foi transferido via split no gateway (snapshots antigos: repasse integral).
+      const share = new Decimal(l.partnerBalance ?? l.partnerShare);
       if (share.isZero()) continue;
       await tx.financialEntry.create({
         data: {
@@ -219,7 +233,7 @@ export async function approveClosing(ctx: AuthContext | null, closingId: string,
           kind: share.gt(0) ? "PAYABLE" : "RECEIVABLE",
           category: share.gt(0) ? "PARTNER_SHARE" : "PARTNER_CONTRIBUTION",
           source: "CLOSING",
-          description: `${share.gt(0) ? "Repasse" : "Aporte do parceiro"} ${c.period} — ${l.siteName} (${l.contract.contractNumber} v${l.contract.version})`,
+          description: `${share.gt(0) ? "Repasse" : "Aporte do parceiro"} ${c.period} — ${l.siteName} (${l.contract.contractNumber} v${l.contract.version})${new Decimal(l.partnerSplitReceived ?? 0).gt(0) ? ` · descontado split já recebido R$ ${l.partnerSplitReceived}` : ""}`,
           amount: share.abs().toFixed(2),
           competence: c.period,
           dueDate: new Date(end.getTime() + l.contract.paymentTermDays * 86400_000),

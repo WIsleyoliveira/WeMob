@@ -17,7 +17,8 @@
     "ocpp:server": "tsx --env-file=.env scripts/ocpp-server.ts",
     "ocpp:simulate": "tsx --env-file=.env scripts/ocpp-simulate.ts",
     "dev:users": "tsx --env-file=.env scripts/dev-users.ts",
-    "setup:first-admin": "tsx scripts/bootstrap-production.ts"
+    "setup:first-admin": "tsx scripts/bootstrap-production.ts",
+    "asaas:homologar": "tsx --env-file=.env scripts/asaas-homologar.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",

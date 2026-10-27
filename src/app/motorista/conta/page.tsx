@@ -1,6 +1,6 @@
 import { requireDriverPage } from "@/server/drivers/current";
 import { getProfile } from "@/server/drivers/service";
-import { addVehicleAction, deleteDriverAccountAction, driverLogoutAction, removeVehicleAction, updateProfileAction } from "@/app/actions/driver";
+import { setDocumentAction, addVehicleAction, deleteDriverAccountAction, driverLogoutAction, removeVehicleAction, updateProfileAction } from "@/app/actions/driver";
 import { Field, Input } from "@/components/ui/field";
 import { ActionForm } from "@/components/app/action-form";
 import { Button } from "@/components/ui/button";
@@ -38,6 +38,14 @@ export default async function ContaPage() {
             <div className="flex flex-wrap gap-3">{TYPES.map((t) => <label key={t} className="flex items-center gap-1.5"><input type="checkbox" name="connectorTypes" value={t} className="size-4 accent-brand-600" defaultChecked={t === "CCS2"} />{t}</label>)}</div>
           </fieldset>
           <Field label="Bateria (kWh, opcional)" htmlFor="batteryKwh"><Input id="batteryKwh" name="batteryKwh" inputMode="decimal" /></Field>
+        </ActionForm>
+      </section>
+      <section className="mt-4 rounded-xl border border-navy-100 bg-white p-4">
+        <h2 className="font-display font-semibold text-navy-900">CPF/CNPJ para pagamento</h2>
+        <p className="mt-1 text-sm text-navy-600">Exigido pelo gateway para emitir cobranças Pix. Fica cifrado; exibimos só os últimos dígitos.</p>
+        <p className="mt-1 text-sm">Atual: <b>{p.documentHint ?? "não informado"}</b></p>
+        <ActionForm action={setDocumentAction} submitLabel={p.documentHint ? "Atualizar documento" : "Salvar documento"} variant="secondary" size="sm" className="mt-2">
+          <Field label="CPF ou CNPJ" htmlFor="document"><Input id="document" name="document" inputMode="numeric" autoComplete="off" required minLength={11} maxLength={18} /></Field>
         </ActionForm>
       </section>
       <section className="mt-4 rounded-xl border border-navy-100 bg-white p-4 text-sm">

@@ -73,3 +73,20 @@ export async function exportPartnerStatementCsv(ctx: AuthContext | null, period:
   await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "partner.statement_exported", entityType: "PeriodClosing", entityId: s?.closingId ?? null, data: { period, rows: s?.lines.length ?? 0 } });
   return { filename: `extrato-${period}.csv`, content: statementLinesCsv(period, "fechado", s?.lines ?? []) };
 }
+
+/**
+ * Parcelas de split destinadas à PRÓPRIA organização (somente PaymentSplit.organizationId = parceiro).
+ * Valores do gateway: totalValue é o informado pelo Asaas; "liquidado" só com status DONE.
+ * Pagamentos de sandbox são marcados e nunca somados a valores de produção.
+ */
+export async function partnerSplits(ctx: AuthContext | null) {
+  requirePartner(ctx);
+  const rows = await db.paymentSplit.findMany({
+    where: { organizationId: ctx.organizationId },
+    include: { payment: { select: { createdAt: true, status: true, environment: true, method: true, amountCaptured: true, amountRefunded: true, netValue: true, feeAmount: true, session: { select: { transactionId: true, station: { select: { site: { select: { name: true } } } } } } } } },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+  const sumDone = (env: "PRODUCTION" | "SANDBOX") => rows.filter((r) => r.payment.environment === env && r.status === "DONE").reduce((a, r) => a + Number(r.totalValue ?? 0), 0);
+  return { rows, settledProduction: sumDone("PRODUCTION").toFixed(2), settledSandbox: sumDone("SANDBOX").toFixed(2), pending: rows.filter((r) => !["DONE", "CANCELLED", "REFUNDED"].includes(r.status)).length };
+}

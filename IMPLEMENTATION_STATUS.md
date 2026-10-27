@@ -1,8 +1,53 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada; homologação no sandbox oficial pendente)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P13 — Integração Asaas: Pix, split, estornos e homologação (2026-10-27)
+
+Guia completo: `docs/asaas.md`. **Produção bloqueada** até as etapas B–E (sandbox oficial, validação comercial, infraestrutura e autorização).
+
+### Fase zero (diagnóstico)
+- **Disco:** 2,0 GB livres no início (volume de dados 100%); 1,6 GB após o único build. Nada foi apagado. Pode ser liberado **pelo usuário**, com segurança: `~/.npm/_cacache` (2,6 GB, `npm cache clean --force`), `~/Library/Caches/com.microsoft.VSCode.ShipIt` (1,4 GB, instaladores antigos do VS Code), `~/Library/Caches/pnpm` (679 MB), `~/Library/Caches/pip` (496 MB), `.next` deste projeto (323 MB, recriado no build). `~/Downloads` (7,3 GB) e `~/Library/Developer` (5,0 GB) exigem revisão manual.
+- **Git:** branch `main`, último commit `5dff453` (P07–P10). Encontrado trabalho de Asaas **não commitado e não registrado** neste arquivo (~2.500 linhas: adapter, cobranças, clientes, split, ativação, migração `20261027170000_asaas_gateway`, 25 testes). Foi auditado e preservado; esta etapa o completou.
+- **Banco:** 8 migrações, dev em dia (`prisma migrate status`). Sem reset.
+- **Tipos:** 2 erros encontrados (estado `EXPIRED` ausente na tela do pedido; casts de ambiente no teste) — corrigidos.
+- **Testes na retomada:** 17 arquivos, 195 testes passando antes das mudanças desta etapa.
+
+### Defeitos encontrados e corrigidos
+| Defeito | Evidência | Correção |
+|---|---|---|
+| Ao trocar o CPF, o cliente do Asaas era reaproveitado pela `externalReference` **com o documento antigo** | Teste novo falhou com o código anterior e passou após a correção | Referência inclui hash curto do documento (`wemob:driver:<id>:<sha256[0..12]>`) |
+| Mensagem "Reembolso confirmado pelo provedor" exibida mesmo com estorno **pendente** no Asaas | Revisão de código | Mensagem conforme o status real (concluído × aguardando gateway) |
+| `DATA_ENCRYPTION_KEY` ausente no `.env` de dev: salvar CPF falharia | Revisão de configuração | Chave gerada no `.env` local (fora do Git); documentada no `.env.example` |
+| Perfis do banco de dev sem as permissões `payment:*` novas | Telas sem formulários no navegador | `npm run db:seed` (idempotente) |
+| Script `asaas:homologar` citado no código mas inexistente | Revisão | `scripts/asaas-homologar.ts` criado |
+
+### Implementado nesta etapa (sobre a base encontrada)
+- **Motorista:** CPF/CNPJ em Minha conta (validação de dígitos, cifrado AES-256-GCM, exibição mascarada); painel Pix no pedido (QR gerado a partir do copia e cola do gateway, botão copiar, valor, validade, aviso de sandbox); "Já paguei — verificar" (consulta autenticada só do próprio pedido, limitada a 6/min); estado "Pagamento expirado".
+- **Equipe:** `Pagamentos → Gateway e homologação` (configuração sem segredos, motivos do bloqueio de produção, checklist A–E, solicitar/aprovar/recusar/revogar habilitação com quatro olhos); `Pagamentos → Split e recebedores` (cadastro/validação/desativação de `walletId`, políticas versionadas com aprovação); detalhe do pagamento com método, líquido, tarifa, status no gateway, chave idempotente, split por participante e análise financeira (encerramento auditado).
+- **Parceiro:** portal com as parcelas de split **somente da própria organização** (liquidado só com `DONE`; sandbox separado de produção).
+- **Configuração:** bloco Asaas completo no `.env.example`; `npm run asaas:homologar` (recusa produção; relatório sem segredos em `docs/homologacao/`).
+
+### Testes (resultado real)
+`npx vitest run` → **17 arquivos, 197 testes passando** (inclui 27 do Asaas: os 30 cenários do prompt + troca de CPF + isolamento do painel do parceiro). `npm run lint` 0 · `npm run typecheck` 0 · `npm run build` compilado.
+Os testes do Asaas usam um **servidor falso** (`tests/support/fake-asaas.ts`) que reproduz o formato documentado — **não** provam compatibilidade com a API real.
+
+Navegador (localhost): telas de gateway, split e pagamentos renderizam o estado real ("não configurado", produção bloqueada); CPF inválido recusado; CPF válido gravado cifrado (`v1:…`, sem o número em claro) com dica `•••.•••.•••-09`; 375 px sem rolagem horizontal. **Não verificado no navegador:** painel Pix com cobrança real (exige credenciais de sandbox).
+
+### Simulado / bloqueado / pendente
+- **Bloqueado — Etapa B:** nenhuma credencial de sandbox no ambiente; `npm run asaas:homologar` recusa por configuração incompleta (verificado). Nenhuma chamada à API real foi feita.
+- **Pendente — Etapa C (comercial):** elegibilidade da recarga de VE, tarifas por método, liquidação, disponibilidade do split, regras de estorno e de cadastro de recebedores.
+- **Pendente — Etapa D (infraestrutura) e E (autorização final).**
+- **Decisão comercial pendente:** base do 50/50 (bruto × líquido após tarifas). O split do Asaas incide sobre o líquido.
+- **Limitações:** só Pix (cartão não implementado); sem cobrança complementar automática (consumo acima do pago → análise); RLS no Postgres não aplicado (isolamento na aplicação, testado); chargeback apenas sinalizado; `npm audit --omit=dev` mantém 6 altas + 1 moderada (Next, Prisma, Zod — upgrade major).
+
+### Próxima sessão
+1. Obter chave do sandbox do Asaas, configurar o `.env` local e rodar `npm run asaas:homologar`, depois `-- --aguardar-pagamento=10` confirmando no painel do sandbox.
+2. Expor o webhook (túnel temporário) e validar entrega, token e reentrega; registrar ids em `docs/homologacao/`.
+3. Com carteiras de teste, homologar o split (`PAYMENT_SPLIT_DONE`) e a divergência.
+4. Levar a lista da Etapa C ao Asaas e registrar as respostas.
 
 ## P10 — Auditoria final de segurança, qualidade e prontidão (2026-10-27)
 

@@ -740,9 +740,14 @@ model Driver {
   passwordHash String
   consentAt    DateTime
   consentVer   String
+  /// CPF/CNPJ cifrado (AES-256-GCM, DATA_ENCRYPTION_KEY). Exigido pelo Asaas para cadastrar o pagador.
+  documentEnc  String?
+  /// Últimos dígitos, só para exibição mascarada.
+  documentHint String?
   disabledAt   DateTime?
   createdAt    DateTime  @default(now())
 
+  gatewayCustomers GatewayCustomer[]
   sessions         DriverSession[]
   vehicles         Vehicle[]
   idTags           DriverIdTag[]
@@ -791,6 +796,8 @@ enum ChargeRequestStatus {
   STARTED
   FAILED
   CANCELLED
+  /// Pix não pago dentro da janela: cobrança removida no gateway.
+  EXPIRED
 }
 
 /// Pedido de recarga do motorista: liga pagamento → comando remoto → sessão OCPP.
@@ -856,31 +863,56 @@ enum PaymentEnvironment {
 }
 
 model Payment {
-  id               String             @id @default(cuid())
-  driverId         String
-  driver           Driver             @relation(fields: [driverId], references: [id])
-  sessionId        String?
-  session          ChargingSession?   @relation(fields: [sessionId], references: [id])
-  provider         String
-  environment      PaymentEnvironment
-  providerRef      String
-  status           PaymentStatus
-  currency         String             @default("BRL")
-  amountAuthorized Decimal            @default(0) @db.Decimal(14, 2)
-  amountCaptured   Decimal            @default(0) @db.Decimal(14, 2)
-  amountRefunded   Decimal            @default(0) @db.Decimal(14, 2)
-  failureReason    String?
+  id                 String             @id @default(cuid())
+  driverId           String
+  driver             Driver             @relation(fields: [driverId], references: [id])
+  sessionId          String?
+  session            ChargingSession?   @relation(fields: [sessionId], references: [id])
+  provider           String
+  environment        PaymentEnvironment
+  providerRef        String
+  status             PaymentStatus
+  currency           String             @default("BRL")
+  amountAuthorized   Decimal            @default(0) @db.Decimal(14, 2)
+  amountCaptured     Decimal            @default(0) @db.Decimal(14, 2)
+  amountRefunded     Decimal            @default(0) @db.Decimal(14, 2)
+  /// Operadora dona da cobrança (isolamento multiempresa direto).
+  operatorId         String?
+  /// PREAUTH (reserva + captura: sandbox/cartão) ou PIX (pré-pago).
+  method             String             @default("PREAUTH")
+  /// Status bruto do gateway (ex.: RECEIVED, CONFIRMED, REFUND_IN_PROGRESS).
+  remoteStatus       String?
+  /// Valor líquido informado pelo gateway após a tarifa; tarifa = valor − líquido.
+  netValue           Decimal?           @db.Decimal(14, 2)
+  feeAmount          Decimal?           @db.Decimal(14, 2)
+  /// Chave idempotente enviada ao gateway (externalReference).
+  externalReference  String?            @unique
+  pixPayload         String?
+  pixExpiresAt       DateTime?
+  invoiceUrl         String?
+  splitPolicyId      String?
+  splitPolicyVersion Int?
+  lastSyncedAt       DateTime?
+  /// Situação financeira em análise (pagamento sem recarga, consumo acima do pré-pago etc.).
+  reviewReason       String?
+  reviewOpenedAt     DateTime?
+  reviewResolvedAt   DateTime?
+  reviewResolvedById String?
+  reviewNote         String?
+  failureReason      String?
   /// Conciliação: marcado quando sessão, valor e status do provedor conferem.
-  reconciledAt     DateTime?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
+  reconciledAt       DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
 
   events        PaymentEvent[]
   refunds       Refund[]
+  splits        PaymentSplit[]
   chargeRequest ChargeRequest?
 
   @@unique([provider, providerRef])
   @@index([status])
+  @@index([operatorId, createdAt])
 }
 
 /// Evento de webhook. (provedor, eventId) único → reentrega não reprocessa.
@@ -914,6 +946,8 @@ model Refund {
   amount        Decimal      @db.Decimal(14, 2)
   status        RefundStatus @default(REQUESTED)
   providerRef   String?
+  /// Status do estorno no gateway (PENDING, DONE, CANCELLED…). SUCCEEDED somente com DONE.
+  remoteStatus  String?
   reason        String
   requestedById String
   createdAt     DateTime     @default(now())
@@ -1513,4 +1547,173 @@ model Notification {
   createdAt       DateTime            @default(now())
 
   @@index([status, nextAttemptAt])
+}
+
+// ───────────────────────── Gateway Asaas: clientes, idempotência, split e habilitação ─────────────────────────
+
+/// Pagador cadastrado no gateway: um por (provedor, ambiente, operadora, motorista); reaproveitado em retries.
+model GatewayCustomer {
+  id          String             @id @default(cuid())
+  provider    String
+  environment PaymentEnvironment
+  operatorId  String
+  driverId    String
+  driver      Driver             @relation(fields: [driverId], references: [id])
+  remoteId    String
+  createdAt   DateTime           @default(now())
+
+  @@unique([provider, environment, operatorId, driverId])
+  @@unique([provider, environment, remoteId])
+}
+
+enum PaymentOperationStatus {
+  STARTED
+  SUCCEEDED
+  FAILED
+  /// Requisição enviada sem resposta (timeout): resultado desconhecido até a verificação.
+  UNKNOWN
+}
+
+/// Operação financeira idempotente (criar cobrança, estornar, cancelar). key única por operação de negócio.
+model PaymentOperation {
+  id              String                 @id @default(cuid())
+  key             String                 @unique
+  kind            String
+  provider        String
+  environment     PaymentEnvironment
+  operatorId      String?
+  status          PaymentOperationStatus @default(STARTED)
+  chargeRequestId String?
+  paymentId       String?
+  remoteId        String?
+  attempts        Int                    @default(1)
+  lastError       String?
+  /// Resumos sem dados pessoais nem segredos.
+  request         Json?
+  response        Json?
+  createdAt       DateTime               @default(now())
+  updatedAt       DateTime               @updatedAt
+
+  @@index([status, kind])
+}
+
+enum RecipientStatus {
+  PENDING_VALIDATION
+  ACTIVE
+  DISABLED
+}
+
+/// Recebedor financeiro do split (conta Asaas do parceiro). Cadastro comercial do posto ≠ recebedor.
+model PaymentRecipient {
+  id             String             @id @default(cuid())
+  operatorId     String
+  organizationId String
+  environment    PaymentEnvironment
+  walletId       String
+  status         RecipientStatus    @default(PENDING_VALIDATION)
+  note           String?
+  createdById    String
+  validatedById  String?
+  validatedAt    DateTime?
+  disabledAt     DateTime?
+  createdAt      DateTime           @default(now())
+
+  participants SplitParticipant[]
+
+  @@unique([environment, walletId])
+  @@index([operatorId, organizationId])
+}
+
+enum SplitPolicyStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+}
+
+/// Política de split versionada, imutável após decisão (quatro olhos). Percentuais incidem sobre o netValue.
+model SplitPolicy {
+  id            String            @id @default(cuid())
+  operatorId    String
+  /// null = padrão da operadora; preenchido = específica da unidade.
+  siteId        String?
+  version       Int
+  status        SplitPolicyStatus @default(DRAFT)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  /// Tratamento das tarifas aprovado comercialmente (texto).
+  feeTreatment  String
+  reason        String
+  createdById   String
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  createdAt     DateTime          @default(now())
+
+  participants SplitParticipant[]
+
+  @@index([operatorId, siteId, status])
+}
+
+model SplitParticipant {
+  id              String            @id @default(cuid())
+  policyId        String
+  policy          SplitPolicy       @relation(fields: [policyId], references: [id])
+  /// SITE_PARTNER: recebedor ativo do parceiro da unidade; RECIPIENT: recebedor fixo.
+  kind            String
+  recipientId     String?
+  recipient       PaymentRecipient? @relation(fields: [recipientId], references: [id])
+  percentualValue Decimal?          @db.Decimal(7, 4)
+  fixedValue      Decimal?          @db.Decimal(14, 2)
+  description     String?
+}
+
+/// Split enviado em uma cobrança (cópia da política aplicada) e seu estado no gateway.
+model PaymentSplit {
+  id                 String    @id @default(cuid())
+  paymentId          String
+  payment            Payment   @relation(fields: [paymentId], references: [id])
+  operatorId         String
+  organizationId     String
+  recipientId        String?
+  walletId           String
+  percentualValue    Decimal?  @db.Decimal(7, 4)
+  fixedValue         Decimal?  @db.Decimal(14, 2)
+  /// Valor informado pelo gateway (pode mudar até a liquidação).
+  totalValue         Decimal?  @db.Decimal(14, 2)
+  externalReference  String    @unique
+  remoteId           String?
+  status             String    @default("PENDING")
+  cancellationReason String?
+  doneAt             DateTime?
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+
+  @@index([paymentId])
+  @@index([organizationId, status])
+}
+
+enum ActivationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  REVOKED
+}
+
+/// Autorização explícita para operar pagamentos REAIS. Decidida por pessoa diferente de quem solicitou.
+model GatewayActivation {
+  id            String           @id @default(cuid())
+  provider      String
+  operatorId    String
+  status        ActivationStatus @default(PENDING)
+  /// Confirmações declaradas (tarifas, split, estorno, monitoramento, suporte) e observações.
+  checklist     Json
+  requestedById String
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  revokedAt     DateTime?
+  revokedById   String?
+  createdAt     DateTime         @default(now())
+
+  @@index([provider, operatorId, status])
 }

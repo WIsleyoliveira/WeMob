@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { requirePage } from "@/server/auth/current";
 import { listPayments, PAYMENT_STATUS_LABEL } from "@/server/payments/service";
-import { activeProvider } from "@/server/payments/registry";
+import { activeProvider, providerConfigIssues } from "@/server/payments/registry";
+import { ButtonLink } from "@/components/ui/button";
 import { reconcileAction } from "@/app/actions/payments";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -19,13 +20,25 @@ export default async function PagamentosPage() {
   const ctx = await requirePage("payment:read");
   const payments = await listPayments(ctx);
   const provider = activeProvider();
+  const issues = providerConfigIssues();
+  const envLabel = provider.name === "asaas" ? (provider.environment === "SANDBOX" ? "Asaas — SANDBOX oficial (sem dinheiro real)" : "Asaas — PRODUÇÃO") : provider.name === "sandbox" ? "Simulador local (sem dinheiro real)" : "não configurado";
   const today = new Date().toISOString().slice(0, 10);
   const monthAgo = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
   return (
     <>
-      <PageHeader title="Pagamentos" description="Status sincronizado somente com o provedor (consulta ou webhook assinado). Valores do ambiente de testes não são receita." />
-      <Alert tone={provider.status === "configured" ? "warning" : "info"} className="mb-6" title={`Provedor: ${provider.status === "configured" ? `${provider.name} (${provider.environment === "SANDBOX" ? "SANDBOX — simulado, sem dinheiro real" : "produção"})` : "não configurado"}`}>
-        {provider.status === "configured" ? "Pagamentos de estações de teste usam o sandbox. Estações de produção continuam bloqueadas até um gateway real ser contratado e integrado." : "Nenhum gateway contratado. Recargas pagas estão indisponíveis; somente a demonstração (sem cobrança) funciona."}
+      <PageHeader
+        title="Pagamentos"
+        description="Status sincronizado somente com o provedor (consulta autenticada ou webhook verificado). Valores de sandbox não são receita."
+        actions={<><ButtonLink href="/app/pagamentos/gateway" variant="secondary">Gateway e homologação</ButtonLink><ButtonLink href="/app/pagamentos/split" variant="secondary">Split e recebedores</ButtonLink></>}
+      />
+      <Alert tone={provider.status === "configured" && provider.environment === "PRODUCTION" ? "danger" : provider.status === "configured" ? "warning" : "info"} className="mb-6" title={`Provedor: ${envLabel}`}>
+        {provider.status === "configured"
+          ? provider.environment === "SANDBOX"
+            ? "Cobranças de estações de teste usam o ambiente de testes. Estações de produção continuam bloqueadas até a homologação e a habilitação aprovada."
+            : "Gateway em produção. Cobranças reais só ocorrem com habilitação aprovada na plataforma (ver Gateway e homologação)."
+          : issues.length
+            ? `Configuração incompleta: ${issues.join(" ")}`
+            : "Nenhum gateway configurado. Recargas pagas estão indisponíveis; somente a demonstração (sem cobrança) funciona."}
       </Alert>
       {ctx.permissions.has("payment:reconcile") && (
         <Card className="mb-6">

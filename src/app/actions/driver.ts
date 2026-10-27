@@ -7,7 +7,8 @@ import { toActionState, type ActionState } from "@/server/action-result";
 import { DRIVER_COOKIE, loginDriver, logoutDriver, signupDriver } from "@/server/drivers/auth";
 import { getDriver } from "@/server/drivers/current";
 import { cancelChargeRequest, startCharge, stopCharge } from "@/server/drivers/charging";
-import { addVehicle, createSupportRequest, deleteMyAccount, rateSession, removeVehicle, updateProfile } from "@/server/drivers/service";
+import { addVehicle, createSupportRequest, deleteMyAccount, rateSession, refreshMyPayment, removeVehicle, setMyDocument, updateProfile } from "@/server/drivers/service";
+import { PAYMENT_STATUS_LABEL } from "@/server/payments/service";
 
 const s = (f: FormData, k: string) => {
   const v = f.get(k);
@@ -103,4 +104,19 @@ export async function deleteDriverAccountAction(_p: ActionState, f: FormData): P
   if (r.status !== "ok") return r;
   (await cookies()).delete(DRIVER_COOKIE);
   redirect("/motorista/entrar");
+}
+
+export async function setDocumentAction(_p: ActionState, f: FormData): Promise<ActionState> {
+  const driver = await getDriver();
+  const r = await toActionState(() => setMyDocument(driver, { document: f.get("document") }), "Documento salvo. Ele fica cifrado e só é enviado ao gateway para emitir a cobrança.");
+  revalidatePath("/motorista/conta");
+  return r;
+}
+
+export async function refreshPaymentAction(_p: ActionState, f: FormData): Promise<ActionState> {
+  const driver = await getDriver();
+  const r = await toActionState(() => refreshMyPayment(driver, String(f.get("requestId"))));
+  revalidatePath(`/motorista/pedido/${f.get("requestId")}`);
+  if (r.status !== "ok" || !r.data) return r as ActionState;
+  return { status: "ok", message: r.data.status === "PENDING" ? "O gateway ainda não confirmou o pagamento. Se você acabou de pagar, aguarde alguns instantes." : `Situação no gateway: ${PAYMENT_STATUS_LABEL[r.data.status]}.` };
 }

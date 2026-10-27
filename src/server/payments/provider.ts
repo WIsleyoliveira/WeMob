@@ -4,12 +4,59 @@
  */
 export type ProviderStatus = "PENDING" | "AUTHORIZED" | "CAPTURED" | "PARTIALLY_REFUNDED" | "REFUNDED" | "FAILED" | "CANCELLED" | "DISPUTED";
 
+export interface ProviderRefund {
+  status: string;
+  value: string;
+  description?: string | null;
+}
+
+export interface ProviderSplit {
+  remoteId?: string | null;
+  walletId: string;
+  status: string;
+  totalValue?: string | null;
+  externalReference?: string | null;
+  cancellationReason?: string | null;
+}
+
 export interface ProviderPayment {
   providerRef: string;
   status: ProviderStatus;
   amountAuthorized: string;
   amountCaptured: string;
   amountRefunded: string;
+  /** Campos opcionais informados por gateways reais (Asaas). */
+  remoteStatus?: string;
+  netValue?: string | null;
+  refundPending?: boolean;
+  refunds?: ProviderRefund[];
+  splits?: ProviderSplit[];
+  externalReference?: string | null;
+  invoiceUrl?: string | null;
+  createdAt?: string | null;
+}
+
+export interface PixQrCode {
+  payload: string;
+  encodedImage?: string;
+  expirationDate?: string | null;
+}
+
+/** Instrução de split enviada na criação da cobrança (cópia da política aprovada). */
+export interface SplitInstruction {
+  walletId: string;
+  percentualValue?: string;
+  fixedValue?: string;
+  externalReference: string;
+  description?: string;
+}
+
+export interface ChargeOptions {
+  /** Chave idempotente da operação de negócio, enviada como externalReference. */
+  externalReference: string;
+  customerRemoteId?: string;
+  description?: string;
+  split?: SplitInstruction[];
 }
 
 export interface WebhookEvent {
@@ -22,11 +69,23 @@ export interface PaymentProvider {
   readonly name: string;
   readonly environment: "SANDBOX" | "PRODUCTION";
   readonly status: "configured" | "not_configured";
-  /** Pré-autorização (reserva) do valor máximo da recarga. */
-  authorize(amount: string, metadata: Record<string, string>): Promise<ProviderPayment>;
+  /**
+   * PREAUTH: reserva o valor máximo e captura o apurado (sandbox/cartão).
+   * PREPAID: o motorista paga antes (Pix); ao final, a diferença não consumida é estornada.
+   */
+  readonly flow?: "PREAUTH" | "PREPAID";
+  /** true: o webhook é persistido e respondido 200 mesmo se o processamento falhar (fila do provedor não pausa). */
+  readonly ackWebhookBeforeProcessing?: boolean;
+  /** Pré-autorização (PREAUTH) ou criação da cobrança pré-paga (PREPAID). */
+  authorize(amount: string, metadata: Record<string, string>, options?: ChargeOptions): Promise<ProviderPayment>;
   capture(providerRef: string, amount: string): Promise<ProviderPayment>;
   cancel(providerRef: string): Promise<ProviderPayment>;
-  refund(providerRef: string, amount: string): Promise<ProviderPayment>;
+  refund(providerRef: string, amount: string, options?: { description?: string }): Promise<ProviderPayment>;
+  /** Recuperação após timeout: encontra a cobrança criada com a chave idempotente. */
+  findByExternalReference?(externalReference: string): Promise<ProviderPayment[]>;
+  /** Conciliação: cobranças remotas criadas no intervalo. */
+  listRemote?(range: { from: Date; to: Date }): Promise<ProviderPayment[]>;
+  getPixQrCode?(providerRef: string): Promise<PixQrCode>;
   /** Fonte de verdade do status. */
   fetch(providerRef: string): Promise<ProviderPayment>;
   /** Verifica assinatura e extrai o evento. Lança erro se inválido. */

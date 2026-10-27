@@ -26,7 +26,7 @@ export type CallOutcome = { result: Record<string, unknown> } | { error: { code:
 
 /** Autorização de idTag. Ainda não há cadastro de motoristas/cartões (P07): produção recusa tudo. */
 export interface IdTagAuthorizer {
-  authorize(idTag: string, station: Pick<ChargingStation, "environment">): Promise<"Accepted" | "Invalid" | "Blocked">;
+  authorize(idTag: string, station: Pick<ChargingStation, "id" | "environment" | "operatorId">): Promise<"Accepted" | "Invalid" | "Blocked">;
 }
 export const defaultAuthorizer: IdTagAuthorizer = {
   async authorize(idTag, station) {

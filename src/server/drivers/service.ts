@@ -5,6 +5,11 @@ import { notFound, AppError } from "@/server/errors";
 import { effectiveStatus, isStationFresh, type ConnectorStatus } from "@/domain/stations/status";
 import { currentTariff, sessionEnergyWh } from "@/server/modules/stations/service";
 import { hashPassword, verifyPassword } from "@/server/auth/password";
+import { encryptField } from "@/server/crypto";
+import { documentHint, isValidDocument, onlyDigits } from "@/domain/br/document";
+import { hit } from "@/server/rate-limit";
+import { getProvider } from "@/server/payments/registry";
+import { refreshFromProvider } from "@/server/payments/charges";
 import { requireDriver, type DriverContext } from "./auth";
 import { sessionAmount } from "./charging";
 
@@ -12,7 +17,7 @@ export async function getProfile(driver: DriverContext | null) {
   requireDriver(driver);
   return db.driver.findUniqueOrThrow({
     where: { id: driver.driverId },
-    select: { id: true, name: true, email: true, phone: true, createdAt: true, vehicles: { orderBy: { createdAt: "asc" } }, idTags: { where: { revokedAt: null }, select: { idTag: true, kind: true } } },
+    select: { id: true, name: true, email: true, phone: true, documentHint: true, createdAt: true, vehicles: { orderBy: { createdAt: "asc" } }, idTags: { where: { revokedAt: null }, select: { idTag: true, kind: true } } },
   });
 }
 
@@ -182,4 +187,29 @@ export async function deleteMyAccount(driver: DriverContext | null, raw: unknown
     db.supportRequest.updateMany({ where: { driverId: d.id }, data: { message: "[removido a pedido do titular]" } }),
     db.auditEvent.create({ data: { action: "driver.account_deleted", entityType: "Driver", entityId: d.id } }),
   ]);
+}
+
+/** CPF/CNPJ do pagador (exigido pelo Asaas): validado, cifrado em repouso e exibido só mascarado. */
+export async function setMyDocument(driver: DriverContext | null, raw: unknown) {
+  requireDriver(driver);
+  const { document } = z.object({ document: z.string().trim().min(11).max(18) }).parse(raw);
+  if (!isValidDocument(document)) throw new AppError("VALIDATION", "CPF/CNPJ inválido.");
+  const digits = onlyDigits(document);
+  await db.driver.update({ where: { id: driver.driverId }, data: { documentEnc: encryptField(digits), documentHint: documentHint(digits) } });
+  // Cadastro no gateway com documento antigo deixa de valer: será recriado/reaproveitado pela chave externa.
+  await db.gatewayCustomer.deleteMany({ where: { driverId: driver.driverId } });
+  await db.auditEvent.create({ data: { action: "driver.document_updated", entityType: "Driver", entityId: driver.driverId } });
+}
+
+/**
+ * "Já paguei": consulta autenticada ao gateway para o pagamento do PRÓPRIO pedido. O navegador não informa
+ * status algum — apenas pede uma nova consulta. Limitado para não consumir a cota de requisições do provedor.
+ */
+export async function refreshMyPayment(driver: DriverContext | null, requestId: string) {
+  requireDriver(driver);
+  const r = await db.chargeRequest.findFirst({ where: { id: requestId, driverId: driver.driverId }, include: { payment: true } });
+  if (!r?.payment) throw notFound("Pedido sem pagamento.");
+  if (!(await hit(`pay-refresh:${driver.driverId}`, 6, 60_000))) throw new AppError("RATE_LIMITED", "Aguarde alguns segundos antes de verificar de novo.");
+  const p = await refreshFromProvider(r.payment.id, getProvider(r.payment.provider));
+  return { status: p.status };
 }

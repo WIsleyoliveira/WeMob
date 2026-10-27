@@ -5,8 +5,13 @@
  *
  * Regras de ambiente:
  * - SIMULATED: demonstração, sem cobrança (nenhum pagamento é criado).
- * - TEST: exige provedor configurado (sandbox aceito) e pré-autorização antes do início.
- * - PRODUCTION: exige provedor REAL de produção — nenhum está implementado, então é bloqueado.
+ * - TEST: exige provedor em ambiente de testes (sandbox local ou sandbox oficial do Asaas).
+ * - PRODUCTION: exige Asaas em produção + habilitação aprovada na plataforma (productionReadiness).
+ *
+ * Fluxos de pagamento:
+ * - PREAUTH (sandbox local): reserva → recarga → captura do apurado.
+ * - PREPAID (Asaas Pix): Pix pago e CONFIRMADO pelo gateway → recarga → estorno da diferença não consumida.
+ * Comando enviado ≠ recarga iniciada: só a StartTransaction do carregador vincula a sessão.
  */
 import Decimal from "decimal.js";
 import { z } from "zod";
@@ -18,11 +23,15 @@ import { AppError, notFound } from "@/server/errors";
 import { effectiveStatus, type ConnectorStatus } from "@/domain/stations/status";
 import { currentTariff } from "@/server/modules/stations/service";
 import { activeProvider } from "@/server/payments/registry";
-import { capturePayment, cancelPayment, onPaymentStateChange, applyProviderState } from "@/server/payments/service";
+import { cancelPayment, onPaymentStateChange, openReview, settleSessionPayment } from "@/server/payments/service";
+import { createChargePayment } from "@/server/payments/charges";
+import { productionReadiness } from "@/server/payments/activation";
 import type { IdTagAuthorizer } from "@/server/ocpp/handler";
 import { requireDriver, type DriverContext } from "./auth";
 
 export const START_TIMEOUT_MS = 3 * 60_000;
+/** Janela para pagar o Pix antes de a cobrança ser removida no gateway. */
+export const pixPaymentWindowMs = () => Math.min(60, Math.max(3, Number(process.env.PIX_PAYMENT_WINDOW_MINUTES ?? 15) || 15)) * 60_000;
 
 export function preauthAmount() {
   const v = Number(process.env.PAYMENT_PREAUTH_AMOUNT ?? 100);
@@ -55,10 +64,12 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
   if (!tariff) throw new AppError("VALIDATION", "Estação sem tarifa vigente: início bloqueado.");
   const demo = station.environment === "SIMULATED";
   const provider = activeProvider();
-  if (station.environment === "PRODUCTION" && !(provider.status === "configured" && provider.environment === "PRODUCTION")) {
-    throw new AppError("VALIDATION", "Pagamentos ainda não estão disponíveis para estações reais. Recarga pelo aplicativo indisponível.");
+  if (station.environment === "PRODUCTION") {
+    const ready = await productionReadiness(station.operatorId);
+    if (!ready.allowed) throw new AppError("VALIDATION", "Pagamentos ainda não estão disponíveis para estações reais. Recarga pelo aplicativo indisponível.");
   }
-  if (station.environment === "TEST" && provider.status !== "configured") throw new AppError("VALIDATION", "Provedor de pagamento (sandbox) não configurado para a estação de teste.");
+  if (station.environment === "TEST" && !(provider.status === "configured" && provider.environment === "SANDBOX")) throw new AppError("VALIDATION", "Provedor de pagamento em ambiente de testes não configurado para a estação de teste.");
+  if (!demo && provider.flow === "PREPAID" && !(await db.driver.findUnique({ where: { id: driver.driverId } }))?.documentEnc) throw new AppError("VALIDATION", "Informe seu CPF em Minha conta para pagar com Pix.");
 
   const open = await db.chargeRequest.findFirst({ where: { driverId: driver.driverId, status: { in: ["AWAITING_PAYMENT", "START_REQUESTED", "STARTED"] }, session: { is: null } } });
   if (open) throw new AppError("CONFLICT", "Você já tem um pedido de recarga em andamento.");
@@ -75,52 +86,63 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
 
   if (demo) return issueStart(request.id);
 
-  // Pré-autorização: valor reservado, NÃO cobrado. Status decidido pelo provedor.
+  // PREAUTH: valor reservado, NÃO cobrado. PREPAID: Pix a pagar (valor máximo da recarga; a sobra é devolvida).
+  // O pagamento é vinculado ao pedido ANTES de aplicar o estado, para o ouvinte encontrar o pedido.
   try {
-    const p = await provider.authorize(preauthAmount(), { chargeRequestId: request.id, driverId: driver.driverId });
-    const payment = await db.payment.create({
-      data: {
-        driverId: driver.driverId, provider: provider.name, environment: provider.environment, providerRef: p.providerRef,
-        status: "PENDING", amountAuthorized: p.amountAuthorized,
-      },
+    const payment = await createChargePayment({
+      provider, operatorId: station.operatorId, siteId: station.siteId, stationEnvironment: station.environment, driverId: driver.driverId, chargeRequestId: request.id,
+      amount: preauthAmount(), description: `Recarga ${identity} conector ${connectorId}`,
     });
     request = await db.chargeRequest.update({ where: { id: request.id }, data: { paymentId: payment.id } });
-    await applyProviderState(payment, p, "authorize"); // dispara continueAfterPayment pelo listener
+    await continueAfterPayment(payment.id); // reservado/pago → inicia; recusado → pedido falha (sem exceção)
   } catch (e) {
-    await db.chargeRequest.update({ where: { id: request.id }, data: { status: "FAILED", failure: `Pagamento: ${e instanceof Error ? e.message : String(e)}` } });
+    await db.chargeRequest.update({ where: { id: request.id }, data: { status: "FAILED", failure: `Pagamento: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) } });
+    if (e instanceof AppError) throw e;
     throw new AppError("VALIDATION", "Não foi possível autorizar o pagamento. Nenhum valor foi cobrado.");
   }
   return db.chargeRequest.findUniqueOrThrow({ where: { id: request.id } });
 }
 
-async function issueStart(requestId: string) {
-  const req = await db.chargeRequest.findUniqueOrThrow({ where: { id: requestId } });
-  const cmd = await db.remoteCommand.create({
-    data: { stationId: req.stationId, type: "REMOTE_START", payload: { connectorId: req.connectorId, idTag: req.idTag }, requestedById: `driver:${req.driverId}` },
+/** Emite o RemoteStart uma única vez: a transição AWAITING_PAYMENT→START_REQUESTED é condicional (eventos concorrentes). */
+async function issueStart(requestId: string, from: "AWAITING_PAYMENT" | "START_REQUESTED" = "AWAITING_PAYMENT") {
+  return db.$transaction(async (tx) => {
+    const claimed = from === "START_REQUESTED" ? 1 : (await tx.chargeRequest.updateMany({ where: { id: requestId, status: "AWAITING_PAYMENT" }, data: { status: "START_REQUESTED" } })).count;
+    const req = await tx.chargeRequest.findUniqueOrThrow({ where: { id: requestId } });
+    if (claimed !== 1) return req;
+    const cmd = await tx.remoteCommand.create({
+      data: { stationId: req.stationId, type: "REMOTE_START", payload: { connectorId: req.connectorId, idTag: req.idTag }, requestedById: `driver:${req.driverId}` },
+    });
+    await audit({ action: "charge.start_authorized", entityType: "ChargeRequest", entityId: req.id, data: { paymentId: req.paymentId, commandId: cmd.id } }, tx);
+    return tx.chargeRequest.update({ where: { id: req.id }, data: { status: "START_REQUESTED", commandId: cmd.id } });
   });
-  return db.chargeRequest.update({ where: { id: req.id }, data: { status: "START_REQUESTED", commandId: cmd.id } });
+}
+
+async function continueAfterPayment(paymentId: string) {
+  const payment = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
+  const req = await db.chargeRequest.findUnique({ where: { paymentId: payment.id } });
+  if (!req) return;
+  const funded = (payment.method === "PREAUTH" && payment.status === "AUTHORIZED") || (payment.method === "PIX" && payment.status === "CAPTURED");
+  if (funded && req.status === "AWAITING_PAYMENT") await issueStart(req.id);
+  else if (funded && payment.method === "PIX" && ["CANCELLED", "EXPIRED", "FAILED"].includes(req.status) && !req.sessionId)
+    await openReview(payment.id, `Pix pago com o pedido ${req.status === "EXPIRED" ? "expirado" : req.status === "CANCELLED" ? "cancelado" : "falho"}: recarga não iniciada; avaliar estorno.`);
+  if (["FAILED", "CANCELLED"].includes(payment.status) && ["AWAITING_PAYMENT", "START_REQUESTED"].includes(req.status) && !req.sessionId) {
+    await db.chargeRequest.update({ where: { id: req.id }, data: { status: payment.method === "PIX" && payment.status === "CANCELLED" ? "EXPIRED" : "FAILED", failure: `Pagamento ${payment.status === "FAILED" ? "recusado" : payment.method === "PIX" ? "não realizado no prazo" : "cancelado"}.` } });
+  }
 }
 
 /** Reação a mudanças de pagamento (síncronas ou por webhook). */
-onPaymentStateChange("charge-flow", async (payment) => {
-  const req = await db.chargeRequest.findUnique({ where: { paymentId: payment.id } });
-  if (!req) return;
-  if (payment.status === "AUTHORIZED" && req.status === "AWAITING_PAYMENT") await issueStart(req.id);
-  if (["FAILED", "CANCELLED"].includes(payment.status) && ["AWAITING_PAYMENT", "START_REQUESTED"].includes(req.status) && !req.sessionId) {
-    await db.chargeRequest.update({ where: { id: req.id }, data: { status: "FAILED", failure: `Pagamento ${payment.status === "FAILED" ? "recusado" : "cancelado"}.` } });
-  }
-});
+onPaymentStateChange("charge-flow", async (payment) => continueAfterPayment(payment.id));
 
 /** Autorização de idTag no carregador, usada pelo servidor OCPP. */
 export const driverAwareAuthorizer: IdTagAuthorizer = {
   async authorize(idTag, station) {
-    if (station.environment === "PRODUCTION") return "Invalid"; // sem gateway de produção configurado
+    if (station.environment === "PRODUCTION" && !(await productionReadiness(station.operatorId)).allowed) return "Invalid"; // produção não habilitada
     if (/^(SIM|TEST)-/.test(idTag)) return "Accepted"; // tags de bancada (equipe), nunca cobradas
     const tag = await db.driverIdTag.findUnique({ where: { idTag }, include: { driver: true } });
     if (!tag || tag.revokedAt || tag.driver.disabledAt) return "Invalid";
     if (station.environment === "SIMULATED") return "Accepted";
-    // TEST: exige pedido com pagamento autorizado (evita sessão sem pagamento iniciada no local)
-    const req = await db.chargeRequest.findFirst({ where: { idTag, status: "START_REQUESTED", payment: { status: "AUTHORIZED" } } });
+    // TEST/PRODUÇÃO: exige pedido com pagamento garantido (reservado ou Pix confirmado) — evita sessão sem pagamento.
+    const req = await db.chargeRequest.findFirst({ where: { idTag, stationId: station.id, status: "START_REQUESTED", payment: { OR: [{ method: "PREAUTH", status: "AUTHORIZED" }, { method: "PIX", status: "CAPTURED" }] } } });
     return req ? "Accepted" : "Invalid";
   },
 };
@@ -151,26 +173,47 @@ export async function onSessionStopped(sessionId: string) {
   if (s.status !== "COMPLETED" || s.stopReason?.startsWith("AUTH_")) return;
   const { amount } = sessionAmount(s);
   await db.chargingSession.update({ where: { id: s.id }, data: { amount: amount.toFixed(2) } });
-  const payment = s.payments.find((p) => p.status === "AUTHORIZED");
+  const payment = s.payments.find((p) => (p.method === "PREAUTH" && p.status === "AUTHORIZED") || (p.method === "PIX" && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(p.status)));
   if (!payment) return;
   try {
-    if (amount.isZero()) await cancelPayment(payment.id);
-    else await capturePayment(payment.id, amount);
+    await settleSessionPayment(payment.id, s.id, amount);
   } catch (e) {
-    log.error("payment_capture_failed", { sessionId: s.id, paymentId: payment.id, error: e instanceof Error ? e.message : String(e) });
+    log.error("payment_settlement_failed", { sessionId: s.id, paymentId: payment.id, error: e instanceof Error ? e.message : String(e) });
   }
 }
 
-/** Pedidos sem sessão após o prazo: falham e a pré-autorização é cancelada. */
+/**
+ * Pedidos parados:
+ * - aguardando Pix além da janela → cobrança removida no gateway (se o gateway mostrar pago, a recarga segue);
+ * - aguardando o carregador além do prazo → pedido falha; reserva (PREAUTH) cancelada; Pix já pago vai para
+ *   ANÁLISE (sem estorno automático: verificar se houve consumo antes de devolver).
+ */
 export async function expireStaleChargeRequests(now = new Date()) {
   const stale = await db.chargeRequest.findMany({
     where: { status: { in: ["START_REQUESTED", "AWAITING_PAYMENT"] }, sessionId: null, createdAt: { lt: new Date(now.getTime() - START_TIMEOUT_MS) } },
+    include: { payment: true },
   });
+  let n = 0;
   for (const r of stale) {
-    await db.chargeRequest.update({ where: { id: r.id }, data: { status: "FAILED", failure: "Carregador não iniciou a recarga dentro do prazo." } });
-    if (r.paymentId) await cancelPayment(r.paymentId).catch((e) => log.error("payment_cancel_failed", { paymentId: r.paymentId, error: String(e) }));
+    const pix = r.payment?.method === "PIX";
+    if (r.status === "AWAITING_PAYMENT" && pix && now.getTime() - r.createdAt.getTime() < pixPaymentWindowMs()) continue;
+    n++;
+    if (r.status === "AWAITING_PAYMENT" && pix && r.paymentId) {
+      const after = await cancelPayment(r.paymentId).catch((e) => {
+        log.error("payment_cancel_failed", { paymentId: r.paymentId, error: String(e) });
+        return null;
+      });
+      if (after?.status === "CANCELLED") await db.chargeRequest.updateMany({ where: { id: r.id, status: "AWAITING_PAYMENT" }, data: { status: "EXPIRED", failure: "Pix não pago dentro do prazo; cobrança removida." } });
+      continue;
+    }
+    const upd = await db.chargeRequest.updateMany({ where: { id: r.id, status: r.status }, data: { status: "FAILED", failure: "Carregador não iniciou a recarga dentro do prazo." } });
+    if (upd.count !== 1 || !r.paymentId) continue;
+    if (pix) {
+      if (r.payment && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(r.payment.status)) await openReview(r.paymentId, "Pix pago e carregador não iniciou a recarga no prazo: avaliar estorno.");
+      else await cancelPayment(r.paymentId).catch((e) => log.error("payment_cancel_failed", { paymentId: r.paymentId, error: String(e) }));
+    } else await cancelPayment(r.paymentId).catch((e) => log.error("payment_cancel_failed", { paymentId: r.paymentId, error: String(e) }));
   }
-  return stale.length;
+  return n;
 }
 
 export async function cancelChargeRequest(driver: DriverContext | null, requestId: string) {
@@ -178,8 +221,12 @@ export async function cancelChargeRequest(driver: DriverContext | null, requestI
   const r = await db.chargeRequest.findFirst({ where: { id: requestId, driverId: driver.driverId } });
   if (!r) throw notFound("Pedido não encontrado.");
   if (r.sessionId || !["AWAITING_PAYMENT", "START_REQUESTED"].includes(r.status)) throw new AppError("CONFLICT", "A recarga já começou; use “Encerrar recarga”.");
-  await db.chargeRequest.update({ where: { id: r.id }, data: { status: "CANCELLED" } });
-  if (r.paymentId) await cancelPayment(r.paymentId);
+  const upd = await db.chargeRequest.updateMany({ where: { id: r.id, status: r.status, sessionId: null }, data: { status: "CANCELLED" } });
+  if (upd.count !== 1) throw new AppError("CONFLICT", "O pedido mudou de situação; atualize a página.");
+  if (!r.paymentId) return;
+  const after = await cancelPayment(r.paymentId);
+  // Pix já pago não é removível: o caso vai para análise (o estorno é decidido pela equipe).
+  if (after.method === "PIX" && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(after.status)) await openReview(after.id, "Pix pago e pedido cancelado pelo motorista antes do início: avaliar estorno.");
 }
 
 /** Encerramento pelo motorista: somente a própria sessão ativa. */

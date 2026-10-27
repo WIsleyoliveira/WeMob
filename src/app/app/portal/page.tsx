@@ -1,5 +1,5 @@
 import { requirePage } from "@/server/auth/current";
-import { partnerContracts, partnerIndicators, partnerStatements } from "@/server/modules/partner/portal";
+import { partnerContracts, partnerIndicators, partnerSplits, partnerStatements } from "@/server/modules/partner/portal";
 import { BASE_LABEL } from "@/server/modules/contracts/service";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 export default async function PortalPage() {
   const ctx = await requirePage("partner_portal:read");
   if (ctx.orgKind === "OPERATOR") return <Alert tone="info">O portal é exclusivo de parceiros e investidores. A operadora acompanha estes dados em Financeiro e Contratos.</Alert>;
-  const [contracts, statements, ind] = await Promise.all([partnerContracts(ctx), partnerStatements(ctx), partnerIndicators(ctx)]);
+  const [contracts, statements, ind, splits] = await Promise.all([partnerContracts(ctx), partnerStatements(ctx), partnerIndicators(ctx), partnerSplits(ctx)]);
   const conns = ind.perConnector;
   const availability = conns.length ? conns.reduce((a, c) => a + c.availability, 0) / conns.length : null;
   return (
@@ -64,6 +64,33 @@ export default async function PortalPage() {
           )}
         </Card>
       ))}
-    </>
+          <Card className="mt-6">
+        <CardHeader title="Repasses automáticos (split Asaas)" description="Parcelas das cobranças das suas unidades destinadas à sua carteira. Percentuais incidem sobre o valor líquido (após tarifas do gateway). “Liquidado” somente após confirmação do Asaas." />
+        {splits.rows.length === 0 ? <CardBody><p className="text-sm text-navy-500">Nenhuma cobrança com split para a sua organização. Repasses seguem pelos extratos mensais acima.</p></CardBody> : (
+          <>
+            <CardBody className="grid gap-3 sm:grid-cols-3 text-sm">
+              <p>Liquidado (produção): <b className="tabular">{brl(splits.settledProduction)}</b></p>
+              <p>Em processamento: <b>{splits.pending}</b></p>
+              {Number(splits.settledSandbox) > 0 && <p className="text-amber-800">Sandbox (sem dinheiro real): {brl(splits.settledSandbox)}</p>}
+            </CardBody>
+            <Table className="text-xs">
+              <thead><tr><th>Data</th><th>Unidade</th><th className="text-right">Cobrado</th><th className="text-right">Líquido</th><th className="text-right">Sua parcela</th><th>Status</th></tr></thead>
+              <tbody>
+                {splits.rows.map((r) => (
+                  <tr key={r.id}>
+                    <td>{dateTime(r.payment.createdAt)} {r.payment.environment === "SANDBOX" && <Badge tone="amber">sandbox</Badge>}</td>
+                    <td>{r.payment.session?.station.site.name ?? "—"}</td>
+                    <td className="tabular text-right">{brl(r.payment.amountCaptured.toString())}</td>
+                    <td className="tabular text-right">{r.payment.netValue ? brl(r.payment.netValue.toString()) : "—"}</td>
+                    <td className="tabular text-right">{r.totalValue ? brl(r.totalValue.toString()) : r.percentualValue ? `${r.percentualValue}% (a apurar)` : "—"}</td>
+                    <td><Badge tone={r.status === "DONE" ? "green" : ["CANCELLED", "BLOCKED_BY_VALUE_DIVERGENCE", "REFUNDED"].includes(r.status) ? "red" : "neutral"}>{r.status === "DONE" ? "liquidado" : r.status === "BLOCKED_BY_VALUE_DIVERGENCE" ? "bloqueado (divergência)" : r.status}</Badge></td>
+                  </tr>
+                ))}
+              </tbody>
+            </Table>
+          </>
+        )}
+      </Card>
+</>
   );
 }
