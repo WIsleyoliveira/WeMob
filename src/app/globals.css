@@ -1,0 +1,64 @@
+@import "tailwindcss";
+
+/* ── Sansol Mob design tokens ─────────────────────────────────────────────
+   Verde: marca. Azul-marinho: base institucional. Tiffany: destaques pontuais. */
+@theme {
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-display: var(--font-manrope), var(--font-inter), ui-sans-serif, sans-serif;
+
+  --color-brand-50: #ecfbf3;
+  --color-brand-100: #d1f5e2;
+  --color-brand-200: #a6eac8;
+  --color-brand-300: #6dd8a8;
+  --color-brand-400: #36bf85;
+  --color-brand-500: #16a36b;
+  --color-brand-600: #0c8457;
+  --color-brand-700: #0b6948;
+  --color-brand-800: #0c533b;
+  --color-brand-900: #0b4432;
+
+  --color-navy-50: #f2f5f9;
+  --color-navy-100: #e3e9f1;
+  --color-navy-200: #c7d2e1;
+  --color-navy-300: #9aabc4;
+  --color-navy-400: #6a7f9e;
+  --color-navy-500: #4a5f7f;
+  --color-navy-600: #384b67;
+  --color-navy-700: #2a3a52;
+  --color-navy-800: #172539;
+  --color-navy-900: #0d1828;
+  --color-navy-950: #070f1b;
+
+  --color-tiffany-300: #7fe0dc;
+  --color-tiffany-400: #3fcbc6;
+  --color-tiffany-500: #12b3ad;
+  --color-tiffany-600: #0b8f8b;
+
+  --radius-card: 14px;
+  --shadow-card: 0 1px 2px rgb(13 24 40 / 0.04), 0 4px 16px -8px rgb(13 24 40 / 0.10);
+  --animate-fade-in: fade-in 180ms ease-out both;
+
+  @keyframes fade-in {
+    from { opacity: 0; transform: translateY(4px); }
+    to { opacity: 1; transform: none; }
+  }
+}
+
+:root {
+  --bg: #f7f9fb;
+  --surface: #ffffff;
+  --text: var(--color-navy-900);
+  --muted: var(--color-navy-500);
+  --border: var(--color-navy-100);
+}
+
+html { -webkit-text-size-adjust: 100%; }
+body { background: var(--bg); color: var(--text); }
+
+:focus-visible { outline: 2px solid var(--color-tiffany-500); outline-offset: 2px; border-radius: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
+}
+
+.tabular { font-variant-numeric: tabular-nums; }

@@ -1,0 +1,321 @@
+// Sansol Mob Platform — modelo de dados.
+// Valores monetários: Decimal(14,2). Taxas/percentuais: Decimal(9,6) como fração (0.05 = 5%).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────── Identidade, organizações e acesso ─────────────────────────
+
+enum OrganizationKind {
+  OPERATOR // Sansol Mob (operadora da rede)
+  INVESTOR // investidor do modelo compra integral
+  PARTNER // parceiro do modelo 50/50
+}
+
+model Organization {
+  id        String           @id @default(cuid())
+  name      String
+  kind      OrganizationKind
+  document  String? // CNPJ/CPF
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+  deletedAt DateTime?
+
+  memberships      Membership[]
+  roles            Role[]
+  leads            Lead[]            @relation("LeadOwnerOrg")
+  pipelineStages   PipelineStage[]
+  commercialModels CommercialModel[]
+  sitesOperated    Site[]            @relation("SiteOperator")
+  sitesAsPartner   Site[]            @relation("SitePartner")
+  auditEvents      AuditEvent[]
+  simulations      Simulation[]
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  passwordHash String
+  isSuperAdmin Boolean   @default(false)
+  disabledAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  memberships   Membership[]
+  sessions      Session[]
+  assignedLeads Lead[]         @relation("LeadAssignee")
+  activities    LeadActivity[]
+}
+
+model Role {
+  id             String        @id @default(cuid())
+  organizationId String? // null = perfil de sistema
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  key            String
+  name           String
+  permissions    String[]
+  createdAt      DateTime      @default(now())
+
+  memberships Membership[]
+
+  @@unique([organizationId, key])
+}
+
+model Membership {
+  id             String       @id @default(cuid())
+  userId         String
+  user           User         @relation(fields: [userId], references: [id])
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  roleId         String
+  role           Role         @relation(fields: [roleId], references: [id])
+  createdAt      DateTime     @default(now())
+  revokedAt      DateTime?
+
+  @@unique([userId, organizationId])
+  @@index([organizationId])
+}
+
+model Session {
+  id             String    @id @default(cuid())
+  tokenHash      String    @unique
+  userId         String
+  user           User      @relation(fields: [userId], references: [id])
+  organizationId String // organização ativa na sessão
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
+  revokedAt      DateTime?
+  ipHash         String?
+  userAgent      String?
+
+  @@index([userId])
+}
+
+model RateLimitBucket {
+  key         String   @id
+  windowStart DateTime
+  count       Int
+}
+
+model AuditEvent {
+  id             String        @id @default(cuid())
+  organizationId String?
+  organization   Organization? @relation(fields: [organizationId], references: [id])
+  actorUserId    String?
+  action         String
+  entityType     String
+  entityId       String?
+  data           Json?
+  correlationId  String?
+  createdAt      DateTime      @default(now())
+
+  @@index([organizationId, createdAt])
+  @@index([entityType, entityId])
+}
+
+// ───────────────────────── CRM ─────────────────────────
+
+model PipelineStage {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  key            String
+  name           String
+  position       Int
+  isWon          Boolean      @default(false)
+  isLost         Boolean      @default(false)
+
+  leads Lead[]
+
+  @@unique([organizationId, key])
+}
+
+enum LeadSource {
+  WEBSITE_VIABILITY
+  WEBSITE_CONTACT
+  WEBSITE_SIMULATOR
+  MANUAL
+  REFERRAL
+  EVENT
+}
+
+enum BusinessType {
+  FUEL_STATION
+  SUPERMARKET
+  PARKING
+  SHOPPING_CENTER
+  COMPANY
+  OTHER
+}
+
+model Lead {
+  id                String        @id @default(cuid())
+  organizationId    String
+  organization      Organization  @relation("LeadOwnerOrg", fields: [organizationId], references: [id])
+  stageId           String
+  stage             PipelineStage @relation(fields: [stageId], references: [id])
+  stageChangedAt    DateTime      @default(now())
+  assigneeId        String?
+  assignee          User?         @relation("LeadAssignee", fields: [assigneeId], references: [id])
+  source            LeadSource
+  campaign          String?
+  contactName       String
+  email             String
+  emailNormalized   String
+  phone             String?
+  phoneNormalized   String?
+  companyName       String?
+  businessType      BusinessType?
+  city              String?
+  state             String?
+  interestModel     String? // chave do modelo comercial de interesse
+  message           String?
+  lostReason        String?
+  consentAt         DateTime?
+  consentPolicyVer  String?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  deletedAt         DateTime?
+
+  activities LeadActivity[]
+
+  @@index([organizationId, stageId])
+  @@index([organizationId, emailNormalized])
+  @@index([organizationId, phoneNormalized])
+}
+
+enum LeadActivityKind {
+  CREATED
+  NOTE
+  STAGE_CHANGE
+  CALL
+  MEETING
+  EMAIL
+  DUPLICATE_SUBMISSION
+  ASSIGNMENT
+}
+
+model LeadActivity {
+  id        String           @id @default(cuid())
+  leadId    String
+  lead      Lead             @relation(fields: [leadId], references: [id])
+  kind      LeadActivityKind
+  body      String?
+  data      Json?
+  authorId  String?
+  author    User?            @relation(fields: [authorId], references: [id])
+  createdAt DateTime         @default(now())
+
+  @@index([leadId, createdAt])
+}
+
+// ───────────────────────── Modelos comerciais ─────────────────────────
+
+enum FeeBase {
+  GROSS_REVENUE // faturamento bruto
+  GROSS_NET_OF_PAYMENT_FEES // bruto menos taxa de sistema/gateway
+}
+
+enum ModelVersionStatus {
+  DRAFT
+  APPROVED
+  RETIRED
+}
+
+model CommercialModel {
+  id             String       @id @default(cuid())
+  organizationId String
+  organization   Organization @relation(fields: [organizationId], references: [id])
+  key            String
+  name           String
+  description    String?
+  createdAt      DateTime     @default(now())
+
+  versions CommercialModelVersion[]
+
+  @@unique([organizationId, key])
+}
+
+model CommercialModelVersion {
+  id                  String             @id @default(cuid())
+  modelId             String
+  model               CommercialModel    @relation(fields: [modelId], references: [id])
+  version             Int
+  status              ModelVersionStatus @default(DRAFT)
+  effectiveFrom       DateTime?
+  effectiveTo         DateTime?
+  // Investimento de referência total da unidade e fração aportada pelo investidor/parceiro.
+  referenceInvestment Decimal            @db.Decimal(14, 2)
+  partnerCapitalShare Decimal            @db.Decimal(9, 6)
+  // Fração do resultado distribuível destinada ao investidor/parceiro.
+  partnerResultShare  Decimal            @db.Decimal(9, 6)
+  royaltyRate         Decimal            @db.Decimal(9, 6)
+  royaltyBase         FeeBase
+  platformFeeRate     Decimal            @db.Decimal(9, 6)
+  platformFeeBase     FeeBase
+  taxRate             Decimal            @db.Decimal(9, 6)
+  taxBase             FeeBase
+  maintenancePolicy   String // texto contratual (ex.: "conforme contrato")
+  responsibilities    Json? // { sansol: string[], partner: string[] }
+  sourceNote          String? // origem dos parâmetros
+  createdById         String?
+  approvedById        String?
+  approvedAt          DateTime?
+  createdAt           DateTime           @default(now())
+
+  simulations Simulation[]
+
+  @@unique([modelId, version])
+}
+
+model Simulation {
+  id             String                  @id @default(cuid())
+  organizationId String
+  organization   Organization            @relation(fields: [organizationId], references: [id])
+  modelVersionId String?
+  modelVersion   CommercialModelVersion? @relation(fields: [modelVersionId], references: [id])
+  leadId         String?
+  name           String
+  inputs         Json
+  results        Json
+  engineVersion  String
+  createdById    String?
+  createdAt      DateTime                @default(now())
+
+  @@index([organizationId, createdAt])
+}
+
+// ───────────────────────── Unidades (base para isolamento de parceiros) ─────────────────────────
+
+enum SiteStatus {
+  PROSPECT
+  IMPLEMENTATION
+  OPERATING
+  SUSPENDED
+}
+
+model Site {
+  id                    String        @id @default(cuid())
+  operatorId            String
+  operator              Organization  @relation("SiteOperator", fields: [operatorId], references: [id])
+  partnerOrganizationId String?
+  partnerOrganization   Organization? @relation("SitePartner", fields: [partnerOrganizationId], references: [id])
+  name                  String
+  city                  String?
+  state                 String?
+  status                SiteStatus    @default(PROSPECT)
+  isDemo                Boolean       @default(false)
+  createdAt             DateTime      @default(now())
+  updatedAt             DateTime      @updatedAt
+  deletedAt             DateTime?
+
+  @@index([operatorId])
+  @@index([partnerOrganizationId])
+}

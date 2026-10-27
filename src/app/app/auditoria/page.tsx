@@ -1,0 +1,35 @@
+import { requirePage } from "@/server/auth/current";
+import { db } from "@/server/db";
+import { PageHeader } from "@/components/ui/page-header";
+import { Card } from "@/components/ui/card";
+import { Table } from "@/components/ui/table";
+import { dateTime } from "@/lib/format";
+
+export const dynamic = "force-dynamic";
+
+export default async function AuditoriaPage() {
+  const ctx = await requirePage("audit:read");
+  const events = await db.auditEvent.findMany({ where: { organizationId: ctx.organizationId }, orderBy: { createdAt: "desc" }, take: 200 });
+  const actorIds = [...new Set(events.map((e) => e.actorUserId).filter(Boolean))] as string[];
+  const actors = new Map((await db.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } })).map((u) => [u.id, u.name]));
+  return (
+    <>
+      <PageHeader title="Auditoria" description="Últimas 200 ações críticas registradas nesta organização. Registros não são editáveis pela interface." />
+      <Card>
+        <Table>
+          <thead><tr><th>Quando</th><th>Ação</th><th>Entidade</th><th>Autor</th></tr></thead>
+          <tbody>
+            {events.map((e) => (
+              <tr key={e.id}>
+                <td className="tabular text-xs">{dateTime(e.createdAt)}</td>
+                <td><code className="text-xs">{e.action}</code></td>
+                <td className="text-xs">{e.entityType}{e.entityId ? ` · ${e.entityId.slice(-8)}` : ""}</td>
+                <td>{e.actorUserId ? actors.get(e.actorUserId) ?? "—" : <span className="text-navy-400">sistema / site</span>}</td>
+              </tr>
+            ))}
+          </tbody>
+        </Table>
+      </Card>
+    </>
+  );
+}
