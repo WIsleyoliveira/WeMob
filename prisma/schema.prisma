@@ -367,9 +367,17 @@ model Site {
   state                 String?
   status                SiteStatus    @default(PROSPECT)
   isDemo                Boolean       @default(false)
+  address               String?
+  latitude              Decimal?      @db.Decimal(9, 6)
+  longitude             Decimal?      @db.Decimal(9, 6)
+  openingHours          String?
+  isPublic              Boolean       @default(false)
   createdAt             DateTime      @default(now())
   updatedAt             DateTime      @updatedAt
   deletedAt             DateTime?
+
+  stations ChargingStation[]
+  tariffs  Tariff[]
 
   @@index([operatorId])
   @@index([partnerOrganizationId])
@@ -475,4 +483,227 @@ model ProposalVersion {
   createdAt      DateTime @default(now())
 
   @@unique([proposalId, version])
+}
+
+// ───────────────────────── Estações, carregadores e OCPP ─────────────────────────
+
+/// Ambiente do equipamento. Dados de SIMULATED/TEST nunca entram em indicadores de produção.
+enum StationEnvironment {
+  PRODUCTION
+  TEST
+  SIMULATED
+}
+
+enum ChargingProtocol {
+  OCPP16J
+  OCPP201 // cadastrável; adaptador NÃO implementado
+  NONE
+}
+
+enum ConnectionState {
+  NEVER_CONNECTED
+  CONNECTED
+  DISCONNECTED
+}
+
+model ChargingStation {
+  id                String             @id @default(cuid())
+  operatorId        String
+  siteId            String
+  site              Site               @relation(fields: [siteId], references: [id])
+  /// Identidade OCPP (chargeBoxIdentity) — usada na URL do WebSocket.
+  ocppIdentity      String             @unique
+  /// Hash da senha HTTP Basic do carregador (OCPP Security Profile 1). Só o hash é guardado.
+  authSecretHash    String?
+  protocol          ChargingProtocol   @default(OCPP16J)
+  environment       StationEnvironment @default(PRODUCTION)
+  vendor            String?
+  model             String?
+  serialNumber      String?
+  firmwareVersion   String?
+  heartbeatInterval Int                @default(300)
+  connectionState   ConnectionState    @default(NEVER_CONNECTED)
+  lastSeenAt        DateTime?
+  lastBootAt        DateTime?
+  clockSkewMs       Int?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+  deletedAt         DateTime?
+
+  connectors Connector[]
+  sessions   ChargingSession[]
+  messages   OcppMessage[]
+  commands   RemoteCommand[]
+
+  @@index([operatorId])
+  @@index([siteId])
+}
+
+enum ConnectorType {
+  CCS2
+  TYPE2
+  CHADEMO
+  GBT
+  OTHER
+}
+
+/// Status OCPP 1.6 + UNKNOWN (sem evidência). Ausência de comunicação NUNCA vira AVAILABLE.
+enum ConnectorStatus {
+  AVAILABLE
+  PREPARING
+  CHARGING
+  SUSPENDED_EVSE
+  SUSPENDED_EV
+  FINISHING
+  RESERVED
+  UNAVAILABLE
+  FAULTED
+  UNKNOWN
+}
+
+model Connector {
+  id               String          @id @default(cuid())
+  stationId        String
+  station          ChargingStation @relation(fields: [stationId], references: [id])
+  connectorId      Int
+  type             ConnectorType   @default(CCS2)
+  maxPowerKw       Decimal         @db.Decimal(8, 2)
+  status           ConnectorStatus @default(UNKNOWN)
+  errorCode        String?
+  /// Horário informado pelo carregador do último status aplicado (ordenação de eventos).
+  statusAt         DateTime?
+  statusReceivedAt DateTime?
+
+  statusEvents ConnectorStatusEvent[]
+
+  @@unique([stationId, connectorId])
+}
+
+model ConnectorStatusEvent {
+  id          String          @id @default(cuid())
+  connectorPk String
+  connector   Connector       @relation(fields: [connectorPk], references: [id])
+  status      ConnectorStatus
+  errorCode   String?
+  chargerTime DateTime?
+  receivedAt  DateTime        @default(now())
+  /// false quando chegou fora de ordem (mais antigo que o status atual): fica no histórico, não altera o atual.
+  applied     Boolean
+
+  @@index([connectorPk, receivedAt])
+}
+
+model Tariff {
+  id            String   @id @default(cuid())
+  siteId        String
+  site          Site     @relation(fields: [siteId], references: [id])
+  pricePerKwh   Decimal  @db.Decimal(10, 4)
+  pricePerMin   Decimal  @default(0) @db.Decimal(10, 4)
+  validFrom     DateTime
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  @@index([siteId, validFrom])
+}
+
+enum OcppDirection {
+  IN
+  OUT
+}
+
+/// Log de mensagens OCPP para correlação e idempotência (sem segredos: payloads OCPP 1.6 core não contêm senhas).
+model OcppMessage {
+  id          String          @id @default(cuid())
+  stationId   String
+  station     ChargingStation @relation(fields: [stationId], references: [id])
+  direction   OcppDirection
+  messageId   String
+  action      String?
+  payload     Json
+  response    Json?
+  chargerTime DateTime?
+  receivedAt  DateTime        @default(now())
+  error       String?
+
+  @@unique([stationId, direction, messageId])
+  @@index([stationId, receivedAt])
+}
+
+enum SessionStatus {
+  ACTIVE
+  COMPLETED
+  /// Sem comunicação com o carregador durante a sessão: valores parciais, aguardando StopTransaction.
+  COMMUNICATION_LOST
+}
+
+model ChargingSession {
+  id                 String             @id @default(cuid())
+  stationId          String
+  station            ChargingStation    @relation(fields: [stationId], references: [id])
+  connectorId        Int
+  transactionId      Int
+  idTag              String
+  environment        StationEnvironment
+  meterStartWh       Int
+  meterStopWh        Int?
+  lastMeterWh        Int?
+  startedAt          DateTime
+  stoppedAt          DateTime?
+  stopReason         String?
+  status             SessionStatus      @default(ACTIVE)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  measurements SessionMeasurement[]
+
+  @@unique([stationId, transactionId])
+  @@unique([stationId, connectorId, startedAt, idTag])
+  @@index([stationId, status])
+}
+
+model SessionMeasurement {
+  id          String          @id @default(cuid())
+  sessionId   String
+  session     ChargingSession @relation(fields: [sessionId], references: [id])
+  timestamp   DateTime
+  energyWh    Int?
+  powerW      Int?
+
+  @@unique([sessionId, timestamp])
+}
+
+enum RemoteCommandType {
+  RESET
+  REMOTE_START
+  REMOTE_STOP
+  UNLOCK_CONNECTOR
+  CHANGE_AVAILABILITY
+}
+
+enum RemoteCommandStatus {
+  PENDING
+  SENT
+  ACCEPTED
+  REJECTED
+  TIMEOUT
+  FAILED
+  BLOCKED
+}
+
+model RemoteCommand {
+  id            String              @id @default(cuid())
+  stationId     String
+  station       ChargingStation     @relation(fields: [stationId], references: [id])
+  type          RemoteCommandType
+  payload       Json
+  status        RemoteCommandStatus @default(PENDING)
+  reason        String?
+  ocppMessageId String?             @unique
+  response      Json?
+  requestedById String
+  createdAt     DateTime            @default(now())
+  sentAt        DateTime?
+  completedAt   DateTime?
+
+  @@index([stationId, status])
 }

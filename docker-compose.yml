@@ -25,5 +25,18 @@ services:
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://localhost:3000/api/health || exit 1"]
       interval: 15s
+  ocpp:
+    # Usa o estágio "build" (código-fonte + dependências): o estágio final contém só o servidor web.
+    build: { context: ., target: build }
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://sansol:sansol-dev-only@db:5432/sansol_dev
+      APP_SECRET: ${APP_SECRET:?defina APP_SECRET no .env}
+      OCPP_PORT: "9220"
+      OCPP_ALLOW_PRODUCTION_COMMANDS: "0"
+    # Servidor OCPP 1.6-J. Em produção, publique atrás de proxy com TLS (wss://).
+    command: ["npx", "tsx", "scripts/ocpp-server.ts"]
+    ports: ["9220:9220"]
 volumes:
   pgdata:

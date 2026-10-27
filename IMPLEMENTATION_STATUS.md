@@ -1,6 +1,6 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**. Próxima: **P06 (estações, carregadores e OCPP)**.
+Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**. Próxima: **P07 (motorista, sessões e pagamentos)**.
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
 
@@ -41,6 +41,53 @@ Navegador (localhost): /recuperar-senha → mensagem neutra "envio de e-mails n�
 
 
 Legenda: ✅ implementado e testado · 🟡 parcial · ⏳ pendente · ⛔ bloqueado por dependência externa
+
+## P06 — Estações, carregadores e OCPP (2026-10-27)
+
+### Arquitetura
+- **Servidor OCPP 1.6-J** em processo separado (`npm run ocpp:server`, `src/server/ocpp/ws-server.ts`): WebSocket `/ocpp/{identidade}`, subprotocolo `ocpp1.6`, HTTP Basic com senha por estação (só hash bcrypt no banco).
+- **Protocolo** (`protocol.ts`): enquadramento CALL/CALLRESULT/CALLERROR e validação Zod de BootNotification, Heartbeat, StatusNotification, Authorize, StartTransaction, StopTransaction, MeterValues. Outras ações → `NotImplemented`.
+- **Processador** (`handler.ts`): idempotência por UniqueId, ordenação por relógio do carregador, detecção de relógio adiantado, sessões e medições.
+- **Comandos remotos** (`modules/stations/commands.ts`): fila durável no banco; o servidor OCPP entrega e registra resposta/timeout. Reset, RemoteStart, RemoteStop, UnlockConnector, ChangeAvailability.
+- **Simulador** (`simulator.ts`, `npm run ocpp:simulate`): cliente OCPP real; o script recusa estações que não sejam `SIMULATED`.
+- **Ambientes**: `PRODUCTION`, `TEST`, `SIMULATED` por estação; sessões herdam o ambiente; indicadores padrão só usam produção.
+
+### Implementado e testado
+| Requisito | Teste |
+|---|---|
+| Cadastro de unidades (endereço, coordenadas, horário, pública, parceiro), estações (identidade, fabricante, modelo, série, firmware via Boot), conectores (tipo, potência) e tarifas versionadas por vigência | navegador + integração |
+| Status nunca assume disponibilidade: sem comunicação (> 2 × heartbeat + 60 s, relógio do servidor) → `UNKNOWN` | unit + integração |
+| Mensagem duplicada (mesmo UniqueId) → mesma resposta, sem reprocessar | integração + WebSocket |
+| Retentativa de StartTransaction com novo UniqueId → mesma transação | integração |
+| Evento fora de ordem → histórico (`applied=false`), não sobrescreve | integração |
+| Relógio do carregador adiantado → `clockSkewMs` + alerta | integração |
+| Medições fora de ordem → última leitura pelo horário da medição; MeterValues deduplicado por horário | integração |
+| StopTransaction repetido/ desconhecido → aceito, idempotente, anomalia registrada | integração |
+| Perda de comunicação → estação `DISCONNECTED`, conectores `UNKNOWN`, sessão `COMMUNICATION_LOST`; reconexão reativa e StopTransaction acumulado encerra | integração |
+| Produção sem cadastro de cartões → idTag `Invalid`, sessão encerrada sem fornecimento | integração |
+| Comandos: permissão `station:command`, estação comunicando, estado válido (sessão ativa, conector livre), confirmação de reset; tentativas bloqueadas ficam registradas | integração |
+| Produção: exige `station:command_production` (só superadmin) **e** `OCPP_ALLOW_PRODUCTION_COMMANDS=1` **e** confirmação | integração |
+| Isolamento: outra operadora não lê/comanda; parceiro vê só estações das suas unidades, sem comandos, log OCPP nem hash de senha | integração |
+| Indicadores: utilização, disponibilidade e tempo sem evidência por conector (fórmulas na tela); simulado/teste só com opção explícita e aviso | unit + integração |
+| Ciclo real por WebSocket: senha errada → 401; boot, status, sessão, medição, duplicata, comando RemoteStop entregue e aceito, desconexão registrada | integração (servidor + simulador reais, porta efêmera) |
+
+### Verificação manual (localhost)
+Unidade e estação simulada cadastradas pela interface → `npm run ocpp:server` + `npm run ocpp:simulate` → boot, 5 status, sessão de **15 kWh** (`SIMULATED`), 3 medições → comando "Destravar conector" pela interface → **ACCEPTED** (`Unlocked`) → simulador desconecta → estação `DISCONNECTED`, conector `UNKNOWN`. Conector reportado antes do cadastro aparece como "cadastro incompleto". Painel de operação sem a opção mostra "Nenhuma estação de produção". 375 px sem overflow em estação, unidade e operação.
+
+### Defeitos encontrados e corrigidos nesta etapa
+- Script do simulador falhava (await no topo em CJS) — detectado ao rodar; corrigido com `main()`.
+- Tipo do parâmetro `id` do simulador restringia a UUID — detectado pelo typecheck.
+
+### O que NÃO foi validado / limitações
+- **Nenhum hardware real** foi testado. Compatibilidade declarada apenas para o subconjunto implementado de OCPP 1.6-J; **sem teste de conformidade (OCTT)**. Cada fabricante/modelo precisa de homologação em bancada.
+- **OCPP 2.0.1: não implementado** (cadastrável, sem adaptador). Firmware update, reservas, Smart Charging, Local Auth List, DataTransfer e Security Extensions: não implementados.
+- Autorização de idTag: só simulado/teste (`SIM-`/`TEST-`); produção recusa até existir cadastro de motoristas/cartões (P07).
+- Status do conector 0 (estação) fica no log, sem efeito nos conectores.
+- Mapa: serviço não configurado; coordenadas em lista.
+- Docker do serviço `ocpp` escrito mas não executado (daemon parado).
+
+### Comandos e resultados (P06)
+`npx vitest run` → 10 arquivos, **111 testes passando** · lint 0 · typecheck 0 · build OK.
 
 ## P05 — Motor financeiro e simulador econômico (2026-10-27)
 

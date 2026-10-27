@@ -11,7 +11,7 @@ export async function listSites(ctx: AuthContext | null) {
   requirePermission(ctx, "site:read");
   return db.site.findMany({
     where: { ...siteScope(ctx), deletedAt: null },
-    include: { partnerOrganization: { select: { id: true, name: true, kind: true } } },
+    include: { partnerOrganization: { select: { id: true, name: true, kind: true } }, _count: { select: { stations: { where: { deletedAt: null } } } } },
     orderBy: { name: "asc" },
   });
 }

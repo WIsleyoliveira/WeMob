@@ -3,7 +3,7 @@ import Link from "next/link";
 import { requirePage } from "@/server/auth/current";
 import { logoutAction } from "@/app/actions/auth";
 import type { Permission } from "@/server/auth/permissions";
-import { Building2, ClipboardList, Calculator, FileStack, LayoutDashboard, ScrollText, Users } from "lucide-react";
+import { Activity, Building2, ClipboardList, Calculator, FileStack, LayoutDashboard, ScrollText, Users } from "lucide-react";
 import { Logo } from "@/components/ui/logo";
 import { NavLink } from "./nav-link";
 
@@ -14,6 +14,7 @@ const NAV: { href: string; label: string; icon: React.ComponentType<{ className?
   { href: "/app/crm", label: "CRM comercial", icon: ClipboardList, perm: "lead:read" },
   { href: "/app/simulador", label: "Simulador", icon: Calculator, perm: "simulation:run" },
   { href: "/app/modelos", label: "Modelos comerciais", icon: FileStack, perm: "commercial_model:read" },
+  { href: "/app/operacao", label: "Operação", icon: Activity, perm: "site:read" },
   { href: "/app/unidades", label: "Unidades", icon: Building2, perm: "site:read" },
   { href: "/app/usuarios", label: "Usuários e acessos", icon: Users, perm: "user:manage" },
   { href: "/app/auditoria", label: "Auditoria", icon: ScrollText, perm: "audit:read" },

@@ -12,18 +12,22 @@ export const PERMISSIONS = [
   "simulation:read",
   "site:read",
   "site:write",
+  "station:command",
+  "station:command_production",
   "audit:read",
   "user:manage",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
 const all = [...PERMISSIONS];
+/** Comandos em carregadores de PRODUÇÃO: somente superadministrador (e ainda exigem OCPP_ALLOW_PRODUCTION_COMMANDS=1). */
+const allButProductionCommands = all.filter((p) => p !== "station:command_production");
 
 /** Perfis de sistema iniciais. Perfis adicionais podem ser criados por organização (tabela Role). */
 export const SYSTEM_ROLES: Record<string, { name: string; permissions: Permission[] }> = {
   superadmin: { name: "Superadministrador", permissions: all },
-  admin: { name: "Administrador Sansol Mob", permissions: all },
-  operations: { name: "Operações", permissions: ["dashboard:read", "site:read", "site:write"] },
+  admin: { name: "Administrador Sansol Mob", permissions: allButProductionCommands },
+  operations: { name: "Operações", permissions: ["dashboard:read", "site:read", "site:write", "station:command"] },
   finance: {
     name: "Financeiro",
     permissions: ["dashboard:read", "commercial_model:read", "simulation:run", "simulation:read", "site:read", "audit:read"],
