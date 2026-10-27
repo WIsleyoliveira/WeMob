@@ -52,5 +52,13 @@
   },
   "prisma": {
     "seed": "tsx --env-file=.env prisma/seed.ts"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.32"
+    },
+    "@prisma/config": {
+      "effect": "3.22.4"
+    }
   }
 }

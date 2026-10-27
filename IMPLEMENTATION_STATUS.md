@@ -1,8 +1,65 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada; homologação no sandbox oficial pendente)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — bloqueada por falta de chave de sandbox; segurança revisada)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P14 — Homologação real do Asaas e validação financeira (2026-10-27)
+
+Base: commit `a252e71` (P13). Guia atualizado: `docs/asaas.md` (credenciais, webhook, split, situação da homologação e checklist de produção).
+
+### Classificação
+| Categoria | Itens |
+|---|---|
+| **Código implementado** | Adapter Asaas (Pix pré-pago), cliente HTTP, webhook com token e idempotência, estorno, split versionado, conciliação, habilitação de produção, telas de motorista/equipe/parceiro (P13) |
+| **Testado com simulação** | 30 cenários do P13 + troca de CPF + isolamento do parceiro, contra o servidor Asaas falso (`tests/support/fake-asaas.ts`) |
+| **Confirmado no sandbox oficial** | **Nada.** Nenhuma chamada autenticada foi feita |
+| **Pendente para produção** | Etapas B (sandbox), C (comercial), D (infraestrutura) e E (autorização); decisão do 50/50; vulnerabilidades restantes |
+
+### Etapa 1 — Configuração do sandbox
+- Variáveis no `.env` (verificadas só por presença, sem imprimir valores): `PAYMENT_PROVIDER`, `ASAAS_ENVIRONMENT`, `ASAAS_SANDBOX_API_KEY`, `ASAAS_WEBHOOK_TOKEN` **ausentes**; `DATA_ENCRYPTION_KEY` definida; nenhuma variável `ASAAS_*` no ambiente do shell.
+- **Parada antes das chamadas autenticadas**, conforme a regra. Nenhum valor fictício foi gravado no `.env`.
+- Necessário: criar a conta de sandbox do Asaas, gerar a chave (`$aact_hmlg_…`) e configurar localmente `PAYMENT_PROVIDER=asaas`, `ASAAS_ENVIRONMENT=sandbox`, `ASAAS_SANDBOX_API_KEY`, `ASAAS_WEBHOOK_TOKEN`, `ASAAS_USER_AGENT` (passo a passo em `docs/asaas.md`).
+
+### Etapa 2 — Execução
+- `npm run asaas:homologar` sem configuração → recusa: "Configuração do Asaas incompleta…" (sem chamada de rede).
+- Com `ASAAS_ENVIRONMENT=production` e chave fictícia **apenas no processo** → recusa: "a homologação só roda com ASAAS_ENVIRONMENT=sandbox".
+- Autenticação, cliente, cobrança Pix, QR/copia e cola, valor, vencimento, consulta, pagamento, atualização local, webhook, idempotência, conciliação e estorno no sandbox: **não executados** (bloqueio acima). Nenhum relatório em `docs/homologacao/`.
+
+### Etapa 3 — Webhooks
+- Sem URL pública HTTPS no ambiente. Documentado em `docs/asaas.md`: túnel temporário para homologação, token no header `asaas-access-token`, tipo de envio não sequencial (a WeMob sempre consulta o estado real), entrega "pelo menos uma vez", interrupção da fila após 15 falhas consecutivas e retenção de 14 dias.
+- Duplicados, fora de ordem, retry e falha de consulta: cobertos **somente** pelos testes com servidor falso. **Não homologados.**
+- **Lacuna encontrada:** falhas persistentes de processamento aparecem na conciliação (`UNPROCESSED_WEBHOOK`), mas não há alerta automático; a interrupção da fila do lado do Asaas não é detectada pela plataforma.
+
+### Etapa 4 — Split e validação comercial
+- Split **não homologado** (sem chave, sem carteiras de teste, `ASAAS_SPLIT_ENABLED` desligado).
+- Confirmado na documentação oficial: percentual incide sobre o `netValue`; fixo (2 casas) e percentual (4 casas) combináveis sem prioridade; soma não pode exceder o líquido; bloqueio por divergência com prazo de 2 dias úteis; estorno da cobrança estorna os repasses. A página de split **não informa** se o split vale para Pix.
+- **Novo item a confirmar:** carteiras que recebem split fora do arranjo exigem **lista de carteiras autorizadas** (a remoção cancela splits pendentes).
+- A confirmar com o Asaas: elegibilidade da recarga de VE; cadastro/habilitação dos recebedores (conta própria × subconta); disponibilidade do split para a conta e para Pix; tarifas e prazos de liquidação; regras de estorno e efeitos no split.
+- **Decisão pendente:** base do acordo 50/50 — valor bruto ou líquido após tarifas.
+
+### Etapa 5 — Segurança e produção
+| Vulnerabilidade | Situação | Ação |
+|---|---|---|
+| postcss (cópia interna do Next 8.4.31) — 4 avisos altos | **corrigida** | `overrides.next.postcss = 8.5.32` (mesma versão principal); some também o aviso moderado do Next |
+| effect (CLI do Prisma) | **corrigida** | `overrides["@prisma/config"].effect = 3.22.4` (mesma versão principal) |
+| deepmerge-ts / @prisma/config / prisma | mantida | correção só no Prisma 7 (migração com mudanças incompatíveis); afeta a CLI (migrate/generate), sem entrada externa |
+| zod | mantida | correção só no Zod 4 (API `errorMap` muda); mitigação: tamanhos máximos nos schemas |
+
+`npm audit --omit=dev`: **7 → 4** (0 moderadas). Após as mudanças: `prisma generate` e `migrate status` OK, typecheck 0, lint 0, **197/197 testes**, build compilado (CSS gerado com os tokens).
+
+- **Segredos:** nenhuma chave `$aact_` no histórico nem na árvore; só `.env.example` versionado.
+- **Bloqueio de produção:** coberto por testes (configuração incompleta, chave de produção recusada em testes, `productionReadiness` exige habilitação aprovada); início de recarga e autorização OCPP em estação de produção bloqueados no servidor.
+- **Autorização por duas pessoas:** habilitação, políticas de split e validação de recebedores exigem pessoa diferente (testado).
+- **Isolamento:** testes de acesso entre operadoras e do portal do parceiro passando.
+- **Backup/restauração (ensaio local):** `pg_dump` do banco de dev (192 KB) → restauração em banco temporário → contagens idênticas em 6 tabelas e 8 migrações aplicadas (4 s); banco e arquivo temporários removidos em seguida. **Não é** backup de produção: a automação e o teste no ambiente real seguem pendentes. Atenção: `DATA_ENCRYPTION_KEY` precisa de backup próprio (sem ela, CPFs cifrados ficam ilegíveis após a restauração).
+- Produção **não** foi habilitada.
+
+### Disco
+1,6 GB livres no início e 1,5 GB ao final (um único build). Nada do usuário foi apagado; a lista de limpeza segura está no P13.
+
+### Arquivos alterados nesta etapa
+`package.json` (overrides), `package-lock.json` (remoção da entrada fixa `node_modules/next/node_modules/postcss`), `docs/asaas.md`, `IMPLEMENTATION_STATUS.md`. **Sem commit** (aguardando autorização).
 
 ## P13 — Integração Asaas: Pix, split, estornos e homologação (2026-10-27)
 
