@@ -21,6 +21,8 @@ export async function createDraftVersionAction(_prev: ActionState, f: FormData):
         platformFeeBase: "GROSS_REVENUE",
         taxRate: pctToFraction(f.get("taxRate")),
         taxBase: f.get("taxBase"),
+        platformFeeIncludesGateway: f.get("platformFeeIncludesGateway") === "on",
+        lossTreatment: f.get("lossTreatment") ?? "SHARE_MONTHLY",
         maintenancePolicy: f.get("maintenancePolicy"),
         sourceNote: f.get("sourceNote") || undefined,
         effectiveFrom: f.get("effectiveFrom") || undefined,
@@ -39,7 +41,7 @@ export async function approveVersionAction(_prev: ActionState, f: FormData): Pro
   return res;
 }
 
-export async function saveSimulationAction(payload: { name: string; versionId: string; leadId?: string; input: Record<string, unknown> }): Promise<ActionState<{ id: string }>> {
+export async function saveSimulationAction(payload: { name: string; versionId: string; leadId?: string; parentId?: string; input: Record<string, unknown> }): Promise<ActionState<{ id: string }>> {
   const ctx = await getCurrentContext();
   const res = await toActionState(async () => {
     const s = await saveSimulation(ctx, payload);

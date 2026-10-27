@@ -1,7 +1,7 @@
 import { requirePage } from "@/server/auth/current";
 import { listModels, versionState } from "@/server/modules/commercial/service";
 import { approveVersionAction, createDraftVersionAction } from "@/app/actions/commercial";
-import { FEE_BASE_LABEL, FEE_BASES } from "@/domain/commercial/types";
+import { FEE_BASE_LABEL, FEE_BASES, LOSS_TREATMENT_LABEL, LOSS_TREATMENTS } from "@/domain/commercial/types";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -34,7 +34,7 @@ export default async function ModelosAdminPage() {
             <Card key={m.id}>
               <CardHeader title={m.name} description={m.description} />
               <Table>
-                <thead><tr><th>Versão</th><th>Status</th><th className="text-right">Investimento ref.</th><th className="text-right">Aporte / resultado</th><th>Royalty</th><th>Sistema + gateway</th><th>Tributos</th><th>Vigência</th><th /></tr></thead>
+                <thead><tr><th>Versão</th><th>Status</th><th className="text-right">Investimento ref.</th><th className="text-right">Aporte / resultado</th><th>Royalty</th><th>Sistema</th><th>Tributos</th><th>Prejuízo</th><th>Vigência</th><th /></tr></thead>
                 <tbody>
                   {m.versions.map((v) => (
                     <tr key={v.id}>
@@ -43,8 +43,9 @@ export default async function ModelosAdminPage() {
                       <td className="tabular text-right">{brl(v.referenceInvestment.toString())}</td>
                       <td className="tabular text-right">{pct(v.partnerCapitalShare.toNumber(), 0)} / {pct(v.partnerResultShare.toNumber(), 0)}</td>
                       <td>{pct(v.royaltyRate.toNumber())} <span className="text-xs text-navy-400">s/ {FEE_BASE_LABEL[v.royaltyBase].toLowerCase()}</span></td>
-                      <td>{pct(v.platformFeeRate.toNumber())}</td>
+                      <td>{pct(v.platformFeeRate.toNumber())} <span className="text-xs text-navy-500">{v.platformFeeIncludesGateway ? "c/ gateway" : "s/ gateway"}</span></td>
                       <td>{pct(v.taxRate.toNumber())} <span className="text-xs text-navy-400">s/ {FEE_BASE_LABEL[v.taxBase].toLowerCase()}</span></td>
+                      <td className="text-xs">{v.lossTreatment === "CARRY_FORWARD" ? "compensa" : "rateio mensal"}</td>
                       <td className="text-xs">{v.effectiveFrom ? date(v.effectiveFrom) : "—"}{v.effectiveTo ? ` → ${date(v.effectiveTo)}` : ""}</td>
                       <td>
                         {v.status === "DRAFT" && canApprove && (
@@ -78,6 +79,13 @@ export default async function ModelosAdminPage() {
                         <Field label="Base dos tributos" htmlFor={`tb-${m.id}`}>
                           <Select id={`tb-${m.id}`} name="taxBase" defaultValue={current.taxBase}>{FEE_BASES.map((b) => <option key={b} value={b}>{FEE_BASE_LABEL[b]}</option>)}</Select>
                         </Field>
+                        <Field label="Tratamento de prejuízo na partilha" htmlFor={`lt-${m.id}`} className="sm:col-span-2">
+                          <Select id={`lt-${m.id}`} name="lossTreatment" defaultValue={current.lossTreatment}>{LOSS_TREATMENTS.map((x) => <option key={x} value={x}>{LOSS_TREATMENT_LABEL[x]}</option>)}</Select>
+                        </Field>
+                        <label className="flex items-center gap-2 self-end pb-2 text-sm text-navy-700 sm:col-span-2">
+                          <input type="checkbox" name="platformFeeIncludesGateway" defaultChecked={current.platformFeeIncludesGateway} className="size-4 accent-brand-600" />
+                          Taxa de sistema inclui o gateway de pagamento
+                        </label>
                         <Field label="Política de manutenção" htmlFor={`mp-${m.id}`} className="sm:col-span-2 lg:col-span-3"><Input id={`mp-${m.id}`} name="maintenancePolicy" defaultValue={current.maintenancePolicy} /></Field>
                         <Field label="Justificativa / origem" htmlFor={`sn-${m.id}`} className="sm:col-span-2 lg:col-span-4"><Input id={`sn-${m.id}`} name="sourceNote" placeholder="Ex.: revisão comercial aprovada em reunião de diretoria de …" /></Field>
                       </div>

@@ -263,6 +263,11 @@ enum FeeBase {
   GROSS_NET_OF_PAYMENT_FEES // bruto menos taxa de sistema/gateway
 }
 
+enum LossTreatment {
+  SHARE_MONTHLY // prejuízo do mês é rateado e aportado pelas partes no mesmo mês
+  CARRY_FORWARD // prejuízo acumula e é compensado antes de novas distribuições
+}
+
 enum ModelVersionStatus {
   DRAFT
   APPROVED
@@ -300,6 +305,10 @@ model CommercialModelVersion {
   royaltyBase         FeeBase
   platformFeeRate     Decimal            @db.Decimal(9, 6)
   platformFeeBase     FeeBase
+  /// true: a taxa de sistema já inclui o custo do gateway (não informar gateway à parte).
+  platformFeeIncludesGateway Boolean     @default(true)
+  /// Como prejuízos mensais afetam a partilha (base = resultado operacional, apurado mensalmente).
+  lossTreatment       LossTreatment      @default(SHARE_MONTHLY)
   taxRate             Decimal            @db.Decimal(9, 6)
   taxBase             FeeBase
   maintenancePolicy   String // texto contratual (ex.: "conforme contrato")
@@ -317,6 +326,12 @@ model CommercialModelVersion {
 
 model Simulation {
   id             String                  @id @default(cuid())
+  parentId       String?
+  parent         Simulation?             @relation("SimulationRevisions", fields: [parentId], references: [id])
+  revisions      Simulation[]            @relation("SimulationRevisions")
+  revision       Int                     @default(1)
+  /// Premissas alteradas em relação à revisão anterior: [{ path, before, after }]
+  changes        Json?
   organizationId String
   organization   Organization            @relation(fields: [organizationId], references: [id])
   modelVersionId String?

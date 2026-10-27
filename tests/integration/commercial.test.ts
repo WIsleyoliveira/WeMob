@@ -71,3 +71,44 @@ describe("modelos comerciais versionados", () => {
     })).rejects.toThrow();
   });
 });
+
+describe("revisões de simulação (P05)", () => {
+  it("registra revisão com autor, número e premissas alteradas", async () => {
+    const op = await bootstrapOperator();
+    const u = await createUser(op.id, "commercial");
+    const v1 = await db.commercialModelVersion.findFirstOrThrow({ where: { model: { key: "compra-integral" } } });
+    const { getSimulation } = await import("@/server/modules/commercial/service");
+    const s1 = await saveSimulation(u.ctx, { name: "Base", versionId: v1.id, input: simInput });
+    const s2 = await saveSimulation(u.ctx, { name: "Preço maior", versionId: v1.id, parentId: s1.id, input: { ...simInput, pricePerKwh: 2.6, workingCapital: 5000 } });
+    expect(s2.revision).toBe(2);
+    expect(s2.changes).toEqual([
+      { path: "pricePerKwh", before: 2.4, after: 2.6 },
+      { path: "workingCapital", before: 0, after: 5000 },
+    ]);
+    const full = await getSimulation(u.ctx, s1.id);
+    expect(full.revisions.map((r) => r.id)).toEqual([s2.id]);
+    expect(full.authorName).toBe(u.user.name);
+    expect((full.results as { engineVersion: string }).engineVersion).toBe("viability-2.0.0");
+  });
+
+  it("não aceita simulação de outra organização como origem", async () => {
+    const op = await bootstrapOperator();
+    const u = await createUser(op.id, "commercial");
+    const v1 = await db.commercialModelVersion.findFirstOrThrow({ where: { model: { key: "compra-integral" } } });
+    const s1 = await saveSimulation(u.ctx, { name: "Base", versionId: v1.id, input: simInput });
+    const { createOrg } = await import("./fixtures");
+    const other = await createOrg("Outra", "OPERATOR");
+    const { ensureReferenceModels } = await import("@/server/bootstrap");
+    await ensureReferenceModels(db, other.id);
+    const intruder = await createUser(other.id, "commercial");
+    const ov = await db.commercialModelVersion.findFirstOrThrow({ where: { model: { organizationId: other.id } } });
+    await expect(saveSimulation(intruder.ctx, { name: "Teste", versionId: ov.id, parentId: s1.id, input: simInput })).rejects.toThrow(/origem não encontrada/);
+  });
+
+  it("modelo com gateway incluso recusa custo de gateway à parte também ao salvar", async () => {
+    const op = await bootstrapOperator();
+    const u = await createUser(op.id, "commercial");
+    const v1 = await db.commercialModelVersion.findFirstOrThrow({ where: { model: { key: "compra-integral" } } });
+    await expect(saveSimulation(u.ctx, { name: "Teste", versionId: v1.id, input: { ...simInput, gatewayRate: 0.02 } })).rejects.toThrow(/dupla contagem/);
+  });
+});

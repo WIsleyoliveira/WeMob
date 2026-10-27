@@ -7,6 +7,7 @@ import { requireOperator, requirePermission, type AuthContext } from "@/server/a
 import { commercialVersionDraftSchema, type CommercialTerms } from "@/domain/commercial/types";
 import { ENGINE_VERSION, runViability, viabilityInputSchema } from "@/domain/viability/engine";
 import { getOperatorOrganization } from "@/server/modules/leads/service";
+import { diffInputs } from "@/domain/viability/diff";
 
 /** Versão vigente em `now`: aprovada, já iniciada e ainda não encerrada. */
 export function effectiveWhere(now: Date) {
@@ -42,6 +43,8 @@ export function toTerms(v: CommercialModelVersion & { model: CommercialModel }):
     platformFeeBase: v.platformFeeBase,
     taxRate: v.taxRate.toNumber(),
     taxBase: v.taxBase,
+    platformFeeIncludesGateway: v.platformFeeIncludesGateway,
+    lossTreatment: v.lossTreatment,
   };
 }
 
@@ -120,13 +123,17 @@ export const saveSimulationSchema = z.object({
   name: z.string().trim().min(2).max(120),
   versionId: z.string().min(1),
   leadId: z.string().optional(),
+  /** Simulação anterior: a nova é registrada como revisão, com a lista de premissas alteradas. */
+  parentId: z.string().optional(),
   // Os termos comerciais NUNCA vêm do cliente: são carregados da versão no banco.
   input: z.record(z.unknown()),
 });
 
 export async function saveSimulation(ctx: AuthContext | null, raw: unknown) {
   requirePermission(ctx, "simulation:run");
-  const { name, versionId, leadId, input } = saveSimulationSchema.parse(raw);
+  const { name, versionId, leadId, input, parentId } = saveSimulationSchema.parse(raw);
+  const parent = parentId ? await db.simulation.findFirst({ where: { id: parentId, organizationId: ctx.organizationId } }) : null;
+  if (parentId && !parent) throw notFound("Simulação de origem não encontrada.");
   const version = await db.commercialModelVersion.findFirst({
     where: { id: versionId, model: { organizationId: ctx.organizationId } },
     include: { model: true },
@@ -135,19 +142,23 @@ export async function saveSimulation(ctx: AuthContext | null, raw: unknown) {
   if (leadId && !(await db.lead.findFirst({ where: { id: leadId, organizationId: ctx.organizationId } }))) throw notFound("Lead não encontrado.");
   const parsed = viabilityInputSchema.parse({ ...input, terms: toTerms(version) });
   const results = runViability(parsed);
+  const storedInputs = { ...parsed, versionStatusAtRun: version.status };
   const sim = await db.simulation.create({
     data: {
+      parentId: parent?.id,
+      revision: parent ? parent.revision + 1 : 1,
+      changes: parent ? (diffInputs(parent.inputs, storedInputs) as object) : undefined,
       organizationId: ctx.organizationId,
       modelVersionId: version.id,
       leadId,
       name,
-      inputs: { ...parsed, versionStatusAtRun: version.status } as object,
+      inputs: storedInputs as object,
       results: results as unknown as object,
       engineVersion: ENGINE_VERSION,
       createdById: ctx.userId,
     },
   });
-  await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "simulation.saved", entityType: "Simulation", entityId: sim.id });
+  await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "simulation.saved", entityType: "Simulation", entityId: sim.id, data: { parentId: parent?.id ?? null, revision: sim.revision } });
   return sim;
 }
 
@@ -163,9 +174,17 @@ export async function listSimulations(ctx: AuthContext | null) {
 
 export async function getSimulation(ctx: AuthContext | null, id: string) {
   requirePermission(ctx, "simulation:read");
-  const s = await db.simulation.findFirst({ where: { id, organizationId: ctx.organizationId }, include: { modelVersion: { include: { model: true } } } });
+  const s = await db.simulation.findFirst({
+    where: { id, organizationId: ctx.organizationId },
+    include: {
+      modelVersion: { include: { model: true } },
+      parent: { select: { id: true, name: true, revision: true } },
+      revisions: { select: { id: true, name: true, revision: true, createdAt: true }, orderBy: { createdAt: "asc" } },
+    },
+  });
   if (!s) throw notFound();
-  return s;
+  const author = s.createdById ? await db.user.findUnique({ where: { id: s.createdById }, select: { name: true } }) : null;
+  return { ...s, authorName: author?.name ?? null };
 }
 
 export async function listApprovedVersions(ctx: AuthContext | null) {
@@ -175,5 +194,8 @@ export async function listApprovedVersions(ctx: AuthContext | null) {
     include: { model: true },
     orderBy: [{ model: { key: "asc" } }, { version: "desc" }],
   });
-  return vs.map((v) => ({ id: v.id, status: v.status, terms: toTerms(v) }));
+  // Vigentes primeiro (padrão do simulador); rascunhos depois, identificados na interface.
+  return vs
+    .sort((a, b) => Number(a.status === "DRAFT") - Number(b.status === "DRAFT"))
+    .map((v) => ({ id: v.id, status: v.status, terms: toTerms(v) }));
 }

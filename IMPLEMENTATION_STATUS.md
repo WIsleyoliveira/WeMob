@@ -1,6 +1,6 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**. Próxima: **P05 (motor financeiro)**.
+Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**. Próxima: **P06 (estações, carregadores e OCPP)**.
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
 
@@ -41,6 +41,55 @@ Navegador (localhost): /recuperar-senha → mensagem neutra "envio de e-mails n�
 
 
 Legenda: ✅ implementado e testado · 🟡 parcial · ⏳ pendente · ⛔ bloqueado por dependência externa
+
+## P05 — Motor financeiro e simulador econômico (2026-10-27)
+
+Motor `viability-2.0.0` (`src/domain/viability/engine.ts`), regressão total com o 1.0 (os 22 testes originais passam sem alteração).
+
+### Implementado e testado
+| Requisito | Como | Testes |
+|---|---|---|
+| Utilização por horas equivalentes **ou** por ocupação × fator médio de potência (exatamente uma) | `occupancyRate`, `averagePowerFactor` | 2 |
+| kWh por sessão → nº de sessões | `kwhPerSession` | 1 |
+| **Sem dupla contagem sistema × gateway**: termo contratual `platformFeeIncludesGateway`; gateway à parte (% e R$/transação) só quando a taxa de sistema não o inclui; recusa no motor e ao salvar | versão do modelo + validação | 5 (unit + integração) |
+| Receita bruta, tributos, **receita líquida**, custos variáveis/fixos, margem de contribuição, **EBITDA estimado** (= resultado operacional, sem depreciação) | `MonthRow`, KPIs | 2 |
+| Fluxo mensal e **visão anual** | `years[]` | 1 |
+| **Capital de giro** aportado no mês 0 na proporção do capital, devolvido no último mês (opcional) | `workingCapital` | 2 |
+| **Partilha 50/50 explícita**: base = resultado operacional mensal; termo `lossTreatment` = rateio mensal do prejuízo **ou** compensação antes de novas distribuições; alerta quando o prejuízo acumulado supera o capital de giro | versão do modelo | 2 |
+| Ponto de equilíbrio, payback, ROI, VPL (com taxa), TIR (bisseção; validada contra fluxos conhecidos) | — | 3 |
+| **Limiares de viabilidade**: preço mínimo, custo máximo de energia, utilização mínima, custos fixos máximos; conferidos contra o próprio motor (resultado ≈ 0 no limiar) | `viabilityThresholds` | 2 |
+| Sinalização de inviabilidade e **ranking de sensibilidade** por impacto | `viabilityFlags`, `sensitivityRanking` | 1 |
+| Arredondamento ROUND_HALF_UP por linha; extremos (24 h, preço 0 recusado, sem investimento, opcionais ausentes sem NaN) | — | 5 |
+| **Revisões de simulação**: autor, data, nº de revisão, versão do motor e do modelo, lista de premissas alteradas; origem de outra organização recusada | `Simulation.parentId/revision/changes`, `diff.ts` | 3 integração + 2 unit |
+| **Relatório** da simulação (premissas, termos aplicados, histórico, resultados) com impressão/PDF do navegador | `/app/simulador/[id]` | navegador |
+| Compatibilidade: simulações do motor 1.0 são lidas com padrões equivalentes à semântica antiga, sem alterar o registro | `normalizeStoredInput` | 1 |
+
+### Exemplos de cálculo reproduzíveis (todos em `tests/unit/financial-engine.test.ts`)
+Base: 1 × 60 kW, 4 h/dia, 30 dias, R$ 2,40/kWh, energia R$ 1,00/kWh, fixo R$ 150, compra integral (royalty 5%, sistema 14% c/ gateway, tributos 6%), investimento R$ 150.000.
+1. Energia 7.200 kWh · bruto **17.280,00** · tributos 1.036,80 · receita líquida **16.243,20** · resultado operacional/EBITDA **5.610,00**.
+2. Gateway à parte (sistema 10%, gateway 3% + R$ 0,50/sessão, 30 kWh/sessão): 240 sessões · sistema 1.728,00 · gateway **638,40** · margem de contribuição **R$ 0,8073/kWh**.
+3. Capital de giro R$ 10.000 (36 meses): aporte 160.000 · ROI = (201.960 + 10.000 − 160.000) ÷ 160.000 = **32,475%** · payback **28,5 meses**.
+4. 50/50 com mês 1 sem demanda: rateio → parceiro −75,00 e +2.545,80; compensação → 0,00 e +2.470,80 (mesmo total, momento diferente).
+5. Limiares (mês 1): preço mínimo **R$ 1,3611/kWh** = (150/7.200 + 1,00) ÷ 0,75 · energia máxima **R$ 1,7792/kWh** · fixos máximos **R$ 5.760,00**.
+6. TIR: [−100, 110] → 10%; [−100, 60, 60] → 13,066%.
+
+### Defeitos encontrados e corrigidos nesta etapa
+- Relatório de simulação antiga (motor 1.0) quebrava por falta de termos novos → normalização na leitura (detectado no navegador).
+- Simulador abria por padrão uma versão **em rascunho** → versões vigentes primeiro (detectado no navegador).
+- Dois erros meus em testes (conta do ROI; nome curto que fazia um teste passar pelo motivo errado) — corrigidos e documentados.
+
+### Migração
+`*_financial_terms_and_revisions` (aditiva) + `down.sql`.
+
+### Comandos e resultados (P05)
+`npx vitest run` → 8 arquivos, **90 testes passando** · lint 0 · typecheck 0 · build OK.
+Navegador: simulação por ocupação + capital de giro salva → relatório; revisão alterando preço mostra só "Preço de venda 2,4 → 2,6"; simulação antiga abre com aviso; 375 px sem overflow (relatório, simulador público, modelos).
+
+### Limitações
+- Resultados são **gerenciais e projetados**; não há receitas reais na plataforma ainda (P07/P08). Tributos são percentual sobre a receita — não modelam IRPJ/CSLL nem regimes específicos; validar com contador.
+- Sem depreciação/amortização: EBITDA ≈ resultado operacional por definição.
+- Sazonalidade suportada no motor, sem campo na interface.
+- Relatório exportável via impressão/PDF do navegador (não há geração de PDF no servidor).
 
 ## P04 — CRM e máquina de vendas (2026-10-27)
 

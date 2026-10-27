@@ -21,6 +21,9 @@ export const REFERENCE_TERMS: Record<"compra-integral" | "parceria-50-50", Comme
     platformFeeBase: "GROSS_REVENUE",
     taxRate: 0.06,
     taxBase: "GROSS_REVENUE",
+    // Portfólio: "taxa de sistema + gateway de pagamento: 14% por transação" → gateway incluso.
+    platformFeeIncludesGateway: true,
+    lossTreatment: "SHARE_MONTHLY",
   },
   "parceria-50-50": {
     modelKey: "parceria-50-50",
@@ -36,6 +39,9 @@ export const REFERENCE_TERMS: Record<"compra-integral" | "parceria-50-50", Comme
     platformFeeBase: "GROSS_REVENUE",
     taxRate: 0.06,
     taxBase: "GROSS_REVENUE",
+    // Portfólio: "taxa de sistema + gateway de pagamento: 14% por transação" → gateway incluso.
+    platformFeeIncludesGateway: true,
+    lossTreatment: "SHARE_MONTHLY",
   },
 };
 

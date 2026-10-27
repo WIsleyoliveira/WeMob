@@ -10,6 +10,12 @@ export const FEE_BASE_LABEL: Record<FeeBase, string> = {
 
 const fraction = z.coerce.number().min(0).max(1);
 
+export const LOSS_TREATMENTS = ["SHARE_MONTHLY", "CARRY_FORWARD"] as const;
+export const LOSS_TREATMENT_LABEL: Record<(typeof LOSS_TREATMENTS)[number], string> = {
+  SHARE_MONTHLY: "Prejuízo rateado e aportado no próprio mês",
+  CARRY_FORWARD: "Prejuízo acumulado e compensado antes de novas distribuições",
+};
+
 /** Condições comerciais aplicadas a uma simulação ou contrato (subconjunto de CommercialModelVersion). */
 export const commercialTermsSchema = z.object({
   modelKey: z.string().min(1),
@@ -25,6 +31,10 @@ export const commercialTermsSchema = z.object({
   platformFeeBase: z.enum(FEE_BASES),
   taxRate: fraction,
   taxBase: z.enum(FEE_BASES),
+  /** true: a taxa de sistema já inclui o gateway — custo de gateway à parte é recusado (dupla contagem). */
+  platformFeeIncludesGateway: z.boolean().default(true),
+  /** Base da partilha: resultado operacional mensal. Tratamento de prejuízo configurável. */
+  lossTreatment: z.enum(LOSS_TREATMENTS).default("SHARE_MONTHLY"),
 });
 export type CommercialTerms = z.infer<typeof commercialTermsSchema>;
 
