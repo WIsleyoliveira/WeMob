@@ -16,6 +16,12 @@ import { db } from "@/server/db";
 import { log } from "@/server/log";
 import { OcppError, SUPPORTED_INCOMING, STATUS_MAP, isSupported, readSample, type OcppErrorCode } from "./protocol";
 
+/** Ganchos do fluxo de recarga (vincular motorista/pagamento e apurar valor). Falhas não afetam a resposta OCPP. */
+export interface SessionHooks {
+  onStarted?(station: ChargingStation, sessionId: string): Promise<void>;
+  onStopped?(sessionId: string): Promise<void>;
+}
+
 export type CallOutcome = { result: Record<string, unknown> } | { error: { code: OcppErrorCode; description: string } };
 
 /** Autorização de idTag. Ainda não há cadastro de motoristas/cartões (P07): produção recusa tudo. */
@@ -36,7 +42,7 @@ export async function handleCall(
   messageId: string,
   action: string,
   payload: unknown,
-  opts: { now?: Date; authorizer?: IdTagAuthorizer } = {},
+  opts: { now?: Date; authorizer?: IdTagAuthorizer; hooks?: SessionHooks } = {},
 ): Promise<CallOutcome> {
   const now = opts.now ?? new Date();
   const authorizer = opts.authorizer ?? defaultAuthorizer;
@@ -67,6 +73,12 @@ export async function handleCall(
     const r = await process(station, action, parsed.data as never, now, authorizer);
     outcome = { result: r.result };
     anomaly = r.anomaly;
+    try {
+      if (r.startedSessionId && opts.hooks?.onStarted) await opts.hooks.onStarted(station, r.startedSessionId);
+      if (r.stoppedSessionId && opts.hooks?.onStopped) await opts.hooks.onStopped(r.stoppedSessionId);
+    } catch (e) {
+      log.error("ocpp_session_hook_failed", { station: station.ocppIdentity, action, error: e instanceof Error ? e.message : String(e) });
+    }
   } catch (e) {
     if (e instanceof OcppError) outcome = { error: { code: e.code, description: e.message } };
     else {
@@ -103,7 +115,7 @@ async function process(
   p: never,
   now: Date,
   authorizer: IdTagAuthorizer,
-): Promise<{ result: Record<string, unknown>; anomaly?: string }> {
+): Promise<{ result: Record<string, unknown>; anomaly?: string; startedSessionId?: string; stoppedSessionId?: string }> {
   switch (action) {
     case "BootNotification": {
       const b = p as In<"BootNotification">;
@@ -172,7 +184,7 @@ async function process(
         const last = await tx.chargingSession.aggregate({ where: { stationId: station.id }, _max: { transactionId: true } });
         const transactionId = (last._max.transactionId ?? 0) + 1;
         const rejected = auth !== "Accepted";
-        await tx.chargingSession.create({
+        const created = await tx.chargingSession.create({
           data: {
             stationId: station.id,
             connectorId: st.connectorId,
@@ -185,7 +197,7 @@ async function process(
             ...(rejected ? { status: "COMPLETED", stoppedAt: st.timestamp, meterStopWh: st.meterStart, stopReason: `AUTH_${auth.toUpperCase()}` } : {}),
           },
         });
-        return { result: { transactionId, idTagInfo: { status: auth } }, anomaly: rejected ? `idTag ${auth}: sessão encerrada sem fornecimento.` : undefined };
+        return { result: { transactionId, idTagInfo: { status: auth } }, anomaly: rejected ? `idTag ${auth}: sessão encerrada sem fornecimento.` : undefined, startedSessionId: created.id };
       });
     }
 
@@ -201,7 +213,7 @@ async function process(
         where: { id: session.id },
         data: { meterStopWh: sp.meterStop, lastMeterWh: sp.meterStop, stoppedAt: sp.timestamp, stopReason: sp.reason ?? "Local", status: "COMPLETED" },
       });
-      return { result: { idTagInfo: { status: "Accepted" } }, anomaly: inconsistent ? "meterStop menor que meterStart: energia inconsistente." : undefined };
+      return { result: { idTagInfo: { status: "Accepted" } }, anomaly: inconsistent ? "meterStop menor que meterStart: energia inconsistente." : undefined, stoppedSessionId: session.id };
     }
 
     case "MeterValues": {

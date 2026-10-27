@@ -1,8 +1,81 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**. Próxima: **P07 (motorista, sessões e pagamentos)**.
+Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P10 — Auditoria final de segurança, qualidade e prontidão (2026-10-27)
+
+### Achados comprovados e correções
+| # | Achado | Como foi comprovado | Correção | Status |
+|---|---|---|---|---|
+| F1 | Pagamentos (lista, detalhe, reembolso, conciliação) sem escopo por operadora: outra operadora veria/reembolsaria pagamentos alheios | Teste de isolamento **falhou** com o código anterior | `operatorPaymentScope` (estações da operadora via sessão ou pedido) | testado |
+| F2 | Portal do motorista sem acesso/eliminação de dados (LGPD) | Revisão | Exportação JSON e exclusão por anonimização (registros fiscais retidos sem identificação) | testado |
+| F3 | Sem Content-Security-Policy | Revisão | CSP `default-src 'self'` (+ `'unsafe-inline'` em script; `'unsafe-eval'` só em dev) | navegador |
+| F4 | Sem procedimento para o 1º administrador em produção | Revisão (seed recusa produção) | `npm run setup:first-admin` | banco descartável |
+| F5 | Health check não indicava automações paradas | Revisão | campo `automation` (ok/stale/failing/never) | testado |
+| F6 | Arrays de entrada sem limite (advisory de memória do Zod) | `npm audit` + varredura | `.max()` em todos os arrays de entrada | revisão |
+| F7 | Página do motorista acessava o banco direto | Varredura | `getMyChargeRequest` no serviço | typecheck |
+
+Verificado sem defeito: autorização em todo serviço que recebe contexto (varredura automática + revisão das 2 exceções), sem SQL cru inseguro, `dangerouslySetInnerHTML` só no SVG do QR gerado pela biblioteca, cookies `httpOnly`/`sameSite=lax`/`secure` em produção, sem CORS, logs com redação de campos sensíveis, downloads com `CSP: sandbox` + `nosniff`.
+
+### Comandos e resultados (P10)
+`npx vitest run` → **16 arquivos, 170 testes passando** (180,8 s) · lint 0 · typecheck 0 · `npm run build` OK (74 rotas) · `npm audit --omit=dev` → 6 altas + 1 moderada, 0 críticas (Next/postcss, Zod, deps do Prisma; exigem upgrade major — **não resolvido**).
+
+### Pendente / bloqueado
+E2E (Playwright) e axe automatizados não executados; Docker/CI não executados; deploy, TLS, backup/restauração e monitoramento não executados; MFA; RLS. Checklist completo em `docs/RELATORIO_FINAL.md`.
+
+## P09 — Suporte, SLA, manutenção, alertas e automações (2026-10-27)
+
+### Implementado e testado
+| Requisito | Teste |
+|---|---|
+| Tickets: categoria, prioridade, origem, responsável, estação/unidade, comentários, anexos, histórico; transições validadas | integração + navegador |
+| SLA por prioridade (ou contrato), 24×7 ou horário útil (America/Belem), cópia no ticket, pausas com motivo descontadas | unit (sexta 17h → segunda 9h = 120 min) + integração + navegador |
+| Solicitação do motorista → ticket (uma única vez) | integração |
+| OS: diagnóstico, técnico, agendamento, checklist, peças, custo, evidência obrigatória; custo vira despesa de manutenção (2 × 125,56 + 200 = 451,12) | integração |
+| Preventiva por tempo/kWh/sessões; uso só com telemetria confiável; 1 OS aberta por plano (índice parcial; execução concorrente gera 1) | unit + integração |
+| Alertas: offline, falhas repetidas, queda de disponibilidade, sessão interrompida, divergência de pagamento; teste/simulação fora por padrão | integração |
+| Deduplicação (índice único parcial; avaliação concorrente cria 1), cooldown reabre sem novo ticket/notificação, ocorrência tratada manualmente não é recriada, escalonamento único eleva ticket | integração |
+| Notificações: canal não configurado e falta de consentimento registrados; retentativa exponencial até 5; reenvio não duplica; falha não gera alerta | integração (adaptadores falsos) |
+| Execuções de automação com sucesso/falha/tentativa | integração + navegador |
+| Painel: disponibilidade, indisponibilidade, MTTR, SLA de resposta/solução com fórmulas | integração (MTTR 7 h; SLA 50%) + navegador |
+
+### Defeito encontrado e corrigido
+Estação offline gerava também "queda de disponibilidade" (dois alertas para a mesma causa) — detectado por teste; a regra de disponibilidade agora ignora estações sem comunicação.
+
+### Simulado / bloqueado
+Nenhum provedor de e-mail/SMS/WhatsApp: envio real **não testado** e exibido como "NÃO configurado". Feriados fora do SLA. Ciclo de automações roda dentro de `npm run ocpp:server` (não executado continuamente nesta verificação).
+
+### Migração
+`20261027145414_finance_support_alerts` (aditiva, 18 tabelas + 4 índices únicos parciais) + `down.sql`.
+
+## P08 — Financeiro, contratos, parceiros e repasses (2026-10-27)
+
+### Implementado e testado
+| Requisito | Teste |
+|---|---|
+| Contratos com parceiro, unidades (vinculadas ao parceiro, uma por contrato ativo), status com motivo, anexos | integração + navegador |
+| Versões imutáveis (original + aditivos) com autor, data e motivo; aprovação por pessoa ≠ autor; vigência por versão aprovada | integração + navegador |
+| Contas a pagar/receber: provisionado × baixado (baixa manual com referência, sem transferência), cancelamento com motivo | integração + navegador |
+| Tributos configuráveis por vigência | integração + navegador |
+| Royalties e repasses só com versão de contrato APROVADA; bases bruto/líquida/resultado; prejuízo rateado ou compensado | unit (10) + integração |
+| Fechamento: prévia → validações → solicitação → aprovação por outra pessoa com recálculo e hash; pedido superado se os dados mudarem; 1 aprovado/pendente por período; aprovações concorrentes: 1 vence | integração + navegador |
+| Período fechado bloqueia lançamento, cancelamento e novas vigências; correção por ajuste sem alterar o fechamento | integração |
+| Demonstrativo rede/parceiro/unidade/estação; provisionado × pago | integração + navegador |
+| Portal do parceiro: indicadores, contratos, documentos visíveis, extratos só próprios, CSV auditado | integração + navegador |
+| Exportações com permissão e auditoria; downloads de anexos auditados | integração + navegador |
+| Transferência bancária nunca iniciada sem provedor | integração |
+
+### Exemplo reproduzível (teste e navegador)
+Bruto 1.000,00 · tributo 6% = 60,00 · taxa de sistema 10% = 100,00 · líquida 840,00 · royalty 8% s/ líquida = 67,20 · energia 300,00 · resultado 472,80 · repasse 50% = **236,40** (vencimento = fim do mês + 10 dias).
+
+### Defeito encontrado e corrigido
+Receita de recarga lançada de sistema externo aparecia como "outras receitas" no demonstrativo (total correto) — detectado no CSV pelo navegador; motor `settlement-1.1.0` + teste. Fechamentos já aprovados mantêm o snapshot da versão com que foram calculados.
+
+### Limitações
+Sem rateio por dia (troca de condição/tributo no meio do mês bloqueia o fechamento); reembolso após o fechamento exige ajuste manual; despesas sem unidade não são rateadas; resultados gerenciais — **não substituem contabilidade nem orientação fiscal**; assinatura eletrônica e nota fiscal não implementadas.
+
 
 ## P02 — Auditoria e correção da fundação (2026-10-27)
 
@@ -41,6 +114,52 @@ Navegador (localhost): /recuperar-senha → mensagem neutra "envio de e-mails n�
 
 
 Legenda: ✅ implementado e testado · 🟡 parcial · ⏳ pendente · ⛔ bloqueado por dependência externa
+
+## P07 — Portal do motorista, sessões e pagamentos (2026-10-27)
+
+### Arquitetura
+- **Motoristas** com autenticação SEPARADA da equipe (`Driver`, `DriverSession`, cookie `sm_driver`); o token de motorista não abre o backoffice (testado).
+- **Fluxo de recarga** (`src/server/drivers/charging.ts`): pedido → pré-autorização → RemoteStart → StartTransaction (vincula motorista, pedido, pagamento e **congela a tarifa**) → medições → StopTransaction → **valor apurado** → captura até o valor reservado.
+- **Pagamentos** (`src/server/payments/*`): contrato `PaymentProvider`; status local só muda pelo provedor (consulta ou webhook verificado); máquina de estados PENDING → AUTHORIZED → CAPTURED → PARTIALLY_REFUNDED/REFUNDED, + FAILED, CANCELLED, DISPUTED; eventos fora de ordem ignorados.
+- **Webhook** `POST /api/payments/webhooks/{provedor}`: assinatura verificada (HMAC-SHA256 com comparação de tempo constante), evento único por (provedor, id), consulta à fonte de verdade antes de aplicar; falha de rede → 503 e retentativa (`retryPendingWebhookEvents`, também no ciclo do servidor OCPP).
+- **Ambientes**: SIMULATED = demonstração sem cobrança; TEST = exige provedor (sandbox aceito); PRODUCTION = exige gateway real de produção → **bloqueado** (nenhum implementado).
+- Nenhum dado de cartão é armazenado; o adaptador real deve usar checkout/tokenização do provedor.
+
+### Implementado e testado
+| Requisito | Teste |
+|---|---|
+| Cadastro/login (senha forte, consentimento LGPD, limite de tentativas), perfil, veículos, identificador de recarga (idTag ≤ 20) | integração + navegador |
+| Busca de estações (rede pública × demonstração), status com horário de atualização, tarifa, instruções, link de rota | navegador |
+| Início por app e por **QR Code** (validação de estação/conector/comunicação/tarifa no servidor); QR gerado por conector na tela da equipe | navegador |
+| Status da sessão, energia, duração, custo **estimado** (em andamento) × **apurado** (encerrada) × **pago** (capturado) — rótulos distintos | integração + navegador |
+| Tarifa congelada no início: mudança de tarifa durante a sessão não altera o valor | integração |
+| Encerramento pelo app (somente a própria sessão), histórico, recibo imprimível, avaliação, suporte | integração + navegador |
+| Webhook duplicado não reprocessa; assinatura inválida → 401 sem efeito | integração + curl |
+| Confirmação tardia do gateway: recarga só inicia após autorização | integração |
+| Falha de rede no webhook → 503, evento pendente, retentativa aplica | integração |
+| Falha de rede na captura → pagamento segue autorizado; conciliação acusa "sessão sem pagamento" | integração |
+| Pagamento aprovado sem sessão → conciliação acusa; expiração (3 min) cancela a reserva | integração |
+| Valor acima da reserva → captura o reservado e acusa divergência de valor | integração |
+| Início local sem pedido pago em estação de teste → idTag recusado | integração |
+| Pagamento recusado → pedido falha, nenhum comando | integração |
+| Reembolso parcial/total: permissão `payment:refund`, limite ao capturado, confirmado pelo provedor, auditado | integração |
+| Conciliação marca pagamentos que conferem e lista divergências | integração |
+| Isolamento entre motoristas (ver, encerrar, cancelar) | integração |
+
+### Verificação manual (localhost, 375 px)
+Cadastro de motorista → aba Demonstração → estação simulada "Disponível" com tarifa → **Iniciar recarga** → pedido → RemoteStart **ACCEPTED** → simulador interativo inicia transação → custo estimado ao vivo (2 kWh = R$ 4,80) → **Encerrar** → RemoteStop **ACCEPTED** → "Valor apurado R$ 16,80" (7 kWh × 2,40), marcado como demonstração → recibo, histórico, conta e página do QR sem rolagem horizontal. Tela de pagamentos da equipe mostra "Provedor: não configurado". Webhook sem assinatura → HTTP 401.
+
+### Defeito/risco corrigido nesta etapa
+- Listener pagamento → início de recarga poderia não estar registrado no processo do webhook ou duplicar com recarga de módulo em dev → registro por chave em `globalThis` e import explícito na rota.
+- `ws` 8.18.0 com vulnerabilidade alta (DoS/memória) → atualizado para 8.21.3 (mesma versão principal); testes OCPP repetidos.
+
+### Simulado / bloqueado
+- **Simulado:** gateway **sandbox** (`PAYMENT_PROVIDER=sandbox`) — sem dinheiro real, só para estações TEST; o fluxo pago foi validado apenas em testes automatizados com o sandbox (não no navegador, pois o ambiente de dev está sem provedor).
+- **Bloqueado:** pagamentos reais (Pix/cartão) — exige contratação de gateway, credenciais e homologação; recarga em estações de produção pelo app fica bloqueada até lá. Cartões RFID, nota fiscal, notificações por e-mail/push e mapa interativo: não configurados.
+- **Limitação:** contestação (DISPUTED) é aceita na máquina de estados, mas não há fluxo de tratamento de chargeback.
+
+### Comandos e resultados (P07)
+`npx vitest run` → 11 arquivos, **127 testes passando** · lint 0 · typecheck 0 · build OK · `npm audit --omit=dev`: 6 altas + 1 moderada restantes (Next/Prisma/Zod, exigem upgrade major — já registrado).
 
 ## P06 — Estações, carregadores e OCPP (2026-10-27)
 

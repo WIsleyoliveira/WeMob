@@ -9,7 +9,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { db } from "@/server/db";
 import { log } from "@/server/log";
 import { verifyPassword } from "@/server/auth/password";
-import { handleCall, markDisconnected, sweepConnectivity, type IdTagAuthorizer } from "./handler";
+import { handleCall, markDisconnected, sweepConnectivity, type IdTagAuthorizer, type SessionHooks } from "./handler";
 import { OCPP16_SUBPROTOCOL, OcppError, REMOTE_ACTIONS, callFrame, errorFrame, parseFrame, resultFrame } from "./protocol";
 
 const COMMAND_TIMEOUT_MS = 30_000;
@@ -18,6 +18,9 @@ export interface OcppServerOptions {
   port: number;
   host?: string;
   authorizer?: IdTagAuthorizer;
+  hooks?: SessionHooks;
+  /** Tarefas periódicas extras (ex.: expirar pedidos de recarga, reprocessar webhooks). */
+  onSweep?: () => Promise<unknown>;
   pollMs?: number;
   sweepMs?: number;
 }
@@ -79,7 +82,7 @@ export function startOcppServer(opts: OcppServerOptions) {
       }
       if (frame.type === "CALL") {
         const station = await db.chargingStation.findUniqueOrThrow({ where: { id: stationId } });
-        const out = await handleCall(station, frame.id, frame.action, frame.payload, { authorizer: opts.authorizer });
+        const out = await handleCall(station, frame.id, frame.action, frame.payload, { authorizer: opts.authorizer, hooks: opts.hooks });
         ws.send("result" in out ? resultFrame(frame.id, out.result) : errorFrame(frame.id, out.error.code, out.error.description));
         return;
       }
@@ -127,7 +130,10 @@ export function startOcppServer(opts: OcppServerOptions) {
     }
   }, opts.pollMs ?? 1000);
 
-  const sweep = setInterval(() => void sweepConnectivity().catch((e) => log.error("ocpp_sweep_failed", { error: String(e) })), opts.sweepMs ?? 30_000);
+  const sweep = setInterval(() => {
+    void sweepConnectivity().catch((e) => log.error("ocpp_sweep_failed", { error: String(e) }));
+    if (opts.onSweep) void opts.onSweep().catch((e) => log.error("ocpp_extra_sweep_failed", { error: String(e) }));
+  }, opts.sweepMs ?? 30_000);
 
   return new Promise<{ port: number; close: () => Promise<void> }>((resolve) => {
     http.listen(opts.port, opts.host ?? "0.0.0.0", () => {

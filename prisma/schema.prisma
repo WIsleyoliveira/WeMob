@@ -27,19 +27,21 @@ model Organization {
   updatedAt DateTime         @updatedAt
   deletedAt DateTime?
 
-  memberships      Membership[]
-  roles            Role[]
-  leads            Lead[]            @relation("LeadOwnerOrg")
-  pipelineStages   PipelineStage[]
-  commercialModels CommercialModel[]
-  sitesOperated    Site[]            @relation("SiteOperator")
-  sitesAsPartner   Site[]            @relation("SitePartner")
-  auditEvents      AuditEvent[]
-  simulations      Simulation[]
-  companies        Company[]          @relation("CompanyOwnerOrg")
-  convertedFrom    Company[]          @relation("CompanyConvertedOrg")
-  tasks            CrmTask[]
-  proposals        Proposal[]
+  memberships        Membership[]
+  roles              Role[]
+  leads              Lead[]            @relation("LeadOwnerOrg")
+  pipelineStages     PipelineStage[]
+  commercialModels   CommercialModel[]
+  sitesOperated      Site[]            @relation("SiteOperator")
+  sitesAsPartner     Site[]            @relation("SitePartner")
+  auditEvents        AuditEvent[]
+  simulations        Simulation[]
+  companies          Company[]         @relation("CompanyOwnerOrg")
+  convertedFrom      Company[]         @relation("CompanyConvertedOrg")
+  tasks              CrmTask[]
+  contractsAsPartner Contract[]        @relation("ContractPartner")
+  financialEntries   FinancialEntry[]  @relation("EntryPartner")
+  proposals          Proposal[]
 }
 
 model User {
@@ -52,12 +54,13 @@ model User {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  memberships   Membership[]
-  sessions      Session[]
-  resetTokens   PasswordResetToken[]
-  assignedLeads Lead[]         @relation("LeadAssignee")
-  activities    LeadActivity[]
-  tasksAssigned CrmTask[]      @relation("TaskAssignee")
+  memberships     Membership[]
+  sessions        Session[]
+  resetTokens     PasswordResetToken[]
+  assignedLeads   Lead[]               @relation("LeadAssignee")
+  activities      LeadActivity[]
+  ticketsAssigned Ticket[]             @relation("TicketAssignee")
+  tasksAssigned   CrmTask[]            @relation("TaskAssignee")
 }
 
 model Role {
@@ -289,37 +292,38 @@ model CommercialModel {
 }
 
 model CommercialModelVersion {
-  id                  String             @id @default(cuid())
-  modelId             String
-  model               CommercialModel    @relation(fields: [modelId], references: [id])
-  version             Int
-  status              ModelVersionStatus @default(DRAFT)
-  effectiveFrom       DateTime?
-  effectiveTo         DateTime?
+  id                         String             @id @default(cuid())
+  modelId                    String
+  model                      CommercialModel    @relation(fields: [modelId], references: [id])
+  version                    Int
+  status                     ModelVersionStatus @default(DRAFT)
+  effectiveFrom              DateTime?
+  effectiveTo                DateTime?
   // Investimento de referência total da unidade e fração aportada pelo investidor/parceiro.
-  referenceInvestment Decimal            @db.Decimal(14, 2)
-  partnerCapitalShare Decimal            @db.Decimal(9, 6)
+  referenceInvestment        Decimal            @db.Decimal(14, 2)
+  partnerCapitalShare        Decimal            @db.Decimal(9, 6)
   // Fração do resultado distribuível destinada ao investidor/parceiro.
-  partnerResultShare  Decimal            @db.Decimal(9, 6)
-  royaltyRate         Decimal            @db.Decimal(9, 6)
-  royaltyBase         FeeBase
-  platformFeeRate     Decimal            @db.Decimal(9, 6)
-  platformFeeBase     FeeBase
+  partnerResultShare         Decimal            @db.Decimal(9, 6)
+  royaltyRate                Decimal            @db.Decimal(9, 6)
+  royaltyBase                FeeBase
+  platformFeeRate            Decimal            @db.Decimal(9, 6)
+  platformFeeBase            FeeBase
   /// true: a taxa de sistema já inclui o custo do gateway (não informar gateway à parte).
-  platformFeeIncludesGateway Boolean     @default(true)
+  platformFeeIncludesGateway Boolean            @default(true)
   /// Como prejuízos mensais afetam a partilha (base = resultado operacional, apurado mensalmente).
-  lossTreatment       LossTreatment      @default(SHARE_MONTHLY)
-  taxRate             Decimal            @db.Decimal(9, 6)
-  taxBase             FeeBase
-  maintenancePolicy   String // texto contratual (ex.: "conforme contrato")
-  responsibilities    Json? // { sansol: string[], partner: string[] }
-  sourceNote          String? // origem dos parâmetros
-  createdById         String?
-  approvedById        String?
-  approvedAt          DateTime?
-  createdAt           DateTime           @default(now())
+  lossTreatment              LossTreatment      @default(SHARE_MONTHLY)
+  taxRate                    Decimal            @db.Decimal(9, 6)
+  taxBase                    FeeBase
+  maintenancePolicy          String // texto contratual (ex.: "conforme contrato")
+  responsibilities           Json? // { sansol: string[], partner: string[] }
+  sourceNote                 String? // origem dos parâmetros
+  createdById                String?
+  approvedById               String?
+  approvedAt                 DateTime?
+  createdAt                  DateTime           @default(now())
 
-  simulations Simulation[]
+  contractVersions ContractVersion[]
+  simulations      Simulation[]
 
   @@unique([modelId, version])
 }
@@ -376,8 +380,11 @@ model Site {
   updatedAt             DateTime      @updatedAt
   deletedAt             DateTime?
 
-  stations ChargingStation[]
-  tariffs  Tariff[]
+  stations         ChargingStation[]
+  contracts        ContractSite[]
+  financialEntries FinancialEntry[]
+  tickets          Ticket[]
+  tariffs          Tariff[]
 
   @@index([operatorId])
   @@index([partnerOrganizationId])
@@ -530,10 +537,14 @@ model ChargingStation {
   updatedAt         DateTime           @updatedAt
   deletedAt         DateTime?
 
-  connectors Connector[]
-  sessions   ChargingSession[]
-  messages   OcppMessage[]
-  commands   RemoteCommand[]
+  connectors       Connector[]
+  sessions         ChargingSession[]
+  messages         OcppMessage[]
+  tickets          Ticket[]
+  workOrders       WorkOrder[]
+  maintenancePlans MaintenancePlan[]
+  alerts           Alert[]
+  commands         RemoteCommand[]
 
   @@index([operatorId])
   @@index([siteId])
@@ -594,14 +605,14 @@ model ConnectorStatusEvent {
 }
 
 model Tariff {
-  id            String   @id @default(cuid())
-  siteId        String
-  site          Site     @relation(fields: [siteId], references: [id])
-  pricePerKwh   Decimal  @db.Decimal(10, 4)
-  pricePerMin   Decimal  @default(0) @db.Decimal(10, 4)
-  validFrom     DateTime
-  createdById   String?
-  createdAt     DateTime @default(now())
+  id          String   @id @default(cuid())
+  siteId      String
+  site        Site     @relation(fields: [siteId], references: [id])
+  pricePerKwh Decimal  @db.Decimal(10, 4)
+  pricePerMin Decimal  @default(0) @db.Decimal(10, 4)
+  validFrom   DateTime
+  createdById String?
+  createdAt   DateTime @default(now())
 
   @@index([siteId, validFrom])
 }
@@ -637,24 +648,34 @@ enum SessionStatus {
 }
 
 model ChargingSession {
-  id                 String             @id @default(cuid())
-  stationId          String
-  station            ChargingStation    @relation(fields: [stationId], references: [id])
-  connectorId        Int
-  transactionId      Int
-  idTag              String
-  environment        StationEnvironment
-  meterStartWh       Int
-  meterStopWh        Int?
-  lastMeterWh        Int?
-  startedAt          DateTime
-  stoppedAt          DateTime?
-  stopReason         String?
-  status             SessionStatus      @default(ACTIVE)
-  createdAt          DateTime           @default(now())
-  updatedAt          DateTime           @updatedAt
+  id                String             @id @default(cuid())
+  stationId         String
+  station           ChargingStation    @relation(fields: [stationId], references: [id])
+  connectorId       Int
+  transactionId     Int
+  idTag             String
+  environment       StationEnvironment
+  meterStartWh      Int
+  meterStopWh       Int?
+  lastMeterWh       Int?
+  startedAt         DateTime
+  stoppedAt         DateTime?
+  stopReason        String?
+  status            SessionStatus      @default(ACTIVE)
+  driverId          String?
+  driver            Driver?            @relation(fields: [driverId], references: [id])
+  /// Tarifa vigente no início (snapshot): o custo final não muda se a tarifa mudar depois.
+  tariffPricePerKwh Decimal?           @db.Decimal(10, 4)
+  tariffPricePerMin Decimal?           @db.Decimal(10, 4)
+  /// Valor apurado no encerramento (energia × tarifa + minutos × tarifa/min). Não significa pago.
+  amount            Decimal?           @db.Decimal(14, 2)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
 
-  measurements SessionMeasurement[]
+  measurements  SessionMeasurement[]
+  chargeRequest ChargeRequest?
+  payments      Payment[]
+  rating        SessionRating?
 
   @@unique([stationId, transactionId])
   @@unique([stationId, connectorId, startedAt, idTag])
@@ -662,12 +683,12 @@ model ChargingSession {
 }
 
 model SessionMeasurement {
-  id          String          @id @default(cuid())
-  sessionId   String
-  session     ChargingSession @relation(fields: [sessionId], references: [id])
-  timestamp   DateTime
-  energyWh    Int?
-  powerW      Int?
+  id        String          @id @default(cuid())
+  sessionId String
+  session   ChargingSession @relation(fields: [sessionId], references: [id])
+  timestamp DateTime
+  energyWh  Int?
+  powerW    Int?
 
   @@unique([sessionId, timestamp])
 }
@@ -706,4 +727,790 @@ model RemoteCommand {
   completedAt   DateTime?
 
   @@index([stationId, status])
+}
+
+// ───────────────────────── Motoristas ─────────────────────────
+
+/// Conta de motorista: autenticação SEPARADA da equipe (tabela, cookie e sessões próprios).
+model Driver {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  phone        String?
+  passwordHash String
+  consentAt    DateTime
+  consentVer   String
+  disabledAt   DateTime?
+  createdAt    DateTime  @default(now())
+
+  sessions         DriverSession[]
+  vehicles         Vehicle[]
+  idTags           DriverIdTag[]
+  chargeRequests   ChargeRequest[]
+  chargingSessions ChargingSession[]
+  payments         Payment[]
+  supportRequests  SupportRequest[]
+}
+
+model DriverSession {
+  id        String    @id @default(cuid())
+  tokenHash String    @unique
+  driverId  String
+  driver    Driver    @relation(fields: [driverId], references: [id])
+  expiresAt DateTime
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+
+  @@index([driverId])
+}
+
+model Vehicle {
+  id             String          @id @default(cuid())
+  driverId       String
+  driver         Driver          @relation(fields: [driverId], references: [id])
+  label          String
+  connectorTypes ConnectorType[]
+  batteryKwh     Decimal?        @db.Decimal(6, 1)
+  createdAt      DateTime        @default(now())
+}
+
+/// Identificador OCPP (idTag) do motorista. Usado na autorização do carregador.
+model DriverIdTag {
+  id        String    @id @default(cuid())
+  driverId  String
+  driver    Driver    @relation(fields: [driverId], references: [id])
+  idTag     String    @unique
+  kind      String    @default("APP")
+  revokedAt DateTime?
+  createdAt DateTime  @default(now())
+}
+
+enum ChargeRequestStatus {
+  AWAITING_PAYMENT
+  START_REQUESTED
+  STARTED
+  FAILED
+  CANCELLED
+}
+
+/// Pedido de recarga do motorista: liga pagamento → comando remoto → sessão OCPP.
+model ChargeRequest {
+  id          String              @id @default(cuid())
+  driverId    String
+  driver      Driver              @relation(fields: [driverId], references: [id])
+  stationId   String
+  connectorId Int
+  idTag       String
+  /// Demonstração: estação SIMULATED, sem cobrança.
+  demo        Boolean
+  status      ChargeRequestStatus
+  failure     String?
+  commandId   String?
+  sessionId   String?             @unique
+  session     ChargingSession?    @relation(fields: [sessionId], references: [id])
+  paymentId   String?             @unique
+  payment     Payment?            @relation(fields: [paymentId], references: [id])
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+
+  @@index([driverId, createdAt])
+  @@index([stationId, connectorId, status])
+}
+
+model SessionRating {
+  id        String          @id @default(cuid())
+  sessionId String          @unique
+  session   ChargingSession @relation(fields: [sessionId], references: [id])
+  stars     Int
+  comment   String?
+  createdAt DateTime        @default(now())
+}
+
+model SupportRequest {
+  id        String   @id @default(cuid())
+  driverId  String
+  driver    Driver   @relation(fields: [driverId], references: [id])
+  sessionId String?
+  subject   String
+  message   String
+  status    String   @default("OPEN")
+  createdAt DateTime @default(now())
+}
+
+// ───────────────────────── Pagamentos ─────────────────────────
+
+enum PaymentStatus {
+  PENDING
+  AUTHORIZED
+  CAPTURED
+  PARTIALLY_REFUNDED
+  REFUNDED
+  FAILED
+  CANCELLED
+  DISPUTED
+}
+
+enum PaymentEnvironment {
+  SANDBOX
+  PRODUCTION
+}
+
+model Payment {
+  id               String             @id @default(cuid())
+  driverId         String
+  driver           Driver             @relation(fields: [driverId], references: [id])
+  sessionId        String?
+  session          ChargingSession?   @relation(fields: [sessionId], references: [id])
+  provider         String
+  environment      PaymentEnvironment
+  providerRef      String
+  status           PaymentStatus
+  currency         String             @default("BRL")
+  amountAuthorized Decimal            @default(0) @db.Decimal(14, 2)
+  amountCaptured   Decimal            @default(0) @db.Decimal(14, 2)
+  amountRefunded   Decimal            @default(0) @db.Decimal(14, 2)
+  failureReason    String?
+  /// Conciliação: marcado quando sessão, valor e status do provedor conferem.
+  reconciledAt     DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  events        PaymentEvent[]
+  refunds       Refund[]
+  chargeRequest ChargeRequest?
+
+  @@unique([provider, providerRef])
+  @@index([status])
+}
+
+/// Evento de webhook. (provedor, eventId) único → reentrega não reprocessa.
+model PaymentEvent {
+  id             String    @id @default(cuid())
+  provider       String
+  eventId        String
+  type           String
+  paymentId      String?
+  payment        Payment?  @relation(fields: [paymentId], references: [id])
+  signatureValid Boolean
+  payload        Json
+  receivedAt     DateTime  @default(now())
+  processedAt    DateTime?
+  outcome        String?
+  attempts       Int       @default(0)
+
+  @@unique([provider, eventId])
+}
+
+enum RefundStatus {
+  REQUESTED
+  SUCCEEDED
+  FAILED
+}
+
+model Refund {
+  id            String       @id @default(cuid())
+  paymentId     String
+  payment       Payment      @relation(fields: [paymentId], references: [id])
+  amount        Decimal      @db.Decimal(14, 2)
+  status        RefundStatus @default(REQUESTED)
+  providerRef   String?
+  reason        String
+  requestedById String
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+}
+
+/// Estado interno do GATEWAY SANDBOX (simulado). Não é dado financeiro real; existe para testar
+/// o adaptador sem credenciais. Nenhum valor daqui representa dinheiro movimentado.
+model SandboxGatewayCharge {
+  id        String   @id @default(cuid())
+  amount    Decimal  @db.Decimal(14, 2)
+  captured  Decimal  @default(0) @db.Decimal(14, 2)
+  refunded  Decimal  @default(0) @db.Decimal(14, 2)
+  status    String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+// ───────────────────────── Anexos (contratos, tickets, ordens de serviço) ─────────────────────────
+
+/// Arquivo anexado. Conteúdo no banco (limite de tamanho e tipos permitidos validados no servidor).
+/// O acesso é sempre resolvido pela entidade dona (entityType/entityId), nunca só pelo id do anexo.
+model Attachment {
+  id               String    @id @default(cuid())
+  organizationId   String // operadora dona do registro
+  entityType       String // "Contract" | "Ticket" | "WorkOrder" | "FinancialEntry"
+  entityId         String
+  filename         String
+  mimeType         String
+  size             Int
+  sha256           String
+  data             Bytes
+  /// Contratos: documento visível no portal do parceiro.
+  visibleToPartner Boolean   @default(false)
+  uploadedById     String
+  createdAt        DateTime  @default(now())
+  deletedAt        DateTime?
+
+  @@index([entityType, entityId])
+}
+
+// ───────────────────────── Contratos ─────────────────────────
+
+enum ContractStatus {
+  DRAFT
+  ACTIVE
+  SUSPENDED
+  TERMINATED
+}
+
+enum ContractVersionKind {
+  ORIGINAL
+  AMENDMENT // aditivo
+}
+
+enum ContractVersionStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+}
+
+/// Base de cálculo de royalty/repasse no fechamento.
+enum SettlementBase {
+  GROSS_REVENUE // receita bruta
+  NET_REVENUE // bruta − tributos − taxa de sistema
+  OPERATING_RESULT // receita líquida − custos − royalty
+}
+
+model Contract {
+  id                    String         @id @default(cuid())
+  operatorId            String
+  partnerOrganizationId String
+  partnerOrganization   Organization   @relation("ContractPartner", fields: [partnerOrganizationId], references: [id])
+  number                String
+  title                 String
+  status                ContractStatus @default(DRAFT)
+  statusReason          String?
+  createdById           String
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  versions ContractVersion[]
+  sites    ContractSite[]
+
+  @@unique([operatorId, number])
+  @@index([partnerOrganizationId])
+}
+
+model ContractSite {
+  contractId String
+  contract   Contract @relation(fields: [contractId], references: [id])
+  siteId     String
+  site       Site     @relation(fields: [siteId], references: [id])
+  addedById  String
+  addedAt    DateTime @default(now())
+
+  @@id([contractId, siteId])
+  @@index([siteId])
+}
+
+/// Versão IMUTÁVEL das condições contratuais. Aditivo = nova versão; as anteriores são preservadas.
+/// Vigente numa data = versão APROVADA com maior effectiveFrom ≤ data (e data < effectiveTo, se houver).
+model ContractVersion {
+  id                       String                  @id @default(cuid())
+  contractId               String
+  contract                 Contract                @relation(fields: [contractId], references: [id])
+  version                  Int
+  kind                     ContractVersionKind
+  status                   ContractVersionStatus   @default(DRAFT)
+  effectiveFrom            DateTime
+  effectiveTo              DateTime?
+  commercialModelVersionId String?
+  commercialModelVersion   CommercialModelVersion? @relation(fields: [commercialModelVersionId], references: [id])
+  royaltyRate              Decimal                 @db.Decimal(9, 6)
+  royaltyBase              SettlementBase
+  /// Taxa de sistema sobre a receita bruta (já inclui o custo do gateway).
+  platformFeeRate          Decimal                 @db.Decimal(9, 6)
+  partnerShareRate         Decimal                 @db.Decimal(9, 6)
+  partnerShareBase         SettlementBase
+  lossTreatment            LossTreatment           @default(SHARE_MONTHLY)
+  paymentTermDays          Int                     @default(10)
+  conditions               String
+  /// Motivo da versão/aditivo (obrigatório).
+  reason                   String
+  createdById              String
+  createdAt                DateTime                @default(now())
+  decidedById              String?
+  decidedAt                DateTime?
+  decisionNote             String?
+
+  @@unique([contractId, version])
+}
+
+// ───────────────────────── Financeiro ─────────────────────────
+
+enum EntryKind {
+  RECEIVABLE // a receber / receita
+  PAYABLE // a pagar / despesa
+}
+
+enum EntryCategory {
+  CHARGING_REVENUE // receita de recarga registrada fora do gateway
+  OTHER_REVENUE
+  ENERGY
+  RENT
+  MAINTENANCE
+  CONNECTIVITY
+  INSURANCE
+  OTHER_EXPENSE
+  PARTNER_SHARE // repasse ao parceiro (gerado no fechamento)
+  PARTNER_CONTRIBUTION // aporte do parceiro em prejuízo (gerado no fechamento)
+  ADJUSTMENT // ajuste de período fechado
+}
+
+enum EntryStatus {
+  OPEN // provisionado / em aberto
+  PAID // baixado (pago ou recebido) — registro manual, nunca transferência pela plataforma
+  CANCELLED
+}
+
+enum EntrySource {
+  MANUAL
+  CLOSING
+  ADJUSTMENT
+  WORK_ORDER
+}
+
+model FinancialEntry {
+  id                    String         @id @default(cuid())
+  operatorId            String
+  kind                  EntryKind
+  category              EntryCategory
+  status                EntryStatus    @default(OPEN)
+  source                EntrySource    @default(MANUAL)
+  description           String
+  /// Sempre positivo; o sentido vem de `kind`.
+  amount                Decimal        @db.Decimal(14, 2)
+  /// Competência "AAAA-MM".
+  competence            String
+  dueDate               DateTime?
+  siteId                String?
+  site                  Site?          @relation(fields: [siteId], references: [id])
+  stationId             String?
+  partnerOrganizationId String?
+  partnerOrganization   Organization?  @relation("EntryPartner", fields: [partnerOrganizationId], references: [id])
+  contractId            String?
+  closingId             String?
+  closing               PeriodClosing? @relation(fields: [closingId], references: [id])
+  /// Ajuste: período fechado ao qual o lançamento se refere.
+  adjustsPeriod         String?
+  workOrderId           String?        @unique
+  paidAt                DateTime?
+  paidAmount            Decimal?       @db.Decimal(14, 2)
+  paymentNote           String?
+  paidById              String?
+  cancelledAt           DateTime?
+  cancelReason          String?
+  createdById           String?
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+
+  @@index([operatorId, competence])
+  @@index([partnerOrganizationId, competence])
+  @@index([closingId])
+}
+
+/// Tributo configurável (fração sobre a receita bruta), versionado por vigência.
+model TaxRule {
+  id            String    @id @default(cuid())
+  operatorId    String
+  name          String
+  rate          Decimal   @db.Decimal(9, 6)
+  effectiveFrom DateTime
+  effectiveTo   DateTime?
+  note          String?
+  createdById   String
+  createdAt     DateTime  @default(now())
+
+  @@index([operatorId])
+}
+
+enum ClosingStatus {
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  SUPERSEDED // dados mudaram entre a prévia e a aprovação
+}
+
+/// Fechamento mensal. O resultado aprovado é imutável (snapshot + hash). Índices parciais na
+/// migração garantem no máximo um APPROVED e um PENDING_APPROVAL por (operadora, período).
+model PeriodClosing {
+  id            String        @id @default(cuid())
+  operatorId    String
+  period        String
+  status        ClosingStatus @default(PENDING_APPROVAL)
+  result        Json
+  resultHash    String
+  engineVersion String
+  validations   Json
+  requestedById String
+  requestedAt   DateTime      @default(now())
+  decidedById   String?
+  decidedAt     DateTime?
+  decisionNote  String?
+
+  entries FinancialEntry[]
+
+  @@index([operatorId, period])
+}
+
+// ───────────────────────── Suporte, SLA e manutenção ─────────────────────────
+
+enum TicketCategory {
+  CHARGER_FAULT
+  CONNECTIVITY
+  PAYMENT
+  DRIVER_SUPPORT
+  INSTALLATION
+  PREVENTIVE
+  OTHER
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum TicketOrigin {
+  MANUAL
+  DRIVER
+  ALERT
+  PARTNER
+  PREVENTIVE
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  WAITING_THIRD_PARTY // pausa o SLA (motivo obrigatório)
+  WAITING_REQUESTER // pausa o SLA (motivo obrigatório)
+  RESOLVED
+  CLOSED
+  CANCELLED
+}
+
+enum TicketEventKind {
+  CREATED
+  COMMENT
+  STATUS_CHANGE
+  ASSIGNMENT
+  PRIORITY_CHANGE
+  PAUSE
+  RESUME
+  WORK_ORDER
+  ATTACHMENT
+  ALERT
+}
+
+/// SLA por prioridade (opcionalmente por contrato). O ticket guarda uma cópia na criação:
+/// mudar a política não altera prazos de tickets existentes.
+model SlaPolicy {
+  id                String         @id @default(cuid())
+  operatorId        String
+  contractId        String?
+  priority          TicketPriority
+  responseMinutes   Int
+  resolutionMinutes Int
+  businessHoursOnly Boolean        @default(false)
+  workStartHour     Int            @default(8)
+  workEndHour       Int            @default(18)
+  workDays          Int[]          @default([1, 2, 3, 4, 5])
+  active            Boolean        @default(true)
+  createdById       String?
+  createdAt         DateTime       @default(now())
+
+  @@index([operatorId, priority, active])
+}
+
+model Ticket {
+  id                   String           @id @default(cuid())
+  operatorId           String
+  number               String
+  title                String
+  description          String
+  category             TicketCategory
+  priority             TicketPriority
+  origin               TicketOrigin
+  status               TicketStatus     @default(OPEN)
+  assigneeId           String?
+  assignee             User?            @relation("TicketAssignee", fields: [assigneeId], references: [id])
+  siteId               String?
+  site                 Site?            @relation(fields: [siteId], references: [id])
+  stationId            String?
+  station              ChargingStation? @relation(fields: [stationId], references: [id])
+  contractId           String?
+  supportRequestId     String?          @unique
+  createdById          String?
+  slaPolicyId          String?
+  slaResponseMinutes   Int?
+  slaResolutionMinutes Int?
+  /// Calendário copiado da política: { businessHoursOnly, workStartHour, workEndHour, workDays }
+  slaCalendar          Json?
+  firstResponseAt      DateTime?
+  pausedSince          DateTime?
+  resolvedAt           DateTime?
+  closedAt             DateTime?
+  createdAt            DateTime         @default(now())
+  updatedAt            DateTime         @updatedAt
+
+  events     TicketEvent[]
+  workOrders WorkOrder[]
+  alert      Alert?
+
+  @@unique([operatorId, number])
+  @@index([operatorId, status])
+}
+
+model TicketEvent {
+  id        String          @id @default(cuid())
+  ticketId  String
+  ticket    Ticket          @relation(fields: [ticketId], references: [id])
+  kind      TicketEventKind
+  body      String?
+  data      Json?
+  authorId  String?
+  createdAt DateTime        @default(now())
+
+  @@index([ticketId, createdAt])
+}
+
+enum WorkOrderType {
+  CORRECTIVE
+  PREVENTIVE
+}
+
+enum WorkOrderStatus {
+  OPEN
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+model WorkOrder {
+  id              String           @id @default(cuid())
+  operatorId      String
+  number          String
+  type            WorkOrderType
+  status          WorkOrderStatus  @default(OPEN)
+  title           String
+  ticketId        String?
+  ticket          Ticket?          @relation(fields: [ticketId], references: [id])
+  planId          String?
+  plan            MaintenancePlan? @relation(fields: [planId], references: [id])
+  stationId       String
+  station         ChargingStation  @relation(fields: [stationId], references: [id])
+  diagnosis       String?
+  technicianName  String?
+  scheduledFor    DateTime?
+  startedAt       DateTime?
+  completedAt     DateTime?
+  /// [{ item: string, done: boolean }]
+  checklist       Json             @default("[]")
+  laborCost       Decimal          @default(0) @db.Decimal(14, 2)
+  completionNotes String?
+  createdById     String
+  createdAt       DateTime         @default(now())
+  updatedAt       DateTime         @updatedAt
+
+  parts WorkOrderPart[]
+
+  @@unique([operatorId, number])
+  @@index([operatorId, status])
+  @@index([planId])
+}
+
+model WorkOrderPart {
+  id          String    @id @default(cuid())
+  workOrderId String
+  workOrder   WorkOrder @relation(fields: [workOrderId], references: [id])
+  description String
+  quantity    Decimal   @db.Decimal(10, 2)
+  unitCost    Decimal   @db.Decimal(14, 2)
+  total       Decimal   @db.Decimal(14, 2)
+  createdAt   DateTime  @default(now())
+}
+
+enum MaintenanceTrigger {
+  TIME // a cada N dias
+  ENERGY_KWH // a cada N kWh entregues (telemetria de produção)
+  SESSIONS // a cada N sessões (telemetria de produção)
+}
+
+model MaintenancePlan {
+  id               String             @id @default(cuid())
+  operatorId       String
+  stationId        String
+  station          ChargingStation    @relation(fields: [stationId], references: [id])
+  name             String
+  trigger          MaintenanceTrigger
+  intervalDays     Int?
+  intervalKwh      Int?
+  intervalSessions Int?
+  /// Itens do checklist copiados para cada OS gerada.
+  checklist        String[]
+  active           Boolean            @default(true)
+  createdById      String
+  createdAt        DateTime           @default(now())
+
+  workOrders WorkOrder[]
+}
+
+// ───────────────────────── Alertas, automações e notificações ─────────────────────────
+
+enum AlertKind {
+  STATION_OFFLINE
+  REPEATED_FAULTS
+  AVAILABILITY_DROP
+  SESSION_INTERRUPTED
+  PAYMENT_DIVERGENCE
+}
+
+enum AlertSeverity {
+  WARNING
+  CRITICAL
+}
+
+enum AlertStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+}
+
+model AlertRule {
+  id                   String                @id @default(cuid())
+  operatorId           String
+  kind                 AlertKind
+  name                 String
+  enabled              Boolean               @default(true)
+  severity             AlertSeverity
+  /// Parâmetros por tipo (validados por Zod no servidor).
+  params               Json
+  /// Limite de frequência: alerta resolvido que reaparece dentro deste prazo é reaberto (sem nova notificação).
+  cooldownMinutes      Int                   @default(60)
+  escalateAfterMinutes Int?
+  createTicket         Boolean               @default(false)
+  ticketPriority       TicketPriority        @default(HIGH)
+  notifyChannels       NotificationChannel[]
+  includeNonProduction Boolean               @default(false)
+  updatedById          String?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+
+  alerts Alert[]
+
+  @@unique([operatorId, kind])
+}
+
+/// Alerta deduplicado por dedupeKey: índice único parcial (status ≠ RESOLVED) na migração.
+model Alert {
+  id               String           @id @default(cuid())
+  operatorId       String
+  ruleId           String
+  rule             AlertRule        @relation(fields: [ruleId], references: [id])
+  kind             AlertKind
+  severity         AlertSeverity
+  status           AlertStatus      @default(OPEN)
+  dedupeKey        String
+  title            String
+  detail           String
+  stationId        String?
+  station          ChargingStation? @relation(fields: [stationId], references: [id])
+  /// Ocorrências agregadas (reaparições e confirmações a cada avaliação).
+  occurrences      Int              @default(1)
+  firstSeenAt      DateTime         @default(now())
+  lastSeenAt       DateTime         @default(now())
+  /// false = exige resolução manual (ex.: sessão interrompida, divergência).
+  autoResolve      Boolean          @default(true)
+  acknowledgedAt   DateTime?
+  acknowledgedById String?
+  resolvedAt       DateTime?
+  resolvedReason   String?
+  escalatedAt      DateTime?
+  ticketId         String?          @unique
+  ticket           Ticket?          @relation(fields: [ticketId], references: [id])
+  createdAt        DateTime         @default(now())
+
+  notifications Notification[]
+
+  @@index([operatorId, status])
+  @@index([operatorId, dedupeKey])
+}
+
+/// Registro de cada execução de automação (avaliação de alertas, preventiva, notificações).
+model AutomationRun {
+  id         String    @id @default(cuid())
+  operatorId String?
+  job        String
+  status     String // RUNNING | SUCCEEDED | FAILED
+  attempt    Int       @default(1)
+  stats      Json?
+  error      String?
+  startedAt  DateTime  @default(now())
+  finishedAt DateTime?
+
+  @@index([job, startedAt])
+}
+
+enum NotificationChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED // esgotou as tentativas
+  SKIPPED_NOT_CONFIGURED
+  SKIPPED_NO_CONSENT
+}
+
+/// Consentimento do próprio usuário para receber alertas por canal (opt-in, revogável).
+model NotificationRecipient {
+  id             String              @id @default(cuid())
+  userId         String
+  organizationId String
+  channel        NotificationChannel
+  destination    String
+  consentAt      DateTime
+  revokedAt      DateTime?
+  createdAt      DateTime            @default(now())
+
+  @@unique([userId, organizationId, channel])
+}
+
+/// Fila de notificações (outbox). dedupeKey único impede duplicidade e laços de reenvio.
+model Notification {
+  id              String              @id @default(cuid())
+  operatorId      String
+  alertId         String?
+  alert           Alert?              @relation(fields: [alertId], references: [id])
+  channel         NotificationChannel
+  recipientUserId String?
+  destination     String?
+  subject         String
+  body            String
+  status          NotificationStatus  @default(PENDING)
+  attempts        Int                 @default(0)
+  maxAttempts     Int                 @default(5)
+  nextAttemptAt   DateTime?
+  lastError       String?
+  sentAt          DateTime?
+  dedupeKey       String              @unique
+  createdAt       DateTime            @default(now())
+
+  @@index([status, nextAttemptAt])
 }

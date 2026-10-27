@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import { SYSTEM_ROLES } from "@/server/auth/permissions";
+import { ensureDefaultAlertRules } from "@/server/modules/alerts/rules";
 import { PORTFOLIO_SOURCE_NOTE, REFERENCE_RESPONSIBILITIES, REFERENCE_TERMS } from "@/domain/commercial/reference";
 
 /** Estrutura mínima idempotente: perfis de sistema, operadora, funil e modelos de referência. */
@@ -69,5 +70,21 @@ export async function ensureReferenceModels(db: PrismaClient, organizationId: st
         sourceNote: `${PORTFOLIO_SOURCE_NOTE} Versão 1 criada pelo seed como referência — revisar e reaprovar antes de uso contratual.`,
       },
     });
+  }
+}
+
+/** SLA inicial por prioridade (24×7). Ajustável em /app/suporte/configurar — referência, não compromisso contratual. */
+export const DEFAULT_SLA = [
+  { priority: "CRITICAL", responseMinutes: 30, resolutionMinutes: 240 },
+  { priority: "HIGH", responseMinutes: 60, resolutionMinutes: 480 },
+  { priority: "MEDIUM", responseMinutes: 240, resolutionMinutes: 1440 },
+  { priority: "LOW", responseMinutes: 480, resolutionMinutes: 4320 },
+] as const;
+
+export async function ensureOperationsDefaults(db: PrismaClient, operatorId: string) {
+  await ensureDefaultAlertRules(db, operatorId);
+  for (const p of DEFAULT_SLA) {
+    const exists = await db.slaPolicy.findFirst({ where: { operatorId, priority: p.priority, contractId: null, active: true } });
+    if (!exists) await db.slaPolicy.create({ data: { operatorId, ...p } });
   }
 }

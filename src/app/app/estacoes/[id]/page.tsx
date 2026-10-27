@@ -14,6 +14,7 @@ import { Field, Input, Select } from "@/components/ui/field";
 import { ActionForm } from "@/components/app/action-form";
 import { ConnectionBadge, ConnectorStatusBadge, EnvironmentBadge } from "@/components/app/station-badges";
 import { dateTime, num } from "@/lib/format";
+import { ConnectorQr } from "@/components/app/connector-qr";
 
 export const dynamic = "force-dynamic";
 const CMD_TONE = { PENDING: "amber", SENT: "tiffany", ACCEPTED: "green", REJECTED: "red", TIMEOUT: "red", FAILED: "red", BLOCKED: "neutral" } as const;
@@ -204,6 +205,14 @@ export default async function EstacaoPage({ params }: { params: Promise<{ id: st
                 <ActionForm action={rotateSecretAction} submitLabel="Gerar nova senha" variant="secondary" size="sm" confirm="Gerar nova senha OCPP? O carregador precisará ser reconfigurado.">
                   <input type="hidden" name="stationId" value={s.id} />
                 </ActionForm>
+              </CardBody>
+            </Card>
+          )}
+          {isOp && s.protocol === "OCPP16J" && s.connectors.length > 0 && (
+            <Card>
+              <CardHeader title="QR Codes dos conectores" description="Para imprimir e afixar. Abre o início de recarga no portal do motorista; o servidor valida estação, conector, comunicação e pagamento." />
+              <CardBody className="grid grid-cols-2 gap-4">
+                {s.connectors.map((c) => <ConnectorQr key={c.id} baseUrl={process.env.PUBLIC_SITE_URL ?? "http://localhost:3000"} identity={s.ocppIdentity} connectorId={c.connectorId} />)}
               </CardBody>
             </Card>
           )}
