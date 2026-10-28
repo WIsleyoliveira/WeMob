@@ -27,7 +27,7 @@ export const signupSchema = z.object({
   email: z.string().trim().toLowerCase().email("E-mail inválido.").max(200),
   phone: z.string().trim().max(20).optional().transform((v) => (v ? v.replace(/\D/g, "") : undefined)),
   password: passwordSchema,
-  consent: z.literal(true, { errorMap: () => ({ message: "É necessário aceitar os termos e a política de privacidade." }) }),
+  consent: z.literal(true, { error: "É necessário aceitar os termos e a política de privacidade." }),
 });
 
 /** Identificador OCPP do app: 20 caracteres no máximo (limite do idTag em OCPP 1.6). */

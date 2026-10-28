@@ -6,7 +6,7 @@ import { requirePermission, type AuthContext } from "@/server/auth/context";
 export const taskSchema = z.object({
   leadId: z.string().min(1),
   title: z.string().trim().min(3, "Descreva a tarefa.").max(200),
-  dueAt: z.coerce.date({ errorMap: () => ({ message: "Informe a data." }) }),
+  dueAt: z.coerce.date({ error: "Informe a data." }),
   assigneeId: z.string().optional(),
 });
 

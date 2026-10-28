@@ -367,6 +367,67 @@ describe("cartão (página de pagamento do Asaas)", () => {
   });
 });
 
+describe("ciclo de cobrança: duplicidade e autorização (P15)", () => {
+  it("dois pedidos simultâneos do mesmo motorista: um único pedido aberto e uma única cobrança no gateway", async () => {
+    const { driver, station } = await setup();
+    const results = await Promise.allSettled([
+      startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 }),
+      startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, method: "CARD" }),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(await db.chargeRequest.count({ where: { driverId: driver.driverId, status: { in: ["AWAITING_PAYMENT", "START_REQUESTED"] } } })).toBe(1);
+    expect(fake.payments.size).toBe(1);
+  });
+
+  it("dois motoristas no mesmo conector: o segundo é recusado antes de qualquer cobrança", async () => {
+    const { driver, station } = await setup();
+    await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    const { token } = await signupDriver({ name: "Caio", email: `caio${seq}@ex.com`, password: "senha-motorista-123", consent: true });
+    const other = (await resolveDriver(token))!;
+    await setMyDocument(other, { document: "390.533.447-05" });
+    await expect(startCharge(other, { identity: station.ocppIdentity, connectorId: 1 })).rejects.toThrow(/andamento/);
+    expect(fake.payments.size).toBe(1);
+  });
+
+  it("pago 20 min após o pedido (achado no sandbox): não expira, a sessão é vinculada e a diferença é estornada", async () => {
+    const { driver, station, call } = await setup();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, method: "CARD" });
+    await db.chargeRequest.update({ where: { id: req.id }, data: { createdAt: new Date(Date.now() - 20 * 60_000) } }); // motorista demorou a pagar
+    const p = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } });
+    fake.pay(p.providerRef, "CONFIRMED");
+    const h = hook("PAYMENT_CONFIRMED", p.providerRef);
+    await processWebhook("asaas", h.body, h.headers);
+    expect((await db.chargeRequest.findUniqueOrThrow({ where: { id: req.id } })).status).toBe("START_REQUESTED");
+    await expireStaleChargeRequests(); // ciclo de 1 min do servidor OCPP: o prazo do carregador conta do pedido de início
+    expect((await db.chargeRequest.findUniqueOrThrow({ where: { id: req.id } })).status).toBe("START_REQUESTED");
+    const start = (await call("late-start", "StartTransaction", { connectorId: 1, idTag: req.idTag, meterStart: 0, timestamp: iso(new Date()) })) as { result: { transactionId: number } };
+    await call("late-stop", "StopTransaction", { transactionId: start.result.transactionId, meterStop: 10_000, timestamp: iso(new Date()) });
+    const after = await db.payment.findUniqueOrThrow({ where: { id: p.id }, include: { refunds: true } });
+    expect(after.sessionId).not.toBeNull();
+    expect(after.refunds).toHaveLength(1);
+    expect(after.refunds[0].amount.toString()).toBe("30");
+    expect((await db.chargeRequest.findUniqueOrThrow({ where: { id: req.id } })).status).toBe("STARTED");
+  });
+
+  it("carregador não inicia em 3 min após o pagamento: pedido falha e o pagamento vai para análise", async () => {
+    const { driver, station } = await setup();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    const p = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } });
+    fake.pay(p.providerRef);
+    await refreshFromProvider(p.id, activeProvider());
+    await expireStaleChargeRequests(new Date(Date.now() + 4 * 60_000));
+    expect((await db.chargeRequest.findUniqueOrThrow({ where: { id: req.id } })).status).toBe("FAILED");
+    expect((await db.payment.findUniqueOrThrow({ where: { id: p.id } })).reviewOpenedAt).not.toBeNull();
+  });
+
+  it("etiqueta de bancada (TEST-/SIM-) não inicia recarga em estação de PRODUÇÃO", async () => {
+    const { station } = await setup();
+    expect(await driverAwareAuthorizer.authorize("TEST-0001", { ...station, environment: "PRODUCTION" })).toBe("Invalid");
+    expect(await driverAwareAuthorizer.authorize("SIM-0001", { ...station, environment: "PRODUCTION" })).toBe("Invalid");
+    expect(await driverAwareAuthorizer.authorize("TEST-0001", station)).toBe("Accepted"); // TEST: bancada continua valendo
+  });
+});
+
 describe("estornos", () => {
   async function captured() {
     const s = await setup();

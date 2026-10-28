@@ -150,7 +150,8 @@ describe("conciliação: pagamento sem sessão e sessão sem pagamento", () => {
     const { driver, station, admin } = await setup();
     const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
     await db.payment.update({ where: { id: req.paymentId! }, data: { createdAt: new Date(Date.now() - 20 * 60_000) } });
-    await db.chargeRequest.update({ where: { id: req.id }, data: { createdAt: new Date(Date.now() - 20 * 60_000) } });
+    // Pedido e início pedidos ao carregador há 20 min (o prazo do carregador conta de startRequestedAt).
+    await db.chargeRequest.update({ where: { id: req.id }, data: { createdAt: new Date(Date.now() - 20 * 60_000), startRequestedAt: new Date(Date.now() - 20 * 60_000) } });
     const before = await reconcile(admin.ctx, { from: new Date(Date.now() - 3600_000), to: new Date(Date.now() + 60_000) });
     expect(before.divergences.map((d) => d.kind)).toContain("PAYMENT_WITHOUT_SESSION");
     expect(await expireStaleChargeRequests()).toBe(1);

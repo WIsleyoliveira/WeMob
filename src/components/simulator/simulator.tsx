@@ -1,6 +1,7 @@
 "use client";
 
 import { useDeferredValue, useMemo, useState, useTransition } from "react";
+import "@/lib/zod-locale";
 import { ZodError } from "zod";
 import { DEFAULT_DAYS_PER_MONTH, runViability, type ParsedViabilityInput, type ViabilityInput } from "@/domain/viability/engine";
 import { SCENARIOS, type ScenarioKey } from "@/domain/viability/scenarios";

@@ -33,6 +33,12 @@ Regras invariantes: status local só muda pela consulta autenticada ao Asaas (o 
 - Débito: segundo a documentação, só pela página do Asaas com `billingType` `CREDIT_CARD`/`UNDEFINED`; não habilitado.
 - Sandbox: criação e página de pagamento confirmadas (`asaas-sandbox-20261028T1123.json`); pagamento com cartão de teste **ainda não feito**.
 
+## Webhook e estorno no sandbox — resultados reais (P15, 2026-10-28)
+- Webhook real recebido e aplicado (`PAYMENT_CONFIRMED`); falha temporária e **reenvio automático** do Asaas observados (~5 min). Detalhes: `docs/RELATORIO_P15.md`.
+- `npm run asaas:webhook -- listar | criar <url> | atualizar <id> <url> | remover <id>` (só sandbox). Ao trocar o endereço, prefira **atualizar** (mantém a fila de eventos pendentes).
+- **Cartão: estorno parcial só no dia seguinte** ("Esta transação só pode ser estornada parcialmente no próximo dia"). O acerto automático do fim da recarga é recusado no mesmo dia e o pagamento vai para análise — decisão pendente (agendar D+1, pré-autorização ou manual).
+- Tarifas observadas no sandbox: Pix R$ 0,99 (R$ 5,00); cartão R$ 2,48 (R$ 100,00).
+
 ## Configurar credenciais sem expô-las
 1. Crie uma conta no **ambiente de sandbox** do Asaas (cadastro separado da conta de produção, pelo link indicado em [Autenticação](https://docs.asaas.com/docs/autenticação-1)) e gere uma chave de API nessa conta (ver [Chaves de API](https://docs.asaas.com/docs/chaves-de-api)). Chaves de sandbox começam com `$aact_hmlg_`; as de produção com `$aact_prod_` — usar a chave no ambiente errado retorna 401. Guarde-a num cofre (1Password, Vault, segredo do provedor de hospedagem) — nunca no repositório, em logs ou em chats.
 2. No servidor (não no navegador), defina:

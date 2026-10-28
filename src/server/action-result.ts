@@ -1,3 +1,4 @@
+import "@/lib/zod-locale";
 import { ZodError } from "zod";
 import { AppError } from "./errors";
 import { log } from "./log";

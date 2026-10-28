@@ -1,8 +1,26 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-28 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-28 (P15) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P15 — Homologação financeira, segurança e preparação para staging (2026-10-28)
+
+Relatório completo com evidências: `docs/RELATORIO_P15.md`. Plano de staging: `docs/staging.md`.
+
+| Categoria | Itens |
+|---|---|
+| **Sandbox oficialmente validado** | Cartão: criação pelo portal, pagamento (cartão fictício), `CONFIRMED` → `CAPTURED`, líquido 97,52 / tarifa 2,48; **webhook real** `PAYMENT_CONFIRMED` aplicado; falha temporária real (4 penalizações) e **reenvio automático** do Asaas (~5 min); recusa real de estorno parcial no cartão no mesmo dia, registrada corretamente |
+| **Simulado** (chamadas nossas ou servidor falso) | evento duplicado, fora de ordem, cobrança desconhecida, sem token/token errado (401), exposição do túnel (404); 210 testes automatizados |
+| **Código** | índices únicos (1 pedido aberto por motorista/conector); `startRequestedAt` (prazos do carregador após o pagamento); bancada TEST-/SIM- recusada em produção; Zod 4; `deepmerge-ts` 8; `npm run asaas:webhook`; `distDir` configurável |
+| **Produção homologada** | **nada** |
+| **Pendente** | estorno parcial do cartão em D+1; split no sandbox (falta carteira de teste); decisões: estorno do cartão, autorização de ação crítica, consumo acima do pré-pago, base do 50/50; vitest (dev) |
+
+### Verificação (saída real)
+- `npm test` → 18 arquivos, **210 testes passando**; `npm run lint` → 0; `npm run typecheck` → 0.
+- `NEXT_DIST_DIR=.next-build npm run build` → sucesso (pasta removida após o build; `tsconfig.json` restaurado, o Next o altera ao usar outro `distDir`).
+- Migrations do zero em banco temporário: 10 aplicadas, sem diferença com o schema.
+- `npm audit --omit=dev` → 0 vulnerabilidades (eram 4 altas). `npm audit` (dev) → 3 (vitest/tinypool), pendentes.
 
 ## Pagamentos 2 — cartão, confirmação automática e telas do motorista (2026-10-28)
 

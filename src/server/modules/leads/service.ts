@@ -56,7 +56,7 @@ export const leadFieldsSchema = z.object({
 
 export const publicLeadSchema = leadFieldsSchema.extend({
   source: z.enum(["WEBSITE_VIABILITY", "WEBSITE_CONTACT", "WEBSITE_SIMULATOR"]),
-  consent: z.literal(true, { errorMap: () => ({ message: "É necessário aceitar a política de privacidade." }) }),
+  consent: z.literal(true, { error: "É necessário aceitar a política de privacidade." }),
 });
 
 export type PublicLeadResult = { ok: true; leadId?: string; duplicate?: boolean; discarded?: boolean };

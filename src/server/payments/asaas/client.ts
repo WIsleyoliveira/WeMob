@@ -23,7 +23,7 @@ export class AsaasError extends Error {
 export class AsaasClient {
   constructor(private cfg: AsaasConfig, private fetchImpl: FetchLike = fetch as unknown as FetchLike) {}
 
-  async request<T>(method: "GET" | "POST" | "DELETE", path: string, body?: unknown, query?: Record<string, string | number | undefined>): Promise<T> {
+  async request<T>(method: "GET" | "POST" | "PUT" | "DELETE", path: string, body?: unknown, query?: Record<string, string | number | undefined>): Promise<T> {
     const qs = query ? "?" + new URLSearchParams(Object.entries(query).filter(([, v]) => v !== undefined).map(([k, v]) => [k, String(v)])).toString() : "";
     const url = `${this.cfg.baseUrl}${path}${qs}`;
     const ctrl = new AbortController();

@@ -55,7 +55,7 @@ export const ruleUpdateSchema = z.object({
   ruleId: z.string(),
   enabled: z.boolean(),
   severity: z.enum(["WARNING", "CRITICAL"]),
-  params: z.record(z.unknown()),
+  params: z.record(z.string(), z.unknown()),
   cooldownMinutes: z.coerce.number().int().min(0).max(10080),
   escalateAfterMinutes: z.coerce.number().int().min(1).max(10080).optional(),
   createTicket: z.boolean(),

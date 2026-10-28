@@ -28,6 +28,8 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  // Permite compilar em outra pasta sem parar o `npm run dev` (ambos usam .next por padrão).
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   output: "standalone",
   poweredByHeader: false,
   // Anexos de até 5 MB passam por server actions (limite validado também no servidor).

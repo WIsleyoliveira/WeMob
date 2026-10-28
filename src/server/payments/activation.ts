@@ -22,7 +22,7 @@ export const ACTIVATION_ITEMS = {
   infrastructure: "HTTPS, segredos em cofre, webhook público, backup testado e rollback",
 } as const;
 
-const checklistSchema = z.object(Object.fromEntries(Object.keys(ACTIVATION_ITEMS).map((k) => [k, z.literal(true, { errorMap: () => ({ message: `Confirme: ${ACTIVATION_ITEMS[k as keyof typeof ACTIVATION_ITEMS]}` }) })])) as Record<keyof typeof ACTIVATION_ITEMS, z.ZodLiteral<true>>);
+const checklistSchema = z.object(Object.fromEntries(Object.keys(ACTIVATION_ITEMS).map((k) => [k, z.literal(true, { error: `Confirme: ${ACTIVATION_ITEMS[k as keyof typeof ACTIVATION_ITEMS]}` })])) as Record<keyof typeof ACTIVATION_ITEMS, z.ZodLiteral<true>>);
 
 export async function productionReadiness(operatorId: string) {
   const reasons: string[] = [...providerConfigIssues()];

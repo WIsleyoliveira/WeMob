@@ -18,7 +18,8 @@
     "ocpp:simulate": "tsx --import ./scripts/load-env.mjs scripts/ocpp-simulate.ts",
     "dev:users": "tsx --import ./scripts/load-env.mjs scripts/dev-users.ts",
     "setup:first-admin": "tsx scripts/bootstrap-production.ts",
-    "asaas:homologar": "tsx --import ./scripts/load-env.mjs scripts/asaas-homologar.ts"
+    "asaas:homologar": "tsx --import ./scripts/load-env.mjs scripts/asaas-homologar.ts",
+    "asaas:webhook": "tsx --import ./scripts/load-env.mjs scripts/asaas-webhook.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",
@@ -31,7 +32,7 @@
     "react-dom": "19.1.0",
     "server-only": "^0.0.1",
     "ws": "^8.21.3",
-    "zod": "^3.25.76"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
@@ -58,7 +59,8 @@
       "postcss": "8.5.32"
     },
     "@prisma/config": {
-      "effect": "3.22.4"
+      "effect": "3.22.4",
+      "deepmerge-ts": "8.0.2"
     }
   }
 }

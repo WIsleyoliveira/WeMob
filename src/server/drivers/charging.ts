@@ -15,7 +15,7 @@
  */
 import Decimal from "decimal.js";
 import { z } from "zod";
-import type { ChargingStation } from "@prisma/client";
+import { Prisma, type ChargingStation } from "@prisma/client";
 import { db } from "@/server/db";
 import { audit } from "@/server/audit";
 import { log } from "@/server/log";
@@ -80,9 +80,14 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
   const tag = await db.driverIdTag.findFirst({ where: { driverId: driver.driverId, revokedAt: null }, orderBy: { createdAt: "asc" } });
   if (!tag) throw new AppError("VALIDATION", "Conta sem identificador de recarga ativo.");
 
-  let request = await db.chargeRequest.create({
-    data: { driverId: driver.driverId, stationId: station.id, connectorId, idTag: tag.idTag, demo, status: demo ? "START_REQUESTED" : "AWAITING_PAYMENT" },
-  });
+  // Os índices únicos parciais (um pedido aberto por motorista e por conector) fecham a corrida entre as
+  // verificações acima e a criação: requisições simultâneas não geram duas cobranças.
+  let request = await db.chargeRequest
+    .create({ data: { driverId: driver.driverId, stationId: station.id, connectorId, idTag: tag.idTag, demo, status: demo ? "START_REQUESTED" : "AWAITING_PAYMENT" } })
+    .catch((e) => {
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new AppError("CONFLICT", "Já existe um pedido de recarga em andamento para você ou para este conector.");
+      throw e;
+    });
   await audit({ action: "charge.requested", entityType: "ChargeRequest", entityId: request.id, data: { station: identity, connectorId, demo, method } });
 
   if (demo) return issueStart(request.id);
@@ -114,7 +119,7 @@ async function issueStart(requestId: string, from: "AWAITING_PAYMENT" | "START_R
       data: { stationId: req.stationId, type: "REMOTE_START", payload: { connectorId: req.connectorId, idTag: req.idTag }, requestedById: `driver:${req.driverId}` },
     });
     await audit({ action: "charge.start_authorized", entityType: "ChargeRequest", entityId: req.id, data: { paymentId: req.paymentId, commandId: cmd.id } }, tx);
-    return tx.chargeRequest.update({ where: { id: req.id }, data: { status: "START_REQUESTED", commandId: cmd.id } });
+    return tx.chargeRequest.update({ where: { id: req.id }, data: { status: "START_REQUESTED", commandId: cmd.id, startRequestedAt: new Date() } });
   });
 }
 
@@ -138,7 +143,8 @@ onPaymentStateChange("charge-flow", async (payment) => continueAfterPayment(paym
 export const driverAwareAuthorizer: IdTagAuthorizer = {
   async authorize(idTag, station) {
     if (station.environment === "PRODUCTION" && !(await productionReadiness(station.operatorId)).allowed) return "Invalid"; // produção não habilitada
-    if (/^(SIM|TEST)-/.test(idTag)) return "Accepted"; // tags de bancada (equipe), nunca cobradas
+    // Tags de bancada (equipe, nunca cobradas) só fora de produção: em produção toda recarga exige pagamento.
+    if (/^(SIM|TEST)-/.test(idTag)) return station.environment === "PRODUCTION" ? "Invalid" : "Accepted";
     const tag = await db.driverIdTag.findUnique({ where: { idTag }, include: { driver: true } });
     if (!tag || tag.revokedAt || tag.driver.disabledAt) return "Invalid";
     if (station.environment === "SIMULATED") return "Accepted";
@@ -149,6 +155,9 @@ export const driverAwareAuthorizer: IdTagAuthorizer = {
 };
 
 /** Chamado pelo handler OCPP após criar a sessão: vincula motorista, pedido, pagamento e congela a tarifa. */
+/** Pedido cujo início foi pedido a partir de `since` (pedidos antigos sem o campo usam a criação). */
+const startedSince = (since: Date) => ({ OR: [{ startRequestedAt: { gte: since } }, { startRequestedAt: null, createdAt: { gte: since } }] });
+
 export async function onSessionStarted(station: ChargingStation, sessionId: string) {
   const session = await db.chargingSession.findUniqueOrThrow({ where: { id: sessionId } });
   const tag = await db.driverIdTag.findUnique({ where: { idTag: session.idTag } });
@@ -160,7 +169,7 @@ export async function onSessionStarted(station: ChargingStation, sessionId: stri
   });
   if (!tag || session.status === "COMPLETED") return;
   const req = await db.chargeRequest.findFirst({
-    where: { driverId: tag.driverId, stationId: station.id, connectorId: session.connectorId, status: "START_REQUESTED", sessionId: null, createdAt: { gte: new Date(Date.now() - START_TIMEOUT_MS * 2) } },
+    where: { driverId: tag.driverId, stationId: station.id, connectorId: session.connectorId, status: "START_REQUESTED", sessionId: null, ...startedSince(new Date(Date.now() - START_TIMEOUT_MS * 2)) },
     orderBy: { createdAt: "desc" },
   });
   if (!req) return;
@@ -198,6 +207,8 @@ export async function expireStaleChargeRequests(now = new Date()) {
   for (const r of stale) {
     const pix = !!r.payment && isPrepaidMethod(r.payment.method); // pré-pago (Pix ou cartão)
     if (r.status === "AWAITING_PAYMENT" && pix && now.getTime() - r.createdAt.getTime() < pixPaymentWindowMs()) continue;
+    // O prazo do carregador conta do pedido de início (após o pagamento), não da criação do pedido.
+    if (r.status === "START_REQUESTED" && now.getTime() - (r.startRequestedAt ?? r.createdAt).getTime() < START_TIMEOUT_MS) continue;
     n++;
     if (r.status === "AWAITING_PAYMENT" && pix && r.paymentId) {
       const after = await cancelPayment(r.paymentId).catch((e) => {

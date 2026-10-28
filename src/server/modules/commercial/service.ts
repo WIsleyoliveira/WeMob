@@ -126,7 +126,7 @@ export const saveSimulationSchema = z.object({
   /** Simulação anterior: a nova é registrada como revisão, com a lista de premissas alteradas. */
   parentId: z.string().optional(),
   // Os termos comerciais NUNCA vêm do cliente: são carregados da versão no banco.
-  input: z.record(z.unknown()),
+  input: z.record(z.string(), z.unknown()),
 });
 
 export async function saveSimulation(ctx: AuthContext | null, raw: unknown) {

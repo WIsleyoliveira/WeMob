@@ -802,23 +802,25 @@ enum ChargeRequestStatus {
 
 /// Pedido de recarga do motorista: liga pagamento → comando remoto → sessão OCPP.
 model ChargeRequest {
-  id          String              @id @default(cuid())
-  driverId    String
-  driver      Driver              @relation(fields: [driverId], references: [id])
-  stationId   String
-  connectorId Int
-  idTag       String
+  id               String              @id @default(cuid())
+  driverId         String
+  driver           Driver              @relation(fields: [driverId], references: [id])
+  stationId        String
+  connectorId      Int
+  idTag            String
   /// Demonstração: estação SIMULATED, sem cobrança.
-  demo        Boolean
-  status      ChargeRequestStatus
-  failure     String?
-  commandId   String?
-  sessionId   String?             @unique
-  session     ChargingSession?    @relation(fields: [sessionId], references: [id])
-  paymentId   String?             @unique
-  payment     Payment?            @relation(fields: [paymentId], references: [id])
-  createdAt   DateTime            @default(now())
-  updatedAt   DateTime            @updatedAt
+  demo             Boolean
+  status           ChargeRequestStatus
+  failure          String?
+  commandId        String?
+  /// Quando o início foi pedido ao carregador (pagamento confirmado). Prazos do carregador contam daqui.
+  startRequestedAt DateTime?
+  sessionId        String?             @unique
+  session          ChargingSession?    @relation(fields: [sessionId], references: [id])
+  paymentId        String?             @unique
+  payment          Payment?            @relation(fields: [paymentId], references: [id])
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
 
   @@index([driverId, createdAt])
   @@index([stationId, connectorId, status])

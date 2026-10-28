@@ -66,7 +66,7 @@ export const viabilityInputSchema = z
         maintenance: nonNeg.default(0),
         other: nonNeg.default(0),
       })
-      .default({}),
+      .prefault({}),
     investment: z
       .object({
         projectAndImplementation: nonNeg.default(0),
@@ -74,7 +74,7 @@ export const viabilityInputSchema = z
         works: nonNeg.default(0),
         other: nonNeg.default(0),
       })
-      .default({}),
+      .prefault({}),
     /** Capital de giro aportado no mês 0 (na proporção do capital) e devolvido no último mês, se marcado. */
     workingCapital: nonNeg.default(0),
     recoverWorkingCapital: z.boolean().default(true),

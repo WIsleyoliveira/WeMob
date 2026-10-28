@@ -184,7 +184,7 @@ export async function exportMyData(driver: DriverContext | null) {
  */
 export async function deleteMyAccount(driver: DriverContext | null, raw: unknown) {
   requireDriver(driver);
-  const { password } = z.object({ password: z.string().min(1).max(128), confirm: z.literal(true, { errorMap: () => ({ message: "Confirme a exclusão." }) }) }).parse(raw);
+  const { password } = z.object({ password: z.string().min(1).max(128), confirm: z.literal(true, { error: "Confirme a exclusão." }) }).parse(raw);
   const d = await db.driver.findUniqueOrThrow({ where: { id: driver.driverId } });
   if (!(await verifyPassword(password, d.passwordHash))) throw new AppError("VALIDATION", "Senha incorreta.");
   const busy = await db.chargeRequest.findFirst({ where: { driverId: d.id, status: { in: ["AWAITING_PAYMENT", "START_REQUESTED"] } } });

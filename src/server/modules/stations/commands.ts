@@ -15,7 +15,7 @@ export const COMMAND_LABEL: Record<RemoteCommandType, string> = {
 };
 
 export const commandSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("RESET"), stationId: z.string(), resetType: z.enum(["Soft", "Hard"]), confirm: z.literal(true, { errorMap: () => ({ message: "Confirme o reinício." }) }) }),
+  z.object({ type: z.literal("RESET"), stationId: z.string(), resetType: z.enum(["Soft", "Hard"]), confirm: z.literal(true, { error: "Confirme o reinício." }) }),
   z.object({ type: z.literal("REMOTE_START"), stationId: z.string(), connectorId: z.coerce.number().int().min(1), idTag: z.string().trim().min(1).max(20), confirm: z.boolean().optional() }),
   z.object({ type: z.literal("REMOTE_STOP"), stationId: z.string(), transactionId: z.coerce.number().int(), confirm: z.boolean().optional() }),
   z.object({ type: z.literal("UNLOCK_CONNECTOR"), stationId: z.string(), connectorId: z.coerce.number().int().min(1), confirm: z.boolean().optional() }),

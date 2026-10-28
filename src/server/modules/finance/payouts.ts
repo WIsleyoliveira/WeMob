@@ -15,7 +15,7 @@ export function payoutProviderStatus() {
 export async function initiatePayout(ctx: AuthContext | null, raw: unknown) {
   requirePermission(ctx, "finance:approve");
   requireOperator(ctx);
-  z.object({ entryId: z.string(), confirm: z.literal(true, { errorMap: () => ({ message: "Confirmação final obrigatória." }) }) }).parse(raw);
+  z.object({ entryId: z.string(), confirm: z.literal(true, { error: "Confirmação final obrigatória." }) }).parse(raw);
   const p = payoutProviderStatus();
   if (p.status === "not_configured") throw new AppError("CONFLICT", p.message);
 }
