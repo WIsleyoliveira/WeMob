@@ -13,7 +13,8 @@ export const ASAAS_PAYMENT_STATUSES = [
 export type AsaasPaymentStatus = (typeof ASAAS_PAYMENT_STATUSES)[number];
 
 /** Status de split documentados (LeanPaymentSplitGetResponsePaymentSplitStatus). */
-export const ASAAS_SPLIT_STATUSES = ["PENDING", "PROCESSING", "PROCESSING_REFUND", "AWAITING_CREDIT", "CANCELLED", "DONE", "REFUNDED", "BLOCKED_BY_VALUE_DIVERGENCE"] as const;
+/** Inclui REFUSED (status oficial "Split refused", docs.asaas.com, consultado em 2026-10-28). */
+export const ASAAS_SPLIT_STATUSES = ["PENDING", "PROCESSING", "PROCESSING_REFUND", "AWAITING_CREDIT", "CANCELLED", "DONE", "REFUSED", "REFUNDED", "BLOCKED_BY_VALUE_DIVERGENCE"] as const;
 
 /** Status de estorno documentados (PaymentRefundGetResponsePaymentRefundStatus). Concluído somente com DONE. */
 export const ASAAS_REFUND_STATUSES = ["PENDING", "AWAITING_CRITICAL_ACTION_AUTHORIZATION", "AWAITING_CUSTOMER_EXTERNAL_AUTHORIZATION", "CANCELLED", "DONE"] as const;

@@ -1,4 +1,4 @@
-# Relatório final técnico — P16 e auditoria de aceitação P17
+# Relatório final técnico — P16, auditoria P17 e homologação P18
 
 Data: 2026-10-28 · Commit de partida: `c783402` (confirmado no histórico; árvore limpa; branch `main`) · Ambiente: máquina local (Node 22.19, npm 10.9.3, PostgreSQL 14) + **Asaas sandbox oficial**. Nenhum push, deploy, operação financeira real ou habilitação de produção.
 
@@ -168,3 +168,128 @@ Iguais às da seção 5/6 do P16, com o estorno agora preparado para 29/10. Risc
 ## 9. Conclusão
 **O escopo de código está completo para a próxima etapa de homologação.** Justificativa: todas as funcionalidades existentes têm implementação funcional ou limitação documentada; as integrações internas estão conectadas e testadas (225 testes); não há falhas críticas ou altas conhecidas (produção: 0 vulnerabilidades; dev: 2 moderadas sem condição de exploração, com causa e caminho documentados); fluxos financeiros idempotentes e rastreáveis, inclusive sob concorrência (defeito 1 corrigido); estado local conciliável com o Asaas (conferido por consulta real); limite financeiro e falhas de parada tratados; lint, tipos, build e migrações passam; telas principais verificadas (varredura completa + navegador); três defeitos encontrados foram corrigidos com regressão; nenhum defeito conhecido está classificado como pendência externa.
 **Não está pronto para produção**: dependem de terceiros/decisões o estorno parcial de cartão real (29/10), o split (2ª carteira e elegibilidade), a regra 50/50, as permissões de estorno na conta de produção, carregadores físicos, deploy e a habilitação por duas pessoas. A ausência de E2E automatizado e as 2 moderadas de dev são as lacunas técnicas restantes, ambas fora dos critérios bloqueantes e documentadas.
+
+
+---
+
+# Homologação final e preparação para produção — P18 (2026-10-28)
+
+**Ambiente**: macOS (Darwin 25.2), Node 22.19.0, npm 10.9.3, PostgreSQL 14 local (`sansol_dev`, `sansol_test`, bancos temporários descartáveis), Asaas **sandbox** (somente leitura nesta etapa). Execução 13:33–14:10 BRT.
+**Commit inicial**: `3bfc71c` (sobre `9f2f0da` → `1a99aca`; ordem confirmada com `git merge-base`), árvore limpa. **Commit final**: nenhum — alterações **não commitadas**, para revisão (seção 9). Nenhum push, deploy, operação financeira real, alteração de `.env` ou migração destrutiva.
+**Fatos verificados nesta etapa** estão marcados com a evidência; itens marcados "(herdado)" vêm de relatórios anteriores e não foram reexecutados.
+
+## 1. Estado inicial (verificado)
+Branch `main`, HEAD `3bfc71c`, árvore limpa; 2,7 GB livres (1,8 GB ao final, por crescimento do `.next` do servidor de desenvolvimento); banco no ar; **porta 3001 ocupada pelo servidor de desenvolvimento iniciado no P17** (não reiniciado por mim; o próprio Next reiniciou o processo por memória — ver 5.D).
+
+## 2. Defeitos reproduzidos e corrigidos (com regressão)
+| # | Defeito | Reprodução | Correção | Regressão |
+|---|---|---|---|---|
+| 1 | "Tentar agora" antecipava estorno **agendado pelo gateway**; cada clique era recusado de novo e consumia tentativas | 6 cliques → estorno `FAILED`, 5 tentativas, pagamento em análise sem falha real | manual recusa `SCHEDULED` com data futura (mensagem com data e motivo); botão oculto nesse estado | teste P18 (falhava antes) |
+| 2 | Split **recusado** pelo gateway (status oficial `REFUSED`) não abria análise; só apareceria após 3 dias como "não liquidado" | teste: `reviewReason` vazio | `REFUSED` na lista de status; análise imediata; divergência `SPLIT_REFUSED` na conciliação | teste P18 (falhava antes) |
+
+Testes acrescentados sem defeito encontrado: parada **aceita** pelo carregador sem `StopTransaction` não conta como parada física (alerta continua, sem reenvio); testes unitários das regras puras de split (casas decimais, soma ≤ 100%, 50% do líquido, arredondamento por linha, divergência, fixo maior que o cobrado).
+
+## 3. Matriz de homologação
+### A. Asaas e estornos
+| Item | Status | Evidência |
+|---|---|---|
+| Estado externo do estorno de R$ 75,10 (leitura) | APROVADO COM EVIDÊNCIA | `GET /payments/pay_fzvllcs4rjfnze8h` (13:3x BRT): `CONFIRMED`, `refunds: []`; local `CAPTURED`, estornado 0,00, estorno `cmvs5o69u0001z1lujwc501g1` `SCHEDULED` para 2026-10-29 09:00 UTC |
+| Execução do estorno de R$ 75,10 | BLOQUEADO EXTERNAMENTE | janela do Asaas abre 29/10 06:00 BRT; **não antecipado**; tarefa agendada 06:20 BRT (só sandbox, sem commit) |
+| Estados aprovado/recusado/pendente/incerto/aguardando autorização | APROVADO COM EVIDÊNCIA | 23 testes de estorno/webhook/conciliação + testes P16–P18 |
+| Manual × automático simultâneos | APROVADO COM EVIDÊNCIA | teste P17 (reserva única) + teste P18 (sem antecipação) |
+| Consulta ao gateway antes de repetir resultado incerto | APROVADO COM EVIDÊNCIA | testes P16 (timeout após processar: não reenvia) |
+| Marcador do estorno devolvido pelo Asaas | APROVADO COM EVIDÊNCIA | `refunds[].description` íntegro em `pay_aksy7ycwtemzpz5r` (leitura) |
+| Estorno Pix do P14 | BLOQUEADO EXTERNAMENTE | segue `AWAITING_CRITICAL_ACTION_AUTHORIZATION` (autorizar no painel do sandbox) |
+
+### B. Split
+| Item | Status | Evidência / responsável |
+|---|---|---|
+| Implementação × documentação (netValue, 2/4 casas, soma ≤ 100%, estorno estorna repasses, status oficiais) | APROVADO COM EVIDÊNCIA | testes unitários + integração; `REFUSED` incluído |
+| Métodos que aceitam split | BLOQUEADO EXTERNAMENTE | documentação oficial não traz matriz por método (exemplo de checkout Pix existe) — confirmar com o Asaas (responsável comercial) |
+| Split no sandbox | BLOQUEADO EXTERNAMENTE | falta `walletId` de **segunda conta sandbox** autorizada (responsável: dono da conta Asaas) |
+| Base do 50% (bruto × líquido) | BLOQUEADO EXTERNAMENTE | decisão comercial/jurídica; código exige escolha explícita no contrato; split do Asaas é sempre sobre o líquido |
+| Split em produção | APROVADO COM EVIDÊNCIA (bloqueio) | `productionReadiness` recusa sem política aprovada e recebedor de produção validado |
+
+### C. Recarga e limite financeiro (simulador / handler OCPP)
+| Item | Status | Evidência |
+|---|---|---|
+| Início, medidor, consumo, encerramento, cálculo | APROVADO COM EVIDÊNCIA | testes de ciclo (Pix, cartão, pré-autorização) |
+| Limite, margem, aviso 90%, parada única, repetição até 5× | APROVADO COM EVIDÊNCIA | 5 testes de limite |
+| Sem telemetria, rede indisponível, parada sem confirmação, parada aceita sem Stop, comandos duplicados | APROVADO COM EVIDÊNCIA | testes de limite + OCPP (idempotência, fora de ordem) |
+| Barra de limite na tela | APROVADO COM EVIDÊNCIA (herdado do P17) | recarga de teste controlada no navegador |
+| Carregador físico | BLOQUEADO EXTERNAMENTE | nenhum equipamento homologado |
+
+### D. APIs, segurança e perfis
+| Item | Status | Evidência |
+|---|---|---|
+| Inventário de integrações e rotas | APROVADO COM EVIDÊNCIA | seção P17 §1 (revalidado: única integração externa de saída é o Asaas); 7 rotas de API; tarefas: ciclo do servidor OCPP (expiração, webhooks, limites, estornos, alertas, conciliação horária) + tarefa agendada externa do estorno |
+| Isolamento por perfil (10 perfis × 70 rotas) **contra build de produção** | APROVADO COM EVIDÊNCIA | `E2E_BASE=http://localhost:3002 npm run e2e:rotas`: 700 verificações, 0 falhas (500/erro/laço) |
+| Cabeçalhos de segurança em produção | APROVADO COM EVIDÊNCIA | CSP sem `unsafe-eval`, HSTS, X-Frame-Options DENY, nosniff, sem X-Powered-By |
+| Segredos versionados | APROVADO COM EVIDÊNCIA | varredura em todos os arquivos versionados e na árvore: 0 |
+| Webhooks: autenticidade, duplicidade, ordem, retentativa, falha persistente | APROVADO COM EVIDÊNCIA | testes; webhook real (herdado P15) |
+| Limite de requisições no webhook | NÃO TESTADO | sem limite por IP; mitigado por token em tempo constante, corpo ≤ 64 KB e 401 sem gravação — avaliar no proxy de staging |
+
+### E. Qualidade
+| Comando | Status | Resultado |
+|---|---|---|
+| `npm test` | APROVADO COM EVIDÊNCIA | **20 arquivos, 231 testes, 0 falhas** |
+| `npm run lint` / `npm run typecheck` | APROVADO COM EVIDÊNCIA | 0 / 0 |
+| `NEXT_DIST_DIR=.next-build npm run build` (2×) | APROVADO COM EVIDÊNCIA | sucesso, 76 rotas; `tsconfig.json` restaurado; pasta removida |
+| Migrations em banco limpo | APROVADO COM EVIDÊNCIA | 12 aplicadas, `migrate diff` sem diferença, banco removido |
+| `npm audit --omit=dev` | APROVADO COM EVIDÊNCIA | 0 |
+| `npm audit` (dev) | BLOQUEADO EXTERNAMENTE | 2 moderadas (`vitest`/`@vitest/mocker`); correção exige vitest 4.1.12 → npm ≥ 11 no projeto, Docker e CI e lockfile regenerado (−17 pacotes opcionais por plataforma); sem condição de exploração (sem servidor Vite exposto) |
+
+### F. E2E
+| Item | Status | Evidência |
+|---|---|---|
+| E2E de rotas/permissões (HTTP real) | APROVADO COM EVIDÊNCIA | novo `scripts/e2e-rotas.ts` (`npm run e2e:rotas`), sem dependência nova, só banco de desenvolvimento, limpeza garantida |
+| E2E de navegador (cobrança, estorno, recarga) | NÃO TESTADO | Playwright não instalado no projeto; proposta: `@playwright/test` como devDependency (1 pacote; Chromium headless já em cache, 180 MB), 3 cenários (login/permissão, pedido Pix/cartão até a tela do gateway, recarga com barra de limite via handler). Requer autorização para alterar dependências/lockfile |
+
+## 4. Alterações propostas (não commitadas)
+`src/server/payments/service.ts` (defeitos 1 e 2), `src/domain/payments/asaas.ts` (status `REFUSED`), `src/app/app/pagamentos/[id]/page.tsx` (botão oculto), `scripts/e2e-rotas.ts` + `package.json` (`e2e:rotas`), `tests/integration/asaas.test.ts` (+4), `tests/unit/split.test.ts` (novo), documentação.
+
+## 5. Riscos remanescentes
+| Risco | Impacto | Mitigação |
+|---|---|---|
+| Estorno de cartão pode exigir "ação crítica" no painel | devolução ao motorista atrasa | alerta `refund-auth`; confirmar política com o Asaas |
+| Dockerfile roda `migrate deploy` a cada subida do contêiner | migração aplicada sem janela controlada | separar a migração em etapa manual do deploy (recomendado; não alterado) |
+| `next dev` reinicia por memória com muitas rotas | só desenvolvimento | usar build de produção nas varreduras |
+| Limite financeiro depende de MeterValues/RemoteStop do equipamento | consumo acima do pago em carregador que ignore a parada | alerta de contingência + análise; homologar cada fabricante |
+| Webhook sem limite por IP | abuso de CPU/banco limitado | token + 64 KB; rate limit no proxy |
+
+## 6. Critérios que impedem o deploy
+Ambiente de staging inexistente (domínio, TLS, cofre, backup automático, monitoramento); estorno de cartão real não concluído; split sem validação externa e sem regra comercial; carregador físico não homologado; permissões de estorno da conta de produção não confirmadas; habilitação de produção (duas pessoas) não realizada; decisão sobre o npm/Vitest; migração automática no contêiner.
+
+## 7. Plano de reversão
+1. **Código**: as mudanças deste relatório são locais; reverter = descartar o diff ou, após commit, `git revert <commit>` (nunca reescrever histórico).
+2. **Banco**: migrations do P15–P16 têm `down.sql` testados (P16); aplicar na ordem inversa, depois de `pg_dump` e com o servidor OCPP parado.
+3. **Pagamentos**: produção só opera com `ASAAS_PRODUCTION_ENABLED=1` **e** habilitação aprovada — revogar a habilitação (tela de gateway) desliga novas cobranças de imediato; `PAYMENT_PROVIDER` vazio bloqueia tudo.
+4. **Split**: `ASAAS_SPLIT_ENABLED` vazio desliga o split em novas cobranças; políticas são versionadas (sem efeito retroativo).
+5. **Webhook**: `npm run asaas:webhook -- remover <id>` (sandbox) / painel do Asaas (produção).
+
+## 8. Checklist de aprovação de produção
+- [ ] Staging com HTTPS/wss, cofre de segredos, backup diário + restauração testada, logs e alertas (`docs/staging.md`)
+- [ ] Webhook de staging com domínio próprio, recebido e monitorado (`penalizedRequestsCount`)
+- [ ] Estorno parcial de cartão concluído (`DONE`) no sandbox e política de "ação crítica" definida
+- [ ] Split: 2ª carteira sandbox, métodos elegíveis confirmados, regra 50/50 decidida por escrito
+- [ ] Carregador físico homologado (MeterValues, RemoteStart/Stop, limite financeiro)
+- [ ] Migração separada do start do contêiner; runbook de deploy/rollback ensaiado
+- [ ] Decisão sobre npm 11 / Vitest 4 (ou aceite formal das 2 moderadas de dev)
+- [ ] E2E de navegador (autorizar Playwright) ou aceite do E2E HTTP
+- [ ] Textos jurídicos, validação contábil, credenciais de produção, habilitação por duas pessoas
+
+## 9. Tabela de decisão
+| Item | Status | Evidência | Risco | Próxima ação |
+|---|---|---|---|---|
+| Código e testes | APROVADO COM EVIDÊNCIA | 231 testes, lint, tipos, build, migrations | baixo | revisar e commitar o diff do P18 |
+| Defeitos P18 (antecipação manual, split recusado) | APROVADO COM EVIDÊNCIA | testes falhavam antes, passam depois | baixo | revisar |
+| Isolamento/permissões | APROVADO COM EVIDÊNCIA | `npm run e2e:rotas` 700/0 em produção | baixo | rodar no staging |
+| Estorno R$ 75,10 | BLOQUEADO EXTERNAMENTE | `SCHEDULED` → 29/10 06:00 BRT; Asaas sem estorno | médio (ação crítica) | conferir resultado da tarefa de 29/10 06:20 |
+| Pix / cartão / webhook | APROVADO COM EVIDÊNCIA (herdado P14–P16) | relatórios em `docs/homologacao/` | baixo | repetir no staging |
+| Split externo e regra 50/50 | BLOQUEADO EXTERNAMENTE | sem 2ª carteira; sem decisão | alto para repasses | comercial: carteira de teste + decisão escrita |
+| Recarga/limite em hardware | BLOQUEADO EXTERNAMENTE | só simulador | alto | homologar carregador de bancada |
+| Dependências dev | BLOQUEADO EXTERNAMENTE | 2 moderadas | baixo | decidir npm 11 |
+| E2E navegador | NÃO TESTADO | Playwright ausente | médio | autorizar `@playwright/test` |
+| Deploy/produção | BLOQUEADO EXTERNAMENTE | sem staging | — | autorizar staging |
+
+**Decisão**: o WeMob está **apto para homologação externa em staging** (código validado, integrações sandbox validadas onde havia credencial, defeitos encontrados corrigidos com regressão). **Não está apto para produção** pelos critérios da seção 6.

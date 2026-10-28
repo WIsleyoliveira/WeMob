@@ -1,8 +1,19 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-28 (P17) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-28 (P18) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**, **P18 (homologação final — apto para staging; não apto para produção)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P18 — Homologação final e preparação para produção (2026-10-28)
+
+Relatório: `docs/RELATORIO_FINAL_TECNICO.md` (seção P18), com matriz A–F, plano de reversão, checklist de produção e tabela de decisão. **Alterações não commitadas** (para revisão).
+
+- Defeitos corrigidos com regressão: "Tentar agora" antecipando estorno agendado pelo gateway (6 cliques → FAILED; agora recusado); split `REFUSED` sem análise imediata (agora análise + `SPLIT_REFUSED`).
+- Testes novos: parada aceita sem `StopTransaction` não conta como parada; unitários de split.
+- E2E de rotas/permissões versionado: `npm run e2e:rotas` (HTTP real, só banco de desenvolvimento) — 700 verificações, 0 falhas contra o build de produção.
+- Verificação: `npm test` → 20 arquivos, **231 testes**; lint 0; typecheck 0; build OK (76 rotas); 12 migrations do zero; `npm audit --omit=dev` 0; dev: 2 moderadas (vitest).
+- Asaas (leitura): cartão `pay_fzvllcs4rjfnze8h` `CONFIRMED`, sem estornos; estorno local `SCHEDULED` para 29/10 06:00 BRT — não antecipado.
+- Decisão: apto para homologação externa em staging; não apto para produção.
 
 ## P17 — Auditoria final de aceitação (2026-10-28)
 

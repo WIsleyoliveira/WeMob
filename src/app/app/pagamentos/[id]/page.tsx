@@ -101,7 +101,7 @@ export default async function PagamentoPage({ params }: { params: Promise<{ id: 
                           {r.nextAttemptAt && waiting ? ` · próxima ${dateTime(r.nextAttemptAt)}` : ""}
                         </span>
                         {r.lastError && <span className="block text-xs text-navy-600">{r.lastError}</span>}
-                        {waiting && canRetry && (
+                        {waiting && canRetry && !(r.status === "SCHEDULED" && r.remoteStatus !== "RETRYING" && r.nextAttemptAt && r.nextAttemptAt > new Date()) && (
                           <ActionForm action={retryRefundAction} submitLabel="Tentar agora" variant="secondary" size="sm" className="mt-2">
                             <input type="hidden" name="refundId" value={r.id} />
                             <input type="hidden" name="paymentId" value={p.id} />

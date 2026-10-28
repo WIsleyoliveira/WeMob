@@ -19,7 +19,8 @@
     "dev:users": "tsx --import ./scripts/load-env.mjs scripts/dev-users.ts",
     "setup:first-admin": "tsx scripts/bootstrap-production.ts",
     "asaas:homologar": "tsx --import ./scripts/load-env.mjs scripts/asaas-homologar.ts",
-    "asaas:webhook": "tsx --import ./scripts/load-env.mjs scripts/asaas-webhook.ts"
+    "asaas:webhook": "tsx --import ./scripts/load-env.mjs scripts/asaas-webhook.ts",
+    "e2e:rotas": "tsx --import ./scripts/load-env.mjs scripts/e2e-rotas.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",

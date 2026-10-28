@@ -103,6 +103,8 @@ export async function applyProviderState(payment: Payment, p: ProviderPayment, s
   if (p.splits?.length) {
     const changes = await syncSplitsFromProvider(payment.id, p.splits);
     if (changes.length) await audit({ action: "payment.split_status_changed", entityType: "Payment", entityId: payment.id, data: { changes, source } });
+    // Repasse recusado: a parte do recebedor NÃO foi transferida — decisão humana imediata (sem esperar a conciliação).
+    if (changes.some((c) => c.to === "REFUSED")) await openReview(payment.id, "Split recusado pelo gateway: repasse ao recebedor não realizado (verificar carteira e acertar manualmente).");
   }
   if (updated.status !== payment.status) {
     await audit({ action: "payment.status_changed", entityType: "Payment", entityId: payment.id, data: { from: payment.status, to, source, remoteStatus: p.remoteStatus ?? null } });
@@ -424,6 +426,10 @@ export async function retryRefundNow(ctx: AuthContext | null, raw: unknown) {
   if (!r) throw notFound("Estorno não encontrado.");
   if (!(r.status === "SCHEDULED" || (r.status === "REQUESTED" && (r.remoteStatus === "UNKNOWN" || r.remoteStatus === "RETRYING")))) throw new AppError("CONFLICT", "Este estorno não está aguardando nova tentativa.");
   const now = new Date();
+  // Agendado pelo próprio gateway (ex.: cartão só no dia seguinte): antecipar seria recusado de novo e
+  // consumiria tentativas até FALHAR. A antecipação manual só vale para resultado incerto/retomada.
+  if (r.status === "SCHEDULED" && r.remoteStatus !== "RETRYING" && r.nextAttemptAt && r.nextAttemptAt > now)
+    throw new AppError("CONFLICT", `Estorno agendado pelo gateway para ${r.nextAttemptAt.toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" })}; a tentativa automática acontece nesse horário. Antecipar seria recusado de novo. Motivo: ${r.lastError ?? "—"}`);
   // Não passa por cima de uma retentativa em andamento (reserva ativa do ciclo automático).
   const moved = await db.refund.updateMany({ where: { id: r.id, status: r.status, nextAttemptAt: r.nextAttemptAt, NOT: { remoteStatus: "RETRYING", nextAttemptAt: { gt: now } } }, data: { nextAttemptAt: now } });
   if (moved.count !== 1) throw new AppError("CONFLICT", "Este estorno já está em processamento; atualize a página em instantes.");
@@ -536,7 +542,7 @@ export async function getPayment(ctx: AuthContext | null, id: string) {
 
 export type DivergenceKind =
   | "PAYMENT_WITHOUT_SESSION" | "SESSION_WITHOUT_PAYMENT" | "AMOUNT_MISMATCH" | "STALE_AUTHORIZATION" | "PROVIDER_MISMATCH" | "PROVIDER_UNREACHABLE" | "UNKNOWN_PAYMENT_EVENT"
-  | "LOCAL_WITHOUT_REMOTE" | "REMOTE_WITHOUT_LOCAL" | "DUPLICATE_CHARGE" | "OPERATION_UNKNOWN" | "REFUND_PENDING" | "REFUND_RETRY_OVERDUE" | "SPLIT_NOT_SETTLED" | "SPLIT_DIVERGENCE" | "UNPROCESSED_WEBHOOK" | "UNDER_REVIEW";
+  | "LOCAL_WITHOUT_REMOTE" | "REMOTE_WITHOUT_LOCAL" | "DUPLICATE_CHARGE" | "OPERATION_UNKNOWN" | "REFUND_PENDING" | "REFUND_RETRY_OVERDUE" | "SPLIT_NOT_SETTLED" | "SPLIT_DIVERGENCE" | "SPLIT_REFUSED" | "UNPROCESSED_WEBHOOK" | "UNDER_REVIEW";
 export type Divergence = { kind: DivergenceKind; text: string; paymentId?: string; sessionId?: string; remoteId?: string; amount?: string };
 
 const MAX_FETCH_PER_RUN = 200;
@@ -596,7 +602,8 @@ async function reconcileOperator(operatorId: string, raw: { from: Date; to: Date
       divergences.push({ kind: "REFUND_RETRY_OVERDUE", text: `Estorno de R$ ${r.amount} agendado para ${r.nextAttemptAt!.toISOString()} e não reprocessado (o ciclo do servidor OCPP está rodando?). Último retorno: ${r.lastError ?? "—"}.`, paymentId: p.id, amount: r.amount.toFixed(2) });
     }
     for (const sp of p.splits) {
-      if (sp.status === "BLOCKED_BY_VALUE_DIVERGENCE") divergences.push({ kind: "SPLIT_DIVERGENCE", text: `Split ${sp.externalReference} bloqueado por divergência de valor (prazo de correção: 2 dias úteis).`, paymentId: p.id });
+      if (sp.status === "REFUSED") divergences.push({ kind: "SPLIT_REFUSED", text: `Split ${sp.externalReference} recusado pelo gateway: repasse não realizado.`, paymentId: p.id });
+      else if (sp.status === "BLOCKED_BY_VALUE_DIVERGENCE") divergences.push({ kind: "SPLIT_DIVERGENCE", text: `Split ${sp.externalReference} bloqueado por divergência de valor (prazo de correção: 2 dias úteis).`, paymentId: p.id });
       else if (["CAPTURED", "PARTIALLY_REFUNDED"].includes(p.status) && !["DONE", "CANCELLED", "REFUNDED"].includes(sp.status) && age > 3 * 86400_000)
         divergences.push({ kind: "SPLIT_NOT_SETTLED", text: `Split ${sp.externalReference} ainda ${sp.status} após 3 dias.`, paymentId: p.id });
     }

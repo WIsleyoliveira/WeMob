@@ -29,6 +29,11 @@ Não usar túnel temporário em staging: o endereço gratuito do localhost.run t
 4. `npm run asaas:homologar` (sandbox) e `npm run asaas:webhook -- criar https://staging.<dominio>`.
 5. Cadastrar a estação de bancada como **TEST**; QR Code do conector aponta para `/motorista/carregar/<identity>/<conector>`.
 
+### Observações do P18
+- O contêiner (`Dockerfile`) roda `prisma migrate deploy` a cada subida: em produção, preferir a migração como etapa manual e controlada do deploy (não alterado sem autorização).
+- O servidor de produção é `node server.js` (saída `standalone`); `next start` emite aviso nesse modo.
+- Após subir, rodar `E2E_BASE=https://staging.<dominio> npm run e2e:rotas` apontando para o banco de staging **somente se** o `DATABASE_URL` for de um banco de desenvolvimento/staging (o script recusa nomes sem `_dev`; para staging, adaptar o guarda conscientemente).
+
 ## 4. Backup e restauração
 - Backup automático diário + retenção de 7–30 dias (gerenciado) e `pg_dump` semanal fora do provedor.
 - **Teste de restauração mensal** obrigatório: restaurar em banco temporário, comparar contagens das tabelas principais e o número de migrations (procedimento já exercitado localmente no P14, nunca em staging).

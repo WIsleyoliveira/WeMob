@@ -24,6 +24,7 @@ npm run setup:first-admin   # any env: roles/operator/defaults + FIRST superadmi
 npm run asaas:homologar     # official Asaas SANDBOX check (refuses production); report in docs/homologacao/
 npm run asaas:webhook -- listar|criar <url>|atualizar <id> <url>|remover <id>   # sandbox webhooks only
 NEXT_DIST_DIR=.next-build npm run build   # build without stopping `npm run dev` (Next rewrites tsconfig.json include: restore it)
+npm run e2e:rotas           # HTTP route/permission E2E (dev DB only; E2E_BASE=http://localhost:3002 for a prod build — `next dev` restarts on memory with many routes)
 ```
 - Port 3000 may be taken by another local project; `.claude/launch.json` has `sansol-dev-3001`.
 

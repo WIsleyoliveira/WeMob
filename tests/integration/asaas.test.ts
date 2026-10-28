@@ -556,6 +556,21 @@ describe("limite financeiro da sessão (P16)", () => {
     expect((await db.alert.findFirstOrThrow({ where: { dedupeKey: `session-limit-stop:${(await session()).id}` } })).status).toBe("RESOLVED");
   });
 
+  it("P18: parada ACEITA pelo carregador sem StopTransaction não conta como parada física: alerta continua, sem reenviar", async () => {
+    const { meter, session, op } = await charging();
+    await ensureDefaultAlertRules(db, op.id);
+    await db.alertRule.updateMany({ where: { operatorId: op.id, kind: "PAYMENT_DIVERGENCE" }, data: { includeNonProduction: true } });
+    await meter("a1", 23_000);
+    await db.remoteCommand.updateMany({ where: { type: "REMOTE_STOP" }, data: { status: "ACCEPTED", completedAt: new Date() } }); // carregador respondeu "Accepted"…
+    await meter("a2", 24_000); // …mas segue fornecendo energia
+    expect((await session()).status).toBe("ACTIVE");
+    expect((await enforceSessionLimits(new Date(Date.now() + 5 * 60_000))).retried).toBe(0); // aceito: não reenvia por cima
+    await evaluateAlerts(op.id, new Date(Date.now() + 4 * 60_000));
+    const alert = await db.alert.findFirstOrThrow({ where: { dedupeKey: `session-limit-stop:${(await session()).id}` } });
+    expect(alert.detail).toMatch(/ACCEPTED/);
+    expect(alert.status).toBe("OPEN");
+  });
+
   it("margem configurável dentro de 2–30%; sessão sem cobertura (bancada) não tem limite", async () => {
     const { limitMargin, sessionLimit } = await import("@/domain/charging/limit");
     expect(limitMargin(undefined)).toBe(0.1);
@@ -672,6 +687,18 @@ describe("estornos", () => {
     expect(fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund"))).toHaveLength(2); // recusa inicial + 1 retentativa
     expect((await remoteOf(payment.id)).refunds).toHaveLength(1);
     expect(String(await manual)).toMatch(/processamento|aguardando/);
+  });
+
+  it("P18: 'Tentar agora' não antecipa estorno agendado pelo gateway (cliques repetidos não esgotam as tentativas)", async () => {
+    const { payment, fin } = await captured();
+    fake.control.rejectRefund = NEXT_DAY;
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "diferença" });
+    for (let i = 0; i < 6; i++) await retryRefundNow(fin.ctx, { refundId: r.id }).catch(() => undefined);
+    const after = await db.refund.findUniqueOrThrow({ where: { id: r.id } });
+    expect(after).toMatchObject({ status: "SCHEDULED", attempts: 1 });
+    expect(fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund"))).toHaveLength(1);
+    await expect(retryRefundNow(fin.ctx, { refundId: r.id })).rejects.toThrow(/agendad/);
+    fake.control.rejectRefund = null;
   });
 
   it("P17: estorno parado em 'autorização de ação crítica' (status real do sandbox) não conta como devolvido e gera alerta", async () => {
@@ -806,6 +833,19 @@ describe("split", () => {
     const p = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! }, include: { splits: true } });
     expect(p.splits).toHaveLength(0);
     expect(p.splitPolicyId).toBeNull();
+  });
+
+  it("P18: split RECUSADO pelo gateway (status oficial REFUSED) abre análise e aparece na conciliação na hora", async () => {
+    const { driver, station, admin } = await withSplit();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    const p = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } });
+    fake.pay(p.providerRef);
+    fake.settleSplits(p.providerRef, "REFUSED");
+    await refreshFromProvider(p.id, activeProvider());
+    expect((await db.paymentSplit.findFirstOrThrow({ where: { paymentId: p.id } })).status).toBe("REFUSED");
+    expect((await db.payment.findUniqueOrThrow({ where: { id: p.id } })).reviewReason).toMatch(/recusad/i);
+    const rec = await reconcile(admin.ctx, { from: new Date(Date.now() - 3600_000), to: new Date(Date.now() + 60_000) });
+    expect(rec.divergences.map((d) => d.kind)).toContain("SPLIT_REFUSED");
   });
 
   it("[19][20] divergência e liquidação: bloqueio abre análise; PAYMENT_SPLIT_DONE liquida; conciliação aponta excesso", async () => {
