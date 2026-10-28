@@ -11,7 +11,7 @@ import { log } from "@/server/log";
 import { AppError, notFound } from "@/server/errors";
 import { requireOperator, requirePermission, type AuthContext } from "@/server/auth/context";
 import { getProvider } from "./registry";
-import type { ProviderPayment } from "./provider";
+import { isPrepaidMethod, type ProviderPayment } from "./provider";
 import { ASAAS_EVENT_EXPECTATION, refundMarker } from "@/domain/payments/asaas";
 import { syncSplitsFromProvider } from "./split";
 import { AsaasError } from "./asaas/client";
@@ -240,7 +240,7 @@ export async function capturePayment(paymentId: string, amount: Decimal.Value) {
   return (await applyProviderState(payment, truth, "capture")).payment;
 }
 
-/** Cancela reserva (PREAUTH) ou remove cobrança Pix pendente. Se o gateway mostrar que já foi paga, aplica o pago. */
+/** Cancela reserva (PREAUTH) ou remove cobrança pré-paga (Pix/cartão) pendente. Se o gateway mostrar que já foi paga, aplica o pago. */
 export async function cancelPayment(paymentId: string) {
   const payment = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
   if (!["PENDING", "AUTHORIZED"].includes(payment.status)) return payment;
@@ -309,12 +309,12 @@ export async function requestRefund(ctx: AuthContext | null, raw: unknown) {
 /**
  * Acerto ao fim da sessão.
  *  - PREAUTH: captura o apurado (até o reservado) ou cancela se zero.
- *  - PREPAID (Pix): estorna a diferença não consumida (uma única vez por sessão, chave idempotente);
+ *  - PREPAID (Pix ou cartão): estorna a diferença não consumida (uma única vez por sessão, chave idempotente);
  *    consumo acima do pago abre análise (não há cobrança complementar automática).
  */
 export async function settleSessionPayment(paymentId: string, sessionId: string, amount: Decimal) {
   const payment = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
-  if (payment.method !== "PIX") {
+  if (!isPrepaidMethod(payment.method)) {
     if (payment.status !== "AUTHORIZED") return payment;
     return amount.isZero() ? cancelPayment(payment.id) : capturePayment(payment.id, amount);
   }
@@ -432,10 +432,10 @@ export async function reconcile(ctx: AuthContext | null, raw: { from: Date; to: 
     if (p.status === "AUTHORIZED" && age > 24 * 3600_000) divergences.push({ kind: "STALE_AUTHORIZATION", text: "Autorização há mais de 24 h sem captura nem cancelamento.", paymentId: p.id });
     const pendingRefund = p.refunds.some((r) => r.status === "REQUESTED");
     if (p.session?.amount && ["CAPTURED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(p.status)) {
-      // PREAUTH: capturado deve igualar o apurado. PIX: pago − estornado deve igualar o apurado (após o acerto).
-      const charged = p.method === "PIX" ? new Decimal(p.amountCaptured.toString()).minus(p.amountRefunded.toString()) : new Decimal(p.amountCaptured.toString());
+      // PREAUTH: capturado deve igualar o apurado. Pré-pago (Pix/cartão): pago − estornado deve igualar o apurado (após o acerto).
+      const charged = isPrepaidMethod(p.method) ? new Decimal(p.amountCaptured.toString()).minus(p.amountRefunded.toString()) : new Decimal(p.amountCaptured.toString());
       if (!charged.eq(p.session.amount.toString()) && !pendingRefund) {
-        divergences.push({ kind: "AMOUNT_MISMATCH", text: `${p.method === "PIX" ? "Pago − estornado" : "Capturado"} ${charged.toFixed(2)} × apurado na sessão ${p.session.amount}.`, paymentId: p.id, sessionId: p.sessionId! });
+        divergences.push({ kind: "AMOUNT_MISMATCH", text: `${isPrepaidMethod(p.method) ? "Pago − estornado" : "Capturado"} ${charged.toFixed(2)} × apurado na sessão ${p.session.amount}.`, paymentId: p.id, sessionId: p.sessionId! });
       }
     }
     for (const r of p.refunds.filter((x) => x.status === "REQUESTED" && now.getTime() - x.createdAt.getTime() > 3600_000)) {

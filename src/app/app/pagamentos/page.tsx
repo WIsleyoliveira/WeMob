@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { PAYMENT_METHOD_LABEL } from "@/server/payments/provider";
 import { requirePage } from "@/server/auth/current";
 import { listPayments, PAYMENT_STATUS_LABEL } from "@/server/payments/service";
 import { activeProvider, providerConfigIssues } from "@/server/payments/registry";
@@ -56,12 +57,13 @@ export default async function PagamentosPage() {
       {payments.length === 0 ? <EmptyState title="Nenhum pagamento registrado" /> : (
         <Card>
           <Table>
-            <thead><tr><th>Criado</th><th>Motorista</th><th>Status</th><th className="text-right">Reservado</th><th className="text-right">Capturado</th><th className="text-right">Reembolsado</th><th>Sessão</th><th>Conciliado</th></tr></thead>
+            <thead><tr><th>Criado</th><th>Motorista</th><th>Forma</th><th>Status</th><th className="text-right" title="Pix/cartão: valor cobrado antes da recarga. Pré-autorização: valor reservado.">Valor inicial</th><th className="text-right">Recebido</th><th className="text-right">Estornado</th><th>Sessão</th><th>Conciliado</th></tr></thead>
             <tbody>
               {payments.map((p) => (
                 <tr key={p.id}>
                   <td className="text-xs"><Link className="text-brand-700 hover:underline" href={`/app/pagamentos/${p.id}`}>{dateTime(p.createdAt)}</Link> {p.environment === "SANDBOX" && <Badge tone="amber">sandbox</Badge>}</td>
                   <td>{p.driver.name}</td>
+                  <td>{PAYMENT_METHOD_LABEL[p.method] ?? p.method}</td>
                   <td><Badge tone={p.status === "CAPTURED" ? "green" : ["FAILED", "DISPUTED"].includes(p.status) ? "red" : "neutral"}>{PAYMENT_STATUS_LABEL[p.status]}</Badge></td>
                   <td className="tabular text-right">{brl(p.amountAuthorized.toString())}</td>
                   <td className="tabular text-right">{brl(p.amountCaptured.toString())}</td>

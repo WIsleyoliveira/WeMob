@@ -14,6 +14,7 @@ import { readAsaasConfig } from "../src/server/payments/asaas/config";
 import { createAsaasProvider } from "../src/server/payments/asaas/provider";
 import { AsaasError } from "../src/server/payments/asaas/client";
 import { documentHint } from "../src/domain/br/document";
+import { safeInvoiceUrl } from "../src/domain/payments/invoice-url";
 
 type Step = { step: string; ok: boolean; ms: number; detail?: Record<string, unknown>; error?: string };
 
@@ -92,11 +93,21 @@ async function main() {
       console.log(`\nConfirme o pagamento da cobrança ${charge.providerRef} no painel do sandbox do Asaas. Aguardando até ${waitMinutes} min…`);
       await run("confirmação do pagamento (consulta autenticada)", async () => {
         const until = Date.now() + waitMinutes * 60_000;
+        let falhasDeRede = 0;
+        let ultimoStatus = "";
         while (Date.now() < until) {
-          const p = await asaas.fetch(charge.providerRef);
-          if (p.status === "CAPTURED") {
-            paid = true;
-            return { value: true, detail: { remoteStatus: p.remoteStatus, netValue: p.netValue } };
+          try {
+            const p = await asaas.fetch(charge.providerRef);
+            if (p.remoteStatus !== ultimoStatus) console.log(`  status no Asaas: ${(ultimoStatus = p.remoteStatus ?? "")}`);
+            if (p.status === "CAPTURED") {
+              paid = true;
+              return { value: true, detail: { remoteStatus: p.remoteStatus, netValue: p.netValue, falhasDeRede } };
+            }
+          } catch (e) {
+            // Rede instável (ex.: máquina em repouso) não encerra a espera; erros de validação/autenticação sim.
+            if (!(e instanceof AsaasError) || !["UNAVAILABLE", "TIMEOUT", "RATE_LIMIT"].includes(e.kind)) throw e;
+            falhasDeRede++;
+            console.log(`  (consulta falhou: ${e.kind}; tentando de novo)`);
           }
           await new Promise((r) => setTimeout(r, 15_000));
         }
@@ -115,6 +126,21 @@ async function main() {
         return { value: true, detail: { local: p.status, remoteStatus: p.remoteStatus } };
       });
     }
+  }
+
+  // Cartão: cobrança CREDIT_CARD paga na página do Asaas (invoiceUrl). Nenhum dado de cartão é enviado; é removida em seguida.
+  const card = customerId
+    ? await run("cobrança cartão R$ 5,00 (POST /payments, CREDIT_CARD)", async () => {
+        const p = await asaas.authorize("5.00", {}, { externalReference: `${chargeRef}:cartao`, customerRemoteId: customerId, description: "Homologação WeMob (cartão) — não é recarga real", billingType: "CREDIT_CARD" });
+        if (!safeInvoiceUrl(p.invoiceUrl ?? null)) throw new Error("O Asaas não devolveu uma página de pagamento HTTPS do próprio Asaas.");
+        return { value: p, detail: { paymentId: p.providerRef, remoteStatus: p.remoteStatus, paginaDePagamento: new URL(p.invoiceUrl!).hostname } };
+      })
+    : null;
+  if (card) {
+    await run("remoção da cobrança de cartão (DELETE /payments/{id})", async () => {
+      const p = await asaas.cancel(card.providerRef);
+      return { value: true, detail: { local: p.status, remoteStatus: p.remoteStatus } };
+    });
   }
 
   const report = {

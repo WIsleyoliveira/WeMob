@@ -35,7 +35,7 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
     e.name = "AbortError";
     return Promise.reject(e);
   };
-  const view = (p: Pay) => ({ object: "payment", ...p, split: p.split.length ? p.split : undefined, refunds: p.refunds.length ? p.refunds : null });
+  const view = (p: Pay) => ({ object: "payment", ...p, invoiceUrl: `https://sandbox.asaas.com/i/${p.id.slice(4)}`, split: p.split.length ? p.split : undefined, refunds: p.refunds.length ? p.refunds : null });
 
   const fetch: FetchLike = async (url, init) => {
     const u = new URL(url);
@@ -67,14 +67,14 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
         return err(400, d);
       }
       if (!customers.has(body.customer)) return err(400, "Cliente inexistente.");
-      if (body.billingType !== "PIX" || !(body.value > 0)) return err(400, "Dados da cobrança inválidos.");
+      if (!["PIX", "CREDIT_CARD"].includes(body.billingType) || !(body.value > 0)) return err(400, "Dados da cobrança inválidos.");
       const split: Split[] = [];
       for (const s of body.split ?? []) {
         if (!wallets.has(s.walletId)) return err(400, `A carteira ${s.walletId} não foi encontrada.`);
         split.push({ id: `spl_${++seq}`, walletId: s.walletId, fixedValue: s.fixedValue, percentualValue: s.percentualValue, externalReference: s.externalReference, status: "PENDING" });
       }
       const p: Pay = {
-        id: `pay_${++seq}`, customer: body.customer, billingType: "PIX", value: body.value, netValue: Math.round((body.value - fee) * 100) / 100, status: "PENDING",
+        id: `pay_${++seq}`, customer: body.customer, billingType: body.billingType, value: body.value, netValue: Math.round((body.value - fee) * 100) / 100, status: "PENDING",
         dueDate: body.dueDate, externalReference: body.externalReference, deleted: false, refunds: [], split, dateCreated: new Date().toISOString().slice(0, 10), description: body.description,
       };
       for (const s of p.split) s.totalValue = Math.round(((s.fixedValue ?? 0) + ((s.percentualValue ?? 0) * p.netValue) / 100) * 100) / 100;

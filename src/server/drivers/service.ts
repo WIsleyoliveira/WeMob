@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { db } from "@/server/db";
 import { notFound, AppError } from "@/server/errors";
 import { effectiveStatus, isStationFresh, type ConnectorStatus } from "@/domain/stations/status";
@@ -8,6 +9,7 @@ import { hashPassword, verifyPassword } from "@/server/auth/password";
 import { encryptField } from "@/server/crypto";
 import { documentHint, isValidDocument, onlyDigits } from "@/domain/br/document";
 import { hit } from "@/server/rate-limit";
+import { log } from "@/server/log";
 import { getProvider } from "@/server/payments/registry";
 import { refreshFromProvider } from "@/server/payments/charges";
 import { requireDriver, type DriverContext } from "./auth";
@@ -46,18 +48,11 @@ export async function removeVehicle(driver: DriverContext | null, vehicleId: str
   if (r.count === 0) throw notFound("Veículo não encontrado.");
 }
 
-/**
- * Estações visíveis ao motorista. "real": unidades públicas com equipamento de produção.
- * "demo": estações SIMULADAS (ambiente de demonstração, sem cobrança).
- */
-export async function listDriverStations(mode: "real" | "demo") {
-  const now = new Date();
-  const stations = await db.chargingStation.findMany({
-    where: mode === "demo" ? { environment: "SIMULATED", deletedAt: null } : { environment: "PRODUCTION", deletedAt: null, site: { isPublic: true, deletedAt: null } },
-    include: { connectors: { orderBy: { connectorId: "asc" } }, site: { include: { tariffs: true } } },
-    orderBy: { ocppIdentity: "asc" },
-  });
-  return stations.map((s) => ({
+const stationInclude = { connectors: { orderBy: { connectorId: "asc" } }, site: { include: { tariffs: true } } } as const;
+type StationRow = Prisma.ChargingStationGetPayload<{ include: typeof stationInclude }>;
+
+function toDriverStation(s: StationRow, now: Date) {
+  return {
     id: s.id,
     identity: s.ocppIdentity,
     environment: s.environment,
@@ -66,16 +61,34 @@ export async function listDriverStations(mode: "real" | "demo") {
     lastSeenAt: s.lastSeenAt,
     tariff: currentTariff(s.site.tariffs, now),
     connectors: s.connectors.map((c) => ({ connectorId: c.connectorId, type: c.type, maxPowerKw: c.maxPowerKw.toString(), status: effectiveStatus(c as { status: ConnectorStatus }, s, now).status, statusReceivedAt: c.statusReceivedAt })),
-  }));
+  };
 }
 
+/**
+ * Estações listadas ao motorista. "real": unidades públicas com equipamento de produção.
+ * "demo": estações SIMULADAS (ambiente de demonstração, sem cobrança).
+ */
+export async function listDriverStations(mode: "real" | "demo") {
+  const now = new Date();
+  const stations = await db.chargingStation.findMany({
+    where: mode === "demo" ? { environment: "SIMULATED", deletedAt: null } : { environment: "PRODUCTION", deletedAt: null, site: { isPublic: true, deletedAt: null } },
+    include: stationInclude,
+    orderBy: { ocppIdentity: "asc" },
+  });
+  return stations.map((s) => toDriverStation(s, now));
+}
+
+/**
+ * Estação aberta pelo link/QR Code. Além das listadas, aceita estações de TESTE (homologação com o gateway em
+ * sandbox): não aparecem na lista, mas são acessíveis pelo endereço direto, como o QR Code impresso.
+ */
 export async function getDriverStation(identity: string) {
-  const s = await db.chargingStation.findUnique({ where: { ocppIdentity: identity }, include: { site: true } });
-  if (!s || s.deletedAt) throw notFound("Estação não encontrada.");
-  const mode = s.environment === "SIMULATED" ? "demo" : "real";
-  const found = (await listDriverStations(mode)).find((x) => x.identity === identity);
-  if (!found) throw notFound("Estação não encontrada.");
-  return found;
+  const s = await db.chargingStation.findFirst({
+    where: { ocppIdentity: identity, deletedAt: null, OR: [{ environment: "SIMULATED" }, { environment: { in: ["PRODUCTION", "TEST"] }, site: { isPublic: true, deletedAt: null } }] },
+    include: stationInclude,
+  });
+  if (!s) throw notFound("Estação não encontrada.");
+  return toDriverStation(s, new Date());
 }
 
 export async function listMySessions(driver: DriverContext | null) {
@@ -212,4 +225,21 @@ export async function refreshMyPayment(driver: DriverContext | null, requestId: 
   if (!(await hit(`pay-refresh:${driver.driverId}`, 6, 60_000))) throw new AppError("RATE_LIMITED", "Aguarde alguns segundos antes de verificar de novo.");
   const p = await refreshFromProvider(r.payment.id, getProvider(r.payment.provider));
   return { status: p.status };
+}
+
+/**
+ * Verificação automática enquanto a página do pedido está aberta: o pagamento é confirmado sem o motorista
+ * tocar em nada, mesmo sem webhook. No máximo uma consulta ao gateway a cada 10 s por pagamento; falhas de
+ * rede só são registradas (a próxima atualização da página tenta de novo).
+ */
+export async function syncPendingPayment(driver: DriverContext | null, requestId: string) {
+  requireDriver(driver);
+  const r = await db.chargeRequest.findFirst({ where: { id: requestId, driverId: driver.driverId, status: "AWAITING_PAYMENT" }, include: { payment: true } });
+  if (!r?.payment || r.payment.status !== "PENDING" || !r.payment.providerRef) return;
+  if (!(await hit(`pay-auto:${r.payment.id}`, 1, 10_000))) return;
+  try {
+    await refreshFromProvider(r.payment.id, getProvider(r.payment.provider));
+  } catch (e) {
+    log.warn("payment_auto_sync_failed", { paymentId: r.payment.id, error: e instanceof Error ? e.message : String(e) });
+  }
 }

@@ -25,7 +25,7 @@ export async function ensureGatewayCustomer(provider: Asaas, operatorId: string,
     const again = await tx.gatewayCustomer.findUnique({ where: { provider_environment_operatorId_driverId: { provider: provider.name, environment: env, operatorId, driverId } } });
     if (again) return again.remoteId;
     const driver = await tx.driver.findUniqueOrThrow({ where: { id: driverId } });
-    if (!driver.documentEnc) throw new AppError("VALIDATION", "Informe seu CPF em Minha conta para pagar com Pix.");
+    if (!driver.documentEnc) throw new AppError("VALIDATION", "Informe seu CPF em Minha conta para pagar a recarga.");
     const document = decryptField(driver.documentEnc);
     const ref = customerReference(driverId, document);
     let remoteId: string | undefined;

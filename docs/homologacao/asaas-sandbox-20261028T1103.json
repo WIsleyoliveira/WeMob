@@ -1,0 +1,74 @@
+{
+  "executadoEm": "2026-10-28T11:10:18.028Z",
+  "ambiente": "SANDBOX",
+  "baseUrl": "https://api-sandbox.asaas.com/v3",
+  "observacao": "Webhook e split exigem endpoint público e carteiras de teste: registrar manualmente (ver docs/asaas.md).",
+  "passos": [
+    {
+      "step": "autenticação (GET /customers)",
+      "ok": true,
+      "ms": 400,
+      "detail": {
+        "totalCount": 3
+      }
+    },
+    {
+      "step": "criação de cliente (POST /customers)",
+      "ok": true,
+      "ms": 653,
+      "detail": {
+        "customerId": "cus_000009713993",
+        "documento": "•••.•••.•••-95"
+      }
+    },
+    {
+      "step": "cobrança Pix R$ 5,00 (POST /payments)",
+      "ok": true,
+      "ms": 695,
+      "detail": {
+        "paymentId": "pay_aksy7ycwtemzpz5r",
+        "remoteStatus": "PENDING",
+        "local": "PENDING"
+      }
+    },
+    {
+      "step": "idempotência: busca pela chave externa",
+      "ok": true,
+      "ms": 237,
+      "detail": {
+        "encontradas": 1
+      }
+    },
+    {
+      "step": "QR Code Pix (GET /payments/{id}/pixQrCode)",
+      "ok": true,
+      "ms": 388,
+      "detail": {
+        "payloadPrefix": "000201",
+        "expira": "2027-10-28 23:59:59"
+      }
+    },
+    {
+      "step": "confirmação do pagamento (consulta autenticada)",
+      "ok": true,
+      "ms": 399384,
+      "detail": {
+        "remoteStatus": "RECEIVED",
+        "netValue": "4.01",
+        "falhasDeRede": 0
+      }
+    },
+    {
+      "step": "estorno parcial R$ 1,00 (POST /payments/{id}/refund)",
+      "ok": true,
+      "ms": 598,
+      "detail": {
+        "local": "CAPTURED",
+        "estornos": [
+          "AWAITING_CRITICAL_ACTION_AUTHORIZATION"
+        ]
+      }
+    }
+  ],
+  "aprovado": true
+}

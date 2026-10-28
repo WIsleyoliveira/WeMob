@@ -7,6 +7,7 @@ import { ButtonLink } from "@/components/ui/button";
 import { ConnectorStatusBadge } from "@/components/app/station-badges";
 import { brl, dateTime } from "@/lib/format";
 import { StartForm } from "../../start-form";
+import { paymentOptions } from "@/server/drivers/charging";
 
 export const dynamic = "force-dynamic";
 
@@ -15,6 +16,7 @@ export default async function DriverStationPage({ params }: { params: Promise<{ 
   const s = await getDriverStation(identity).catch(() => notFound());
   const driver = await getDriver();
   const demo = s.environment === "SIMULATED";
+  const pay = paymentOptions();
   const maps = s.site.latitude && s.site.longitude ? `https://www.google.com/maps/search/?api=1&query=${s.site.latitude},${s.site.longitude}` : null;
   return (
     <>
@@ -30,7 +32,16 @@ export default async function DriverStationPage({ params }: { params: Promise<{ 
         {s.tariff ? (
           <p className="mt-1 text-sm">{brl(s.tariff.pricePerKwh.toString())} por kWh{Number(s.tariff.pricePerMin) > 0 ? ` + ${brl(s.tariff.pricePerMin.toString())} por minuto` : ""}. <span className="text-navy-500">Vigente desde {dateTime(s.tariff.validFrom)}.</span></p>
         ) : <p className="mt-1 text-sm text-navy-500">Sem tarifa vigente: recarga indisponível.</p>}
-        <p className="mt-2 text-xs text-navy-500">{demo ? "Na demonstração nada é cobrado." : "Antes do início é feita uma reserva (pré-autorização) no meio de pagamento; ao final é cobrado só o valor apurado e o restante é liberado."}</p>
+        <p className="mt-2 text-xs text-navy-500">{demo ? "Na demonstração nada é cobrado." : pay.prepaid ? `Antes do início cobramos ${brl(pay.amount)} (valor máximo da recarga). Ao final você paga só o que consumiu: a diferença volta por estorno — no cartão, pode levar até 10 dias úteis para aparecer na fatura.` : "Antes do início é feita uma reserva (pré-autorização) no meio de pagamento; ao final é cobrado só o valor apurado e o restante é liberado."}</p>
+      </section>
+
+      <section className="mt-4 rounded-xl border border-navy-100 bg-white p-4" aria-labelledby="como-funciona">
+        <h2 id="como-funciona" className="font-display font-semibold text-navy-900">Como funciona</h2>
+        <ol className="mt-3 grid gap-3 text-sm text-navy-700">
+          {["Estacione e conecte o cabo ao veículo.", demo ? "Toque em iniciar no conector que você usou." : "Escolha Pix ou cartão e toque em iniciar no conector que você usou.", "Encerre pelo app ou pelo próprio veículo. Você paga só o que consumiu."].map((t, i) => (
+            <li key={i} className="flex gap-3"><span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-bold text-brand-700" aria-hidden>{i + 1}</span>{t}</li>
+          ))}
+        </ol>
       </section>
 
       <section className="mt-4 flex flex-col gap-3">
@@ -45,13 +56,8 @@ export default async function DriverStationPage({ params }: { params: Promise<{ 
                 <ConnectorStatusBadge status={c.status} />
               </div>
               <p className="mt-1 text-xs text-navy-500">{c.statusReceivedAt ? `Status recebido ${dateTime(c.statusReceivedAt)}` : "Sem status recebido"}</p>
-              <ol className="mt-3 list-decimal space-y-0.5 pl-5 text-xs text-navy-600">
-                <li>Estacione e conecte o cabo ao veículo.</li>
-                <li>Toque em iniciar e aguarde a confirmação do carregador.</li>
-                <li>Encerre pelo app ou pelo próprio veículo.</li>
-              </ol>
               <div className="mt-3">
-                {driver ? <StartForm identity={s.identity} connectorId={c.connectorId} label={can ? (demo ? "Iniciar recarga (demonstração)" : "Iniciar recarga") : "Indisponível"} disabled={!can} /> : <ButtonLink href={`/motorista/entrar?voltar=${encodeURIComponent(`/motorista/estacoes/${s.identity}`)}`} className="w-full" size="lg">Entrar para carregar</ButtonLink>}
+                {driver ? <StartForm identity={s.identity} connectorId={c.connectorId} label={can ? (demo ? "Iniciar recarga (demonstração)" : "Iniciar recarga") : "Indisponível"} disabled={!can} methods={demo ? [] : pay.methods} /> : <ButtonLink href={`/motorista/entrar?voltar=${encodeURIComponent(`/motorista/estacoes/${s.identity}`)}`} className="w-full" size="lg">Entrar para carregar</ButtonLink>}
               </div>
             </div>
           );

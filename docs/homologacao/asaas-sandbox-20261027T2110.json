@@ -1,0 +1,65 @@
+{
+  "executadoEm": "2026-10-27T21:15:57.361Z",
+  "ambiente": "SANDBOX",
+  "baseUrl": "https://api-sandbox.asaas.com/v3",
+  "observacao": "Webhook e split exigem endpoint público e carteiras de teste: registrar manualmente (ver docs/asaas.md).",
+  "passos": [
+    {
+      "step": "autenticação (GET /customers)",
+      "ok": true,
+      "ms": 360,
+      "detail": {
+        "totalCount": 1
+      }
+    },
+    {
+      "step": "criação de cliente (POST /customers)",
+      "ok": true,
+      "ms": 656,
+      "detail": {
+        "customerId": "cus_000009707295",
+        "documento": "•••.•••.•••-67"
+      }
+    },
+    {
+      "step": "cobrança Pix R$ 5,00 (POST /payments)",
+      "ok": true,
+      "ms": 676,
+      "detail": {
+        "paymentId": "pay_dkgac0vidqu7k2iu",
+        "remoteStatus": "PENDING",
+        "local": "PENDING"
+      }
+    },
+    {
+      "step": "idempotência: busca pela chave externa",
+      "ok": true,
+      "ms": 264,
+      "detail": {
+        "encontradas": 1
+      }
+    },
+    {
+      "step": "QR Code Pix (GET /payments/{id}/pixQrCode)",
+      "ok": true,
+      "ms": 497,
+      "detail": {
+        "payloadPrefix": "000201",
+        "expira": "2027-10-27 23:59:59"
+      }
+    },
+    {
+      "step": "confirmação do pagamento (consulta autenticada)",
+      "ok": false,
+      "ms": 302499,
+      "error": "Falha de comunicação com o Asaas."
+    },
+    {
+      "step": "remoção da cobrança pendente (DELETE /payments/{id})",
+      "ok": false,
+      "ms": 4,
+      "error": "Falha de comunicação com o Asaas."
+    }
+  ],
+  "aprovado": false
+}

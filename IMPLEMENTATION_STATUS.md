@@ -1,8 +1,31 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-27 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — bloqueada por falta de chave de sandbox; segurança revisada)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-28 · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## Pagamentos 2 — cartão, confirmação automática e telas do motorista (2026-10-28)
+
+### O que mudou
+| Item | Situação | Evidência |
+|---|---|---|
+| **Confirmação automática** do pagamento na página do pedido, sem webhook (`syncPendingPayment`): no máximo 1 consulta ao Asaas a cada 10 s por pagamento, só do próprio pedido; falha de rede só é registrada | implementado e testado | teste de integração; no navegador, logs com `GET /payments/{id}` a cada ~10 s |
+| **Cartão de crédito** pela página de pagamento do Asaas (`billingType: CREDIT_CARD`, `invoiceUrl`): a WeMob não recebe dados de cartão; mesmo fluxo pré-pago do Pix (cobra o máximo, estorna a diferença) | implementado; testado com servidor falso; **criação confirmada no sandbox oficial** | `asaas-sandbox-20261028T1123.json` (`pay_kx3n7m7tlszrms69`, página em `sandbox.asaas.com`, removida); pedido real pela tela em estação TEST (cobrança criada e cancelada) |
+| Pagamento com cartão concluído (aprovação, estorno no cartão) | **não testado** no sandbox | depende de pagar na página do Asaas com cartão de teste |
+| Link da página de pagamento só é exibido se for HTTPS do domínio `asaas.com` (`safeInvoiceUrl`) | implementado e testado | teste unitário |
+| Escolha Pix/Cartão na tela da estação e do QR Code; textos corrigidos (antes falavam em "reserva/pré-autorização" mesmo no Pix) | implementado; verificado no navegador | — |
+| **Correção:** estações de TESTE davam 404 no portal do motorista (a busca exigia estar na lista, que só tem produção) — agora abrem pelo link/QR direto, sem aparecer na lista | corrigido e testado | teste de integração |
+| **Correção:** prazo do Pix mostrava a validade do QR do Asaas (1 ano); agora mostra o prazo real (janela da WeMob, 15 min) | corrigido; verificado no navegador | — |
+| Página do pedido: barra de andamento (pagamento → carregador → recarga), estados de cancelado/expirado/falha, "nada foi cobrado" | implementado; verificado no navegador | — |
+| Ajuda do motorista: perguntas sobre pagamento e estorno; status do chamado com rótulo em português | implementado | — |
+| Equipe: coluna "Forma" na lista de pagamentos; rótulos por forma (Pix/Cartão/Pré-autorização) | implementado | — |
+| Scripts carregam o `.env` com `scripts/load-env.mjs` (`@next/env`), mesma regra do app (escape `\$`) | implementado | comparação por hash: só a chave do Asaas difere entre os carregadores |
+| `asaas:homologar`: tolera falhas de rede durante a espera e mostra mudanças de status | implementado | execução de 2026-10-28 11:03 |
+
+### Verificação
+- `npm run lint` → 0 problemas; `npm run typecheck` → 0 erros; `npm test` → **18 arquivos, 204 testes passando** (antes da inclusão do teste de estação TEST; +1 depois, executado isoladamente: passou).
+- `npm run build` **não executado** nesta etapa (pouco espaço em disco: ~2,6 GB livres).
+- Postgres local estava parado por trava antiga (`postmaster.pid` de antes de reiniciar o Mac, PID reaproveitado por outro processo); arquivo renomeado para `postmaster.pid.stale` e serviço reiniciado.
 
 ## P14 — Homologação real do Asaas e validação financeira (2026-10-27)
 
@@ -13,7 +36,7 @@ Base: commit `a252e71` (P13). Guia atualizado: `docs/asaas.md` (credenciais, web
 |---|---|
 | **Código implementado** | Adapter Asaas (Pix pré-pago), cliente HTTP, webhook com token e idempotência, estorno, split versionado, conciliação, habilitação de produção, telas de motorista/equipe/parceiro (P13) |
 | **Testado com simulação** | 30 cenários do P13 + troca de CPF + isolamento do parceiro, contra o servidor Asaas falso (`tests/support/fake-asaas.ts`) |
-| **Confirmado no sandbox oficial** | **Nada.** Nenhuma chamada autenticada foi feita |
+| **Confirmado no sandbox oficial** | Autenticação, cliente, cobrança Pix, QR Code, idempotência, remoção, pagamento e pedido de estorno (2026-10-27/28, ver Etapa 2b). Conclusão do estorno, webhook e split **não** |
 | **Pendente para produção** | Etapas B (sandbox), C (comercial), D (infraestrutura) e E (autorização); decisão do 50/50; vulnerabilidades restantes |
 
 ### Etapa 1 — Configuração do sandbox
@@ -25,6 +48,22 @@ Base: commit `a252e71` (P13). Guia atualizado: `docs/asaas.md` (credenciais, web
 - `npm run asaas:homologar` sem configuração → recusa: "Configuração do Asaas incompleta…" (sem chamada de rede).
 - Com `ASAAS_ENVIRONMENT=production` e chave fictícia **apenas no processo** → recusa: "a homologação só roda com ASAAS_ENVIRONMENT=sandbox".
 - Autenticação, cliente, cobrança Pix, QR/copia e cola, valor, vencimento, consulta, pagamento, atualização local, webhook, idempotência, conciliação e estorno no sandbox: **não executados** (bloqueio acima). Nenhum relatório em `docs/homologacao/`.
+
+### Etapa 2b — Execução real no sandbox (2026-10-27, 21:09 UTC)
+- Chave de sandbox configurada no `.env` local (git-ignorado) com escape `\$` — sem ele o Next.js lia a chave vazia; scripts passaram a carregar o `.env` por `scripts/load-env.mjs` (`@next/env`), mesma regra do app. Comparação por hash: só a chave do Asaas mudou entre os carregadores.
+- `npm run asaas:homologar` → relatório `docs/homologacao/asaas-sandbox-20261027T2109.json` (sem chave/token; varredura: 0 ocorrências):
+  - ✓ `GET /customers` 200 (autenticação)
+  - ✓ `POST /customers` 200 → `cus_000009707289` (CPF de teste gerado, mascarado)
+  - ✓ `POST /payments` 200 → `pay_ufafa2et0w7xmuh2`, PIX R$ 5,00, `PENDING`
+  - ✓ `GET /payments?externalReference=…` → 1 cobrança (idempotência)
+  - ✗ `GET /payments/{id}/pixQrCode` 400: "Você não possui uma chave Pix cadastrada para recebimentos de cobranças via Pix."
+  - ✓ `DELETE /payments/{id}` 200 → remoto `DELETED`, local `CANCELLED`
+- Após cadastrar chave Pix na conta de sandbox — `--aguardar-pagamento=10`:
+  - 2026-10-27 21:10 (`asaas-sandbox-20261027T2110.json`): ✓ autenticação, cliente, Pix `pay_dkgac0vidqu7k2iu`, idempotência, **QR Code** (payload `000201…`). Espera interrompida por `UNAVAILABLE` (rede caiu, máquina em repouso); remoção também falhou → essa cobrança ficou `PENDING` no sandbox. Script corrigido: falhas de rede temporárias não encerram mais a espera.
+  - 2026-10-28 10:50 (`asaas-sandbox-20261028T1050.json`): ✓ autenticação, cliente, Pix `pay_omba8dxf4tctxhpb`, idempotência, QR Code; ✗ pagamento não confirmado em 10 min (todas as consultas 200, status permaneceu `PENDING`); ✓ remoção (`DELETED`).
+  - 2026-10-28 11:03 (`asaas-sandbox-20261028T1103.json`, **todos os passos OK**): Pix `pay_aksy7ycwtemzpz5r` confirmado no painel → status `PENDING` → `RECEIVED`, `netValue` 4,01 (tarifa de R$ 0,99 sobre R$ 5,00 no sandbox); estorno parcial de R$ 1,00 aceito (`POST /refund` 200) com status **`AWAITING_CRITICAL_ACTION_AUTHORIZATION`** — o Asaas exige autorização de ação crítica no painel; local permaneceu `CAPTURED` (estorno só conta quando `DONE`), como previsto em `mapAsaasPayment`.
+- **Confirmado no sandbox:** autenticação, cliente, cobrança Pix, QR Code/copia e cola, consulta, idempotência, remoção, pagamento (`RECEIVED`), pedido de estorno. **Não confirmado:** conclusão do estorno (`DONE`, depende da autorização no painel), webhook, split.
+- Ponto operacional: estornos via API podem ficar aguardando autorização de ação crítica no painel do Asaas; a operação precisa autorizá-los (ou ajustar os mecanismos de segurança da conta) para o motorista receber a devolução.
 
 ### Etapa 3 — Webhooks
 - Sem URL pública HTTPS no ambiente. Documentado em `docs/asaas.md`: túnel temporário para homologação, token no header `asaas-access-token`, tipo de envio não sequencial (a WeMob sempre consulta o estado real), entrega "pelo menos uma vez", interrupção da fila após 15 falhas consecutivas e retenção de 14 dias.

@@ -12,13 +12,13 @@
     "test:unit": "vitest run tests/unit",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
-    "db:seed": "tsx --env-file=.env prisma/seed.ts",
+    "db:seed": "tsx --import ./scripts/load-env.mjs prisma/seed.ts",
     "check": "npm run lint && npm run typecheck && npm test",
-    "ocpp:server": "tsx --env-file=.env scripts/ocpp-server.ts",
-    "ocpp:simulate": "tsx --env-file=.env scripts/ocpp-simulate.ts",
-    "dev:users": "tsx --env-file=.env scripts/dev-users.ts",
+    "ocpp:server": "tsx --import ./scripts/load-env.mjs scripts/ocpp-server.ts",
+    "ocpp:simulate": "tsx --import ./scripts/load-env.mjs scripts/ocpp-simulate.ts",
+    "dev:users": "tsx --import ./scripts/load-env.mjs scripts/dev-users.ts",
     "setup:first-admin": "tsx scripts/bootstrap-production.ts",
-    "asaas:homologar": "tsx --env-file=.env scripts/asaas-homologar.ts"
+    "asaas:homologar": "tsx --import ./scripts/load-env.mjs scripts/asaas-homologar.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",
@@ -51,7 +51,7 @@
     "vitest": "^3.2.4"
   },
   "prisma": {
-    "seed": "tsx --env-file=.env prisma/seed.ts"
+    "seed": "tsx --import ./scripts/load-env.mjs prisma/seed.ts"
   },
   "overrides": {
     "next": {

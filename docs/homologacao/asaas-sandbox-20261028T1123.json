@@ -1,0 +1,81 @@
+{
+  "executadoEm": "2026-10-28T11:23:13.934Z",
+  "ambiente": "SANDBOX",
+  "baseUrl": "https://api-sandbox.asaas.com/v3",
+  "observacao": "Webhook e split exigem endpoint público e carteiras de teste: registrar manualmente (ver docs/asaas.md).",
+  "passos": [
+    {
+      "step": "autenticação (GET /customers)",
+      "ok": true,
+      "ms": 459,
+      "detail": {
+        "totalCount": 4
+      }
+    },
+    {
+      "step": "criação de cliente (POST /customers)",
+      "ok": true,
+      "ms": 763,
+      "detail": {
+        "customerId": "cus_000009714165",
+        "documento": "•••.•••.•••-60"
+      }
+    },
+    {
+      "step": "cobrança Pix R$ 5,00 (POST /payments)",
+      "ok": true,
+      "ms": 1390,
+      "detail": {
+        "paymentId": "pay_d8jz0nbvk34ndx8m",
+        "remoteStatus": "PENDING",
+        "local": "PENDING"
+      }
+    },
+    {
+      "step": "idempotência: busca pela chave externa",
+      "ok": true,
+      "ms": 236,
+      "detail": {
+        "encontradas": 1
+      }
+    },
+    {
+      "step": "QR Code Pix (GET /payments/{id}/pixQrCode)",
+      "ok": true,
+      "ms": 474,
+      "detail": {
+        "payloadPrefix": "000201",
+        "expira": "2027-10-28 23:59:59"
+      }
+    },
+    {
+      "step": "remoção da cobrança pendente (DELETE /payments/{id})",
+      "ok": true,
+      "ms": 570,
+      "detail": {
+        "local": "CANCELLED",
+        "remoteStatus": "DELETED"
+      }
+    },
+    {
+      "step": "cobrança cartão R$ 5,00 (POST /payments, CREDIT_CARD)",
+      "ok": true,
+      "ms": 684,
+      "detail": {
+        "paymentId": "pay_kx3n7m7tlszrms69",
+        "remoteStatus": "PENDING",
+        "paginaDePagamento": "sandbox.asaas.com"
+      }
+    },
+    {
+      "step": "remoção da cobrança de cartão (DELETE /payments/{id})",
+      "ok": true,
+      "ms": 606,
+      "detail": {
+        "local": "CANCELLED",
+        "remoteStatus": "DELETED"
+      }
+    }
+  ],
+  "aprovado": true
+}

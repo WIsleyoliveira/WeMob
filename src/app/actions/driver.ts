@@ -44,7 +44,7 @@ export async function driverLogoutAction() {
 
 export async function startChargeAction(_p: ActionState, f: FormData): Promise<ActionState> {
   const driver = await getDriver();
-  const r = await toActionState(async () => (await startCharge(driver, { identity: s(f, "identity"), connectorId: s(f, "connectorId") })).id);
+  const r = await toActionState(async () => (await startCharge(driver, { identity: s(f, "identity"), connectorId: s(f, "connectorId"), method: f.get("method") ?? undefined })).id);
   if (r.status === "ok" && r.data) redirect(`/motorista/pedido/${r.data}`);
   return r;
 }

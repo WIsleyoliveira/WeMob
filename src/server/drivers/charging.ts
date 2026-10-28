@@ -26,11 +26,12 @@ import { activeProvider } from "@/server/payments/registry";
 import { cancelPayment, onPaymentStateChange, openReview, settleSessionPayment } from "@/server/payments/service";
 import { createChargePayment } from "@/server/payments/charges";
 import { productionReadiness } from "@/server/payments/activation";
+import { PAYMENT_METHOD_LABEL, PREPAID_METHODS, isPrepaidMethod } from "@/server/payments/provider";
 import type { IdTagAuthorizer } from "@/server/ocpp/handler";
 import { requireDriver, type DriverContext } from "./auth";
 
 export const START_TIMEOUT_MS = 3 * 60_000;
-/** Janela para pagar o Pix antes de a cobrança ser removida no gateway. */
+/** Janela para pagar (Pix ou cartão) antes de a cobrança ser removida no gateway. */
 export const pixPaymentWindowMs = () => Math.min(60, Math.max(3, Number(process.env.PIX_PAYMENT_WINDOW_MINUTES ?? 15) || 15)) * 60_000;
 
 export function preauthAmount() {
@@ -47,11 +48,11 @@ export function sessionAmount(s: { meterStartWh: number; meterStopWh: number | n
   return { kwh, minutes, amount: v.toDecimalPlaces(2, Decimal.ROUND_HALF_UP) };
 }
 
-export const startSchema = z.object({ identity: z.string().min(1).max(48), connectorId: z.coerce.number().int().min(1).max(99) });
+export const startSchema = z.object({ identity: z.string().min(1).max(48), connectorId: z.coerce.number().int().min(1).max(99), method: z.enum(PREPAID_METHODS).default("PIX") });
 
 export async function startCharge(driver: DriverContext | null, raw: unknown) {
   requireDriver(driver);
-  const { identity, connectorId } = startSchema.parse(raw);
+  const { identity, connectorId, method } = startSchema.parse(raw);
   const station = await db.chargingStation.findUnique({ where: { ocppIdentity: identity }, include: { connectors: true, site: { include: { tariffs: true } } } });
   if (!station || station.deletedAt || (!station.site.isPublic && station.environment !== "SIMULATED")) throw notFound("Estação não encontrada.");
   const connector = station.connectors.find((c) => c.connectorId === connectorId);
@@ -69,7 +70,7 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
     if (!ready.allowed) throw new AppError("VALIDATION", "Pagamentos ainda não estão disponíveis para estações reais. Recarga pelo aplicativo indisponível.");
   }
   if (station.environment === "TEST" && !(provider.status === "configured" && provider.environment === "SANDBOX")) throw new AppError("VALIDATION", "Provedor de pagamento em ambiente de testes não configurado para a estação de teste.");
-  if (!demo && provider.flow === "PREPAID" && !(await db.driver.findUnique({ where: { id: driver.driverId } }))?.documentEnc) throw new AppError("VALIDATION", "Informe seu CPF em Minha conta para pagar com Pix.");
+  if (!demo && provider.flow === "PREPAID" && !(await db.driver.findUnique({ where: { id: driver.driverId } }))?.documentEnc) throw new AppError("VALIDATION", "Informe seu CPF em Minha conta para pagar a recarga.");
 
   const open = await db.chargeRequest.findFirst({ where: { driverId: driver.driverId, status: { in: ["AWAITING_PAYMENT", "START_REQUESTED", "STARTED"] }, session: { is: null } } });
   if (open) throw new AppError("CONFLICT", "Você já tem um pedido de recarga em andamento.");
@@ -82,16 +83,16 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
   let request = await db.chargeRequest.create({
     data: { driverId: driver.driverId, stationId: station.id, connectorId, idTag: tag.idTag, demo, status: demo ? "START_REQUESTED" : "AWAITING_PAYMENT" },
   });
-  await audit({ action: "charge.requested", entityType: "ChargeRequest", entityId: request.id, data: { station: identity, connectorId, demo } });
+  await audit({ action: "charge.requested", entityType: "ChargeRequest", entityId: request.id, data: { station: identity, connectorId, demo, method } });
 
   if (demo) return issueStart(request.id);
 
-  // PREAUTH: valor reservado, NÃO cobrado. PREPAID: Pix a pagar (valor máximo da recarga; a sobra é devolvida).
+  // PREAUTH: valor reservado, NÃO cobrado. PREPAID: Pix ou cartão a pagar (valor máximo da recarga; a sobra é devolvida).
   // O pagamento é vinculado ao pedido ANTES de aplicar o estado, para o ouvinte encontrar o pedido.
   try {
     const payment = await createChargePayment({
       provider, operatorId: station.operatorId, siteId: station.siteId, stationEnvironment: station.environment, driverId: driver.driverId, chargeRequestId: request.id,
-      amount: preauthAmount(), description: `Recarga ${identity} conector ${connectorId}`,
+      amount: preauthAmount(), description: `Recarga ${identity} conector ${connectorId}`, method,
     });
     request = await db.chargeRequest.update({ where: { id: request.id }, data: { paymentId: payment.id } });
     await continueAfterPayment(payment.id); // reservado/pago → inicia; recusado → pedido falha (sem exceção)
@@ -121,12 +122,12 @@ async function continueAfterPayment(paymentId: string) {
   const payment = await db.payment.findUniqueOrThrow({ where: { id: paymentId } });
   const req = await db.chargeRequest.findUnique({ where: { paymentId: payment.id } });
   if (!req) return;
-  const funded = (payment.method === "PREAUTH" && payment.status === "AUTHORIZED") || (payment.method === "PIX" && payment.status === "CAPTURED");
+  const funded = (payment.method === "PREAUTH" && payment.status === "AUTHORIZED") || (isPrepaidMethod(payment.method) && payment.status === "CAPTURED");
   if (funded && req.status === "AWAITING_PAYMENT") await issueStart(req.id);
-  else if (funded && payment.method === "PIX" && ["CANCELLED", "EXPIRED", "FAILED"].includes(req.status) && !req.sessionId)
-    await openReview(payment.id, `Pix pago com o pedido ${req.status === "EXPIRED" ? "expirado" : req.status === "CANCELLED" ? "cancelado" : "falho"}: recarga não iniciada; avaliar estorno.`);
+  else if (funded && isPrepaidMethod(payment.method) && ["CANCELLED", "EXPIRED", "FAILED"].includes(req.status) && !req.sessionId)
+    await openReview(payment.id, `${PAYMENT_METHOD_LABEL[payment.method]} pago com o pedido ${req.status === "EXPIRED" ? "expirado" : req.status === "CANCELLED" ? "cancelado" : "falho"}: recarga não iniciada; avaliar estorno.`);
   if (["FAILED", "CANCELLED"].includes(payment.status) && ["AWAITING_PAYMENT", "START_REQUESTED"].includes(req.status) && !req.sessionId) {
-    await db.chargeRequest.update({ where: { id: req.id }, data: { status: payment.method === "PIX" && payment.status === "CANCELLED" ? "EXPIRED" : "FAILED", failure: `Pagamento ${payment.status === "FAILED" ? "recusado" : payment.method === "PIX" ? "não realizado no prazo" : "cancelado"}.` } });
+    await db.chargeRequest.update({ where: { id: req.id }, data: { status: isPrepaidMethod(payment.method) && payment.status === "CANCELLED" ? "EXPIRED" : "FAILED", failure: `Pagamento ${payment.status === "FAILED" ? "recusado" : isPrepaidMethod(payment.method) ? "não realizado no prazo" : "cancelado"}.` } });
   }
 }
 
@@ -142,7 +143,7 @@ export const driverAwareAuthorizer: IdTagAuthorizer = {
     if (!tag || tag.revokedAt || tag.driver.disabledAt) return "Invalid";
     if (station.environment === "SIMULATED") return "Accepted";
     // TEST/PRODUÇÃO: exige pedido com pagamento garantido (reservado ou Pix confirmado) — evita sessão sem pagamento.
-    const req = await db.chargeRequest.findFirst({ where: { idTag, stationId: station.id, status: "START_REQUESTED", payment: { OR: [{ method: "PREAUTH", status: "AUTHORIZED" }, { method: "PIX", status: "CAPTURED" }] } } });
+    const req = await db.chargeRequest.findFirst({ where: { idTag, stationId: station.id, status: "START_REQUESTED", payment: { OR: [{ method: "PREAUTH", status: "AUTHORIZED" }, { method: { in: [...PREPAID_METHODS] }, status: "CAPTURED" }] } } });
     return req ? "Accepted" : "Invalid";
   },
 };
@@ -173,7 +174,7 @@ export async function onSessionStopped(sessionId: string) {
   if (s.status !== "COMPLETED" || s.stopReason?.startsWith("AUTH_")) return;
   const { amount } = sessionAmount(s);
   await db.chargingSession.update({ where: { id: s.id }, data: { amount: amount.toFixed(2) } });
-  const payment = s.payments.find((p) => (p.method === "PREAUTH" && p.status === "AUTHORIZED") || (p.method === "PIX" && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(p.status)));
+  const payment = s.payments.find((p) => (p.method === "PREAUTH" && p.status === "AUTHORIZED") || (isPrepaidMethod(p.method) && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(p.status)));
   if (!payment) return;
   try {
     await settleSessionPayment(payment.id, s.id, amount);
@@ -195,7 +196,7 @@ export async function expireStaleChargeRequests(now = new Date()) {
   });
   let n = 0;
   for (const r of stale) {
-    const pix = r.payment?.method === "PIX";
+    const pix = !!r.payment && isPrepaidMethod(r.payment.method); // pré-pago (Pix ou cartão)
     if (r.status === "AWAITING_PAYMENT" && pix && now.getTime() - r.createdAt.getTime() < pixPaymentWindowMs()) continue;
     n++;
     if (r.status === "AWAITING_PAYMENT" && pix && r.paymentId) {
@@ -203,13 +204,13 @@ export async function expireStaleChargeRequests(now = new Date()) {
         log.error("payment_cancel_failed", { paymentId: r.paymentId, error: String(e) });
         return null;
       });
-      if (after?.status === "CANCELLED") await db.chargeRequest.updateMany({ where: { id: r.id, status: "AWAITING_PAYMENT" }, data: { status: "EXPIRED", failure: "Pix não pago dentro do prazo; cobrança removida." } });
+      if (after?.status === "CANCELLED") await db.chargeRequest.updateMany({ where: { id: r.id, status: "AWAITING_PAYMENT" }, data: { status: "EXPIRED", failure: `${PAYMENT_METHOD_LABEL[r.payment!.method]}: pagamento não realizado dentro do prazo; cobrança removida.` } });
       continue;
     }
     const upd = await db.chargeRequest.updateMany({ where: { id: r.id, status: r.status }, data: { status: "FAILED", failure: "Carregador não iniciou a recarga dentro do prazo." } });
     if (upd.count !== 1 || !r.paymentId) continue;
     if (pix) {
-      if (r.payment && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(r.payment.status)) await openReview(r.paymentId, "Pix pago e carregador não iniciou a recarga no prazo: avaliar estorno.");
+      if (r.payment && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(r.payment.status)) await openReview(r.paymentId, `${PAYMENT_METHOD_LABEL[r.payment.method]} pago e carregador não iniciou a recarga no prazo: avaliar estorno.`);
       else await cancelPayment(r.paymentId).catch((e) => log.error("payment_cancel_failed", { paymentId: r.paymentId, error: String(e) }));
     } else await cancelPayment(r.paymentId).catch((e) => log.error("payment_cancel_failed", { paymentId: r.paymentId, error: String(e) }));
   }
@@ -225,8 +226,8 @@ export async function cancelChargeRequest(driver: DriverContext | null, requestI
   if (upd.count !== 1) throw new AppError("CONFLICT", "O pedido mudou de situação; atualize a página.");
   if (!r.paymentId) return;
   const after = await cancelPayment(r.paymentId);
-  // Pix já pago não é removível: o caso vai para análise (o estorno é decidido pela equipe).
-  if (after.method === "PIX" && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(after.status)) await openReview(after.id, "Pix pago e pedido cancelado pelo motorista antes do início: avaliar estorno.");
+  // Cobrança pré-paga já paga não é removível: o caso vai para análise (o estorno é decidido pela equipe).
+  if (isPrepaidMethod(after.method) && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(after.status)) await openReview(after.id, `${PAYMENT_METHOD_LABEL[after.method]} pago e pedido cancelado pelo motorista antes do início: avaliar estorno.`);
 }
 
 /** Encerramento pelo motorista: somente a própria sessão ativa. */
@@ -240,4 +241,11 @@ export async function stopCharge(driver: DriverContext | null, sessionId: string
   const cmd = await db.remoteCommand.create({ data: { stationId: s.stationId, type: "REMOTE_STOP", payload: { transactionId: s.transactionId }, requestedById: `driver:${driver.driverId}` } });
   await audit({ action: "charge.stop_requested", entityType: "ChargingSession", entityId: s.id });
   return cmd;
+}
+
+/** O que a tela de início mostra sobre pagamento (sem segredos): fluxo, formas oferecidas e valor cobrado antes. */
+export function paymentOptions() {
+  const provider = activeProvider();
+  const prepaid = provider.flow === "PREPAID";
+  return { prepaid, methods: prepaid ? [...PREPAID_METHODS] : [], amount: preauthAmount().toString(), windowMinutes: pixPaymentWindowMs() / 60_000 };
 }

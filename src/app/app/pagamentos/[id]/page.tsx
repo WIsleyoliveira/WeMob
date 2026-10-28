@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import { requirePage } from "@/server/auth/current";
 import { getPayment, PAYMENT_STATUS_LABEL } from "@/server/payments/service";
+import { PAYMENT_METHOD_LABEL, isPrepaidMethod } from "@/server/payments/provider";
 import { refundAction, resolveReviewAction } from "@/app/actions/payments";
 import { Alert } from "@/components/ui/alert";
 import { PageHeader } from "@/components/ui/page-header";
@@ -19,13 +20,14 @@ export default async function PagamentoPage({ params }: { params: Promise<{ id: 
   const available = Number(p.amountCaptured) - Number(p.amountRefunded);
   const canRefund = ctx.permissions.has("payment:refund") && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(p.status) && available > 0;
   const reviewOpen = !!p.reviewOpenedAt && !p.reviewResolvedAt;
-  const isPix = p.method === "PIX";
+  const prepaid = isPrepaidMethod(p.method);
+  const methodLabel = PAYMENT_METHOD_LABEL[p.method] ?? p.method;
   return (
     <>
       <PageHeader
         breadcrumbs={[{ label: "Pagamentos", href: "/app/pagamentos" }, { label: p.id.slice(-8) }]}
         title={`Pagamento ${PAYMENT_STATUS_LABEL[p.status].toLowerCase()}`}
-        description={<span className="flex flex-wrap gap-2">{p.environment === "SANDBOX" && <Badge tone="amber">sandbox — sem dinheiro real</Badge>} {reviewOpen && <Badge tone="red">em análise</Badge>} {p.provider} · {p.method} · ref. {p.providerRef} · {p.driver.name} ({p.driver.email})</span>}
+        description={<span className="flex flex-wrap gap-2">{p.environment === "SANDBOX" && <Badge tone="amber">sandbox — sem dinheiro real</Badge>} {reviewOpen && <Badge tone="red">em análise</Badge>} {p.provider} · {methodLabel} · ref. {p.providerRef} · {p.driver.name} ({p.driver.email})</span>}
       />
       <div className="grid gap-6 lg:grid-cols-[1fr_360px]">
         <div className="flex min-w-0 flex-col gap-6">
@@ -36,10 +38,10 @@ export default async function PagamentoPage({ params }: { params: Promise<{ id: 
           )}
           {p.reviewResolvedAt && <Alert tone="info" title="Análise encerrada">{p.reviewNote} <span className="block text-xs">{dateTime(p.reviewResolvedAt)}</span></Alert>}
           <Card>
-            <CardHeader title="Valores" description={isPix ? "Pix é pré-pago: o valor é cobrado integralmente; a diferença não consumida é estornada ao final." : undefined} />
+            <CardHeader title="Valores" description={prepaid ? `${methodLabel} é pré-pago: o valor é cobrado integralmente; a diferença não consumida é estornada ao final.` : undefined} />
             <Table><tbody>
-              <tr><td>{isPix ? "Cobrado (Pix)" : "Reservado (pré-autorização)"}</td><td className="tabular text-right">{brl(p.amountAuthorized.toString())}</td></tr>
-              <tr><td>{isPix ? "Recebido" : "Capturado"}</td><td className="tabular text-right">{brl(p.amountCaptured.toString())}</td></tr>
+              <tr><td>{prepaid ? `Cobrado (${methodLabel})` : "Reservado (pré-autorização)"}</td><td className="tabular text-right">{brl(p.amountAuthorized.toString())}</td></tr>
+              <tr><td>{prepaid ? "Recebido" : "Capturado"}</td><td className="tabular text-right">{brl(p.amountCaptured.toString())}</td></tr>
               <tr><td>Líquido informado pelo gateway</td><td className="tabular text-right">{p.netValue ? brl(p.netValue.toString()) : "—"}</td></tr>
               <tr><td>Tarifa do gateway</td><td className="tabular text-right">{p.feeAmount ? brl(p.feeAmount.toString()) : "—"}</td></tr>
               <tr><td>Reembolsado</td><td className="tabular text-right">{brl(p.amountRefunded.toString())}</td></tr>

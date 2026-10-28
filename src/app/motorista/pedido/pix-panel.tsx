@@ -19,7 +19,7 @@ export async function PixPanel({ requestId, amount, payload, expiresAt, sandbox 
       <ol className="mt-3 list-decimal space-y-0.5 pl-5 text-xs text-navy-600">
         <li>Abra o app do seu banco e escolha pagar com Pix (QR Code ou copia e cola).</li>
         <li>Confira o valor e confirme.</li>
-        <li>A recarga só começa quando o gateway confirmar o pagamento — esta página se atualiza sozinha.</li>
+        <li>Pronto: esta página confere o pagamento sozinha e a recarga começa assim que o banco confirmar.</li>
       </ol>
       <p className="mt-2 text-xs text-navy-500">Esse valor é o máximo reservado para a recarga. Ao final, a diferença não consumida é devolvida por estorno.</p>
       <ActionForm action={refreshPaymentAction} submitLabel="Já paguei — verificar agora" variant="secondary" size="sm" className="mt-3">

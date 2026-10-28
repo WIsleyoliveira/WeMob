@@ -1,0 +1,68 @@
+{
+  "executadoEm": "2026-10-28T11:00:22.695Z",
+  "ambiente": "SANDBOX",
+  "baseUrl": "https://api-sandbox.asaas.com/v3",
+  "observacao": "Webhook e split exigem endpoint público e carteiras de teste: registrar manualmente (ver docs/asaas.md).",
+  "passos": [
+    {
+      "step": "autenticação (GET /customers)",
+      "ok": true,
+      "ms": 522,
+      "detail": {
+        "totalCount": 2
+      }
+    },
+    {
+      "step": "criação de cliente (POST /customers)",
+      "ok": true,
+      "ms": 762,
+      "detail": {
+        "customerId": "cus_000009713941",
+        "documento": "•••.•••.•••-08"
+      }
+    },
+    {
+      "step": "cobrança Pix R$ 5,00 (POST /payments)",
+      "ok": true,
+      "ms": 627,
+      "detail": {
+        "paymentId": "pay_omba8dxf4tctxhpb",
+        "remoteStatus": "PENDING",
+        "local": "PENDING"
+      }
+    },
+    {
+      "step": "idempotência: busca pela chave externa",
+      "ok": true,
+      "ms": 267,
+      "detail": {
+        "encontradas": 1
+      }
+    },
+    {
+      "step": "QR Code Pix (GET /payments/{id}/pixQrCode)",
+      "ok": true,
+      "ms": 391,
+      "detail": {
+        "payloadPrefix": "000201",
+        "expira": "2027-10-28 23:59:59"
+      }
+    },
+    {
+      "step": "confirmação do pagamento (consulta autenticada)",
+      "ok": false,
+      "ms": 614222,
+      "error": "Pagamento não confirmado no prazo."
+    },
+    {
+      "step": "remoção da cobrança pendente (DELETE /payments/{id})",
+      "ok": true,
+      "ms": 1124,
+      "detail": {
+        "local": "CANCELLED",
+        "remoteStatus": "DELETED"
+      }
+    }
+  ],
+  "aprovado": false
+}

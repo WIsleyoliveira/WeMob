@@ -69,7 +69,7 @@ export function createAsaasProvider(cfg: AsaasConfig, fetchImpl?: FetchLike): Pa
       if (!options?.customerRemoteId) throw new Error("Cliente do Asaas não informado.");
       const body = {
         customer: options.customerRemoteId,
-        billingType: "PIX",
+        billingType: options.billingType ?? "PIX",
         value: Number(new Decimal(amount).toFixed(2)),
         dueDate: dueDateToday(),
         description: (options.description ?? "Recarga de veículo elétrico").slice(0, 500),

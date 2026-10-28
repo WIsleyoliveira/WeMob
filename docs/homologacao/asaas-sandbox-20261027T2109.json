@@ -1,0 +1,59 @@
+{
+  "executadoEm": "2026-10-27T21:09:50.263Z",
+  "ambiente": "SANDBOX",
+  "baseUrl": "https://api-sandbox.asaas.com/v3",
+  "observacao": "Webhook e split exigem endpoint público e carteiras de teste: registrar manualmente (ver docs/asaas.md).",
+  "passos": [
+    {
+      "step": "autenticação (GET /customers)",
+      "ok": true,
+      "ms": 375,
+      "detail": {
+        "totalCount": 0
+      }
+    },
+    {
+      "step": "criação de cliente (POST /customers)",
+      "ok": true,
+      "ms": 733,
+      "detail": {
+        "customerId": "cus_000009707289",
+        "documento": "•••.•••.•••-60"
+      }
+    },
+    {
+      "step": "cobrança Pix R$ 5,00 (POST /payments)",
+      "ok": true,
+      "ms": 965,
+      "detail": {
+        "paymentId": "pay_ufafa2et0w7xmuh2",
+        "remoteStatus": "PENDING",
+        "local": "PENDING"
+      }
+    },
+    {
+      "step": "idempotência: busca pela chave externa",
+      "ok": true,
+      "ms": 263,
+      "detail": {
+        "encontradas": 1
+      }
+    },
+    {
+      "step": "QR Code Pix (GET /payments/{id}/pixQrCode)",
+      "ok": false,
+      "ms": 263,
+      "error": "VALIDATION 400 Você não possui uma chave Pix cadastrada para recebimentos de cobranças via Pix."
+    },
+    {
+      "step": "remoção da cobrança pendente (DELETE /payments/{id})",
+      "ok": true,
+      "ms": 661,
+      "detail": {
+        "local": "CANCELLED",
+        "remoteStatus": "DELETED"
+      }
+    }
+  ],
+  "aprovado": false
+}

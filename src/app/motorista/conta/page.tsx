@@ -42,7 +42,7 @@ export default async function ContaPage() {
       </section>
       <section className="mt-4 rounded-xl border border-navy-100 bg-white p-4">
         <h2 className="font-display font-semibold text-navy-900">CPF/CNPJ para pagamento</h2>
-        <p className="mt-1 text-sm text-navy-600">Exigido pelo gateway para emitir cobranças Pix. Fica cifrado; exibimos só os últimos dígitos.</p>
+        <p className="mt-1 text-sm text-navy-600">Exigido pelo gateway para emitir as cobranças (Pix ou cartão). Fica cifrado; exibimos só os últimos dígitos.</p>
         <p className="mt-1 text-sm">Atual: <b>{p.documentHint ?? "não informado"}</b></p>
         <ActionForm action={setDocumentAction} submitLabel={p.documentHint ? "Atualizar documento" : "Salvar documento"} variant="secondary" size="sm" className="mt-2">
           <Field label="CPF ou CNPJ" htmlFor="document"><Input id="document" name="document" inputMode="numeric" autoComplete="off" required minLength={11} maxLength={18} /></Field>

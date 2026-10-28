@@ -19,12 +19,19 @@ Revalide endpoints, eventos e regras na documentação vigente antes de cada hom
 
 Regras invariantes: status local só muda pela consulta autenticada ao Asaas (o webhook apenas avisa); nenhuma rota pública altera status; timeout nunca gera nova cobrança sem antes procurar pela chave; estorno só é "concluído" com `refunds[].status = DONE`.
 
-## Fluxo de uma recarga paga (Pix)
+## Fluxo de uma recarga paga (Pix ou cartão)
 1. Motorista informa CPF/CNPJ em **Minha conta** (validado, cifrado com `DATA_ENCRYPTION_KEY`).
 2. Pede a recarga → cobrança Pix do valor máximo (`PAYMENT_PREAUTH_AMOUNT`), com split se aplicável → QR Code e copia e cola.
 3. Webhook `PAYMENT_CONFIRMED`/`PAYMENT_RECEIVED` → consulta ao Asaas → pago → comando RemoteStart.
 4. Fim da sessão → valor apurado; a diferença não consumida é **estornada uma única vez**; consumo acima do pago abre **análise** (sem cobrança complementar automática).
 5. Pix não pago na janela (`PIX_PAYMENT_WINDOW_MINUTES`) → cobrança removida (`DELETE /payments/{id}`) e pedido `EXPIRED`. Pago mas carregador não iniciou → **análise** (sem estorno automático).
+
+## Pagamento com cartão (2026-10-28)
+- Cobrança `billingType: CREDIT_CARD` **sem dados de cartão**: o motorista paga na página do Asaas (`invoiceUrl`), aberta em outra aba. A WeMob não recebe, não trafega e não guarda dados de cartão (fora do escopo PCI de captura).
+- Mesmo fluxo pré-pago do Pix: cobra o valor máximo, inicia após `CONFIRMED`/`RECEIVED`, estorna a diferença ao final. Estorno em cartão pode levar até 10 dias úteis para aparecer na fatura; tarifas não são devolvidas (docs Asaas, "Estornar cobrança").
+- Não usamos pré-autorização (`authorizeOnly`): exigiria enviar os dados do cartão pela nossa API (escopo PCI, `remoteIp`), a reserva vale 3 dias por padrão e a documentação consultada não informa captura de valor menor que o reservado.
+- Débito: segundo a documentação, só pela página do Asaas com `billingType` `CREDIT_CARD`/`UNDEFINED`; não habilitado.
+- Sandbox: criação e página de pagamento confirmadas (`asaas-sandbox-20261028T1123.json`); pagamento com cartão de teste **ainda não feito**.
 
 ## Configurar credenciais sem expô-las
 1. Crie uma conta no **ambiente de sandbox** do Asaas (cadastro separado da conta de produção, pelo link indicado em [Autenticação](https://docs.asaas.com/docs/autenticação-1)) e gere uma chave de API nessa conta (ver [Chaves de API](https://docs.asaas.com/docs/chaves-de-api)). Chaves de sandbox começam com `$aact_hmlg_`; as de produção com `$aact_prod_` — usar a chave no ambiente errado retorna 401. Guarde-a num cofre (1Password, Vault, segredo do provedor de hospedagem) — nunca no repositório, em logs ou em chats.
@@ -61,7 +68,7 @@ Regras invariantes: status local só muda pela consulta autenticada ao Asaas (o 
 | Etapa | Como verificar | Situação |
 |---|---|---|
 | A — Desenvolvimento | `npm test` (servidor Asaas falso em `tests/support/fake-asaas.ts`), lint, tipos, build | concluída — ver IMPLEMENTATION_STATUS |
-| B — Sandbox oficial | `npm run asaas:homologar` (cliente, Pix, idempotência, QR, remoção); `-- --aguardar-pagamento=10` + confirmar no painel do sandbox para pagamento e estorno; webhook exige URL pública (ex.: túnel temporário) | **bloqueada: `ASAAS_SANDBOX_API_KEY` não configurada (P14, 2026-10-27). Nenhuma chamada real feita.** |
+| B — Sandbox oficial | `npm run asaas:homologar` (cliente, Pix, idempotência, QR, remoção); `-- --aguardar-pagamento=10` + confirmar no painel do sandbox para pagamento e estorno; webhook exige URL pública (ex.: túnel temporário) | **parcial (2026-10-27): autenticação, cliente, Pix, idempotência e remoção OK; QR Code, pagamento e pedido de estorno OK; conclusão do estorno (autorização de ação crítica), webhook e split pendentes.** |
 | C — Comercial | contato formal com o Asaas (elegibilidade, tarifas, liquidação, split, estornos, limites) | **pendente** |
 | D — Infraestrutura | HTTPS, cofre de segredos, webhook público, backup/restauração, monitoramento, CI | **pendente** |
 | E — Autorização final | solicitação + aprovação por superadministradores distintos em Gateway e homologação | **pendente** |
@@ -74,13 +81,16 @@ O relatório de cada execução de `asaas:homologar` fica em `docs/homologacao/`
 | Código do adapter, webhook, estorno, split, conciliação | implementado | commit `a252e71` |
 | Ciclo completo com servidor Asaas **falso** (30 cenários + extras) | testado (simulado) | 197 testes passando |
 | Recusa do script sem configuração e em produção | verificado | saída do script, sem chamada de rede |
-| Autenticação, cliente, Pix, QR, consulta, pagamento, webhook, idempotência, estorno no **sandbox oficial** | **não executado** | sem `ASAAS_SANDBOX_API_KEY` |
+| Autenticação, criação de cliente, cobrança Pix, busca por `externalReference` (idempotência), remoção de cobrança pendente no **sandbox oficial** | **confirmado (2026-10-27)** | `docs/homologacao/asaas-sandbox-20261027T2109.json` — `cus_000009707289`, `pay_ufafa2et0w7xmuh2` (PENDING → DELETED) |
+| QR Code Pix no sandbox | **confirmado (2026-10-27/28)** após cadastrar chave Pix na conta (antes: `400` sem chave Pix) | `asaas-sandbox-20261027T2110.json`, `asaas-sandbox-20261028T1050.json` |
+| Pagamento e pedido de estorno no sandbox | **confirmado (2026-10-28)** — `RECEIVED`, `netValue` 4,01; estorno R$ 1,00 em `AWAITING_CRITICAL_ACTION_AUTHORIZATION` (autorizar no painel) | `asaas-sandbox-20261028T1103.json`, `pay_aksy7ycwtemzpz5r` |
+| Conclusão do estorno (`DONE`) e webhook | **não executado** | autorização da ação crítica no painel; URL pública para webhook |
 | Split no sandbox | **não executado** | sem chave, sem carteiras de teste, `ASAAS_SPLIT_ENABLED` desligado |
 | Elegibilidade comercial, tarifas, liquidação, lista de carteiras autorizadas | **pendente** (Asaas) | — |
 
 ### Para destravar a Etapa B (passo a passo)
 1. Crie a conta de sandbox e a chave (`$aact_hmlg_…`) conforme a seção de credenciais. **Não cole a chave no chat.**
-2. No `.env` local, defina: `PAYMENT_PROVIDER=asaas`, `ASAAS_ENVIRONMENT=sandbox`, `ASAAS_SANDBOX_API_KEY`, `ASAAS_WEBHOOK_TOKEN` (`openssl rand -hex 32`), `ASAAS_USER_AGENT`.
+2. No `.env` local, defina: `PAYMENT_PROVIDER=asaas`, `ASAAS_ENVIRONMENT=sandbox`, `ASAAS_SANDBOX_API_KEY`, `ASAAS_WEBHOOK_TOKEN` (`openssl rand -hex 32`), `ASAAS_USER_AGENT`. A chave começa com `$`: escreva `\$aact_hmlg_…` (o Next.js e `scripts/load-env.mjs` expandem `$`; sem o escape ela é lida vazia).
 3. `npm run asaas:homologar` → confere autenticação, cliente, Pix, idempotência, QR e remove a cobrança.
 4. `npm run asaas:homologar -- --aguardar-pagamento=10` → confirme o pagamento da cobrança indicada no painel do sandbox; o script consulta a cada 15 s (no máximo 10 min, sem criar nova cobrança) e faz estorno parcial de R$ 1,00.
 5. Para webhook: túnel HTTPS + webhook cadastrado com o mesmo token; inicie uma recarga numa estação **TEST** pelo portal do motorista, pague no sandbox e confira em Pagamentos → detalhe: evento recebido, estado aplicado, reentrega sem reprocessamento.

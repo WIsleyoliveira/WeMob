@@ -4,13 +4,13 @@
  * com a API real — isso exige o sandbox oficial (npm run asaas:homologar, pendente de credenciais).
  * Os números [n] referem-se aos 30 cenários obrigatórios do P13.
  */
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import Decimal from "decimal.js";
 import { db } from "@/server/db";
 import { handleCall } from "@/server/ocpp/handler";
 import { createSite, createStation, upsertConnector, addTariff } from "@/server/modules/stations/service";
 import { signupDriver, resolveDriver } from "@/server/drivers/auth";
-import { setMyDocument } from "@/server/drivers/service";
+import { getDriverStation, listDriverStations, setMyDocument, syncPendingPayment } from "@/server/drivers/service";
 import { cancelChargeRequest, driverAwareAuthorizer, expireStaleChargeRequests, onSessionStarted, onSessionStopped, startCharge } from "@/server/drivers/charging";
 import { getPayment, listPayments, processWebhook, reconcile, requestRefund, resolveReview, retryPendingWebhookEvents } from "@/server/payments/service";
 import { createChargePayment, refreshFromProvider } from "@/server/payments/charges";
@@ -199,6 +199,31 @@ describe("webhooks Asaas", () => {
     expect(await db.remoteCommand.count({ where: { type: "REMOTE_START" } })).toBe(1);
   });
 
+  it("página do pedido confirma o Pix sozinha (sem webhook), no máximo 1 consulta a cada 10 s, só do próprio pedido", async () => {
+    const { payment, driver, req } = await paidFlow();
+    const consultas = () => fake.control.requests.filter((x) => x.method === "GET" && x.path === `/payments/${payment.providerRef}`).length;
+    const antes = consultas();
+    vi.useFakeTimers({ toFake: ["Date"] }); // relógio parado no início de uma janela de 10 s do limitador
+    vi.setSystemTime(new Date(Math.floor(Date.now() / 10_000) * 10_000 + 20_000));
+    try {
+    await syncPendingPayment(driver, req.id);
+    expect(consultas()).toBe(antes + 1);
+    fake.pay(payment.providerRef);
+    await syncPendingPayment(driver, req.id); // dentro da janela de 10 s: não consulta de novo
+    expect(consultas()).toBe(antes + 1);
+    expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("PENDING");
+    vi.setSystemTime(new Date(Date.now() + 10_000)); // próxima janela
+    const { token } = await signupDriver({ name: "Outro", email: `outro${seq}@ex.com`, password: "senha-motorista-123", consent: true });
+    await syncPendingPayment((await resolveDriver(token))!, req.id); // pedido de outro motorista: ignorado
+    expect(consultas()).toBe(antes + 1);
+    await syncPendingPayment(driver, req.id);
+    expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("CAPTURED");
+    expect(await db.remoteCommand.count({ where: { type: "REMOTE_START" } })).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("[26][28] falha de comunicação ao consultar: 200 (fila do Asaas não pausa), evento pendente; retentativa aplica", async () => {
     const { payment } = await paidFlow();
     fake.pay(payment.providerRef);
@@ -285,6 +310,60 @@ describe("sessão, expiração, cancelamento e acerto", () => {
     expect(after.amountRefunded.toString()).toBe("30");
     expect(after.feeAmount?.toString()).toBe("0.99");
     expect((await remoteOf(p.id)).refunds).toHaveLength(1);
+  });
+});
+
+describe("cartão (página de pagamento do Asaas)", () => {
+  it("cria cobrança CREDIT_CARD sem QR Code, guarda a página de pagamento e nunca envia dados de cartão", async () => {
+    const { driver, station } = await setup();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, method: "CARD" });
+    const p = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } });
+    expect(p).toMatchObject({ method: "CARD", status: "PENDING", pixPayload: null, externalReference: `charge:${req.id}` });
+    expect(p.invoiceUrl).toMatch(/^https:\/\/sandbox\.asaas\.com\//);
+    const r = await remoteOf(p.id);
+    expect(r).toMatchObject({ billingType: "CREDIT_CARD", value: 50 });
+    expect(r).not.toHaveProperty("creditCard");
+    expect(fake.control.requests.some((x) => x.path.endsWith("/pixQrCode"))).toBe(false);
+    expect(await db.remoteCommand.count()).toBe(0);
+  });
+
+  it("estação de TESTE abre pelo link/QR direto (homologação), mas não aparece na lista da rede", async () => {
+    const { station } = await setup();
+    expect((await getDriverStation(station.ocppIdentity)).environment).toBe("TEST");
+    expect((await listDriverStations("real")).some((x) => x.identity === station.ocppIdentity)).toBe(false);
+  });
+
+  it("forma de pagamento inválida é recusada; sem escolha, o padrão é Pix", async () => {
+    const { driver, station } = await setup();
+    await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, method: "BOLETO" })).rejects.toThrow();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    expect((await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } })).method).toBe("PIX");
+  });
+
+  it("ciclo completo no cartão: aprovado → inicia → 10 kWh × R$ 2 → estorna R$ 30 uma única vez", async () => {
+    const { driver, station, call } = await setup();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, method: "CARD" });
+    const p = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } });
+    fake.pay(p.providerRef, "CONFIRMED"); // cartão aprovado
+    const h = hook("PAYMENT_CONFIRMED", p.providerRef);
+    await processWebhook("asaas", h.body, h.headers);
+    expect(await db.remoteCommand.count({ where: { type: "REMOTE_START" } })).toBe(1);
+    const start = (await call("card-start", "StartTransaction", { connectorId: 1, idTag: req.idTag, meterStart: 0, timestamp: iso(new Date()) })) as { result: { transactionId: number; idTagInfo: { status: string } } };
+    expect(start.result.idTagInfo.status).toBe("Accepted");
+    await call("card-stop", "StopTransaction", { transactionId: start.result.transactionId, meterStop: 10_000, timestamp: iso(new Date()) });
+    const after = await db.payment.findUniqueOrThrow({ where: { id: p.id }, include: { refunds: true, session: true } });
+    expect(after.session?.amount?.toString()).toBe("20");
+    expect(after.refunds).toHaveLength(1);
+    expect(after.refunds[0].amount.toString()).toBe("30");
+    expect(after).toMatchObject({ status: "PARTIALLY_REFUNDED", method: "CARD" });
+  });
+
+  it("cartão não pago no prazo: cobrança removida no gateway e pedido EXPIRADO", async () => {
+    const { driver, station } = await setup();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, method: "CARD" });
+    await expireStaleChargeRequests(new Date(Date.now() + 60 * 60_000));
+    expect((await db.chargeRequest.findUniqueOrThrow({ where: { id: req.id } })).status).toBe("EXPIRED");
+    expect((await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } })).status).toBe("CANCELLED");
   });
 });
 

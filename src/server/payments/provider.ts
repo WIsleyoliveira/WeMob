@@ -57,7 +57,15 @@ export interface ChargeOptions {
   customerRemoteId?: string;
   description?: string;
   split?: SplitInstruction[];
+  /** Forma de pagamento da cobrança pré-paga (padrão: Pix). */
+  billingType?: "PIX" | "CREDIT_CARD";
 }
+
+/** Formas pré-pagas: o valor máximo é cobrado antes da recarga e a diferença não consumida é estornada. */
+export const PREPAID_METHODS = ["PIX", "CARD"] as const;
+export type PrepaidMethod = (typeof PREPAID_METHODS)[number];
+export const isPrepaidMethod = (m: string): m is PrepaidMethod => (PREPAID_METHODS as readonly string[]).includes(m);
+export const PAYMENT_METHOD_LABEL: Record<string, string> = { PIX: "Pix", CARD: "Cartão", PREAUTH: "Pré-autorização" };
 
 export interface WebhookEvent {
   eventId: string;
