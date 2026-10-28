@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requirePage } from "@/server/auth/current";
 import { ORIGIN_LABEL, PRIORITY_LABEL, TICKET_CATEGORY_LABEL, TICKET_STATUS_LABEL, TICKET_TRANSITIONS, getTicket, supportFormOptions } from "@/server/modules/support/tickets";
@@ -18,7 +19,7 @@ const EVENT_LABEL = { CREATED: "Abertura", COMMENT: "Comentário", STATUS_CHANGE
 
 export default async function TicketPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await requirePage("support:read");
-  const t = await getTicket(ctx, (await params).id);
+  const t = await getTicket(ctx, (await params).id).catch(() => notFound());
   const [files, opts] = await Promise.all([listAttachments(ctx, "Ticket", t.id), supportFormOptions(ctx)]);
   const canWrite = ctx.permissions.has("support:write");
   const next = TICKET_TRANSITIONS[t.status];

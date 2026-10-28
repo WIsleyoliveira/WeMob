@@ -1,8 +1,17 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-28 (P16) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-28 (P17) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P17 — Auditoria final de aceitação (2026-10-28)
+
+Relatório: `docs/RELATORIO_FINAL_TECNICO.md` (seção P17). Conclusão: **escopo de código completo para homologação; não pronto para produção** (dependências externas listadas).
+
+- Defeitos corrigidos com regressão: (1) estorno enviado duas vezes com "Tentar agora" durante a retentativa automática — reproduzido (3 envios), corrigido com reserva única e atualização condicional; (2) alerta para estorno parado em `AWAITING_CRITICAL_ACTION_AUTHORIZATION`; (3) 404 em vez de tela de erro nas páginas de OS, chamado, contrato e fechamento com id inexistente (teste estático de proteção).
+- Sandbox (somente leitura): `refunds[].description` volta íntegro (marcador funciona); cartão `pay_fzvllcs4rjfnze8h` sem estornos no Asaas, coerente com o local (`SCHEDULED` para 29/10 06:00 BRT). Janela não aberta: nenhuma tentativa antecipada.
+- Navegador: barra de limite verificada com recarga de teste controlada (sem cobrança). Varredura de 70 rotas × 10 perfis: 0 erros 500.
+- Verificação: `npm test` → 19 arquivos, **225 testes passando**; lint 0; typecheck 0; build OK (76 rotas); 12 migrations do zero sem diferença; `npm audit --omit=dev` 0; `npm audit` 2 moderadas (vitest; npm 11 resolveria, mas reescreve o lockfile — não aplicado).
 
 ## P16 — Finalização técnica (2026-10-28)
 

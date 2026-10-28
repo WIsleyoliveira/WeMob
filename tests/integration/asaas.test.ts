@@ -655,6 +655,38 @@ describe("estornos", () => {
     void admin;
   });
 
+  it("P17: 'Tentar agora' durante a retentativa automática não envia o estorno duas vezes", async () => {
+    const { payment, fin } = await captured();
+    fake.control.rejectRefund = NEXT_DAY;
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "diferença" });
+    fake.control.rejectRefund = null;
+    fake.control.getDelayMs = 300; // a consulta ao gateway antes de reenviar demora
+    fake.control.refundDelayMs = 500; // e o envio do estorno também
+    const due = new Date(r.nextAttemptAt!.getTime() + 1000);
+    const auto = retryDueRefunds(due); // ciclo automático pega o estorno e consulta o gateway
+    await new Promise((x) => setTimeout(x, 100)); // equipe clica durante a consulta
+    const manual = retryRefundNow(fin.ctx, { refundId: r.id }).catch((e: Error) => e.message);
+    await Promise.all([auto, manual]);
+    fake.control.getDelayMs = 0;
+    fake.control.refundDelayMs = 0;
+    expect(fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund"))).toHaveLength(2); // recusa inicial + 1 retentativa
+    expect((await remoteOf(payment.id)).refunds).toHaveLength(1);
+    expect(String(await manual)).toMatch(/processamento|aguardando/);
+  });
+
+  it("P17: estorno parado em 'autorização de ação crítica' (status real do sandbox) não conta como devolvido e gera alerta", async () => {
+    const { payment, fin, op } = await captured();
+    await ensureDefaultAlertRules(db, op.id);
+    await db.alertRule.updateMany({ where: { operatorId: op.id, kind: "PAYMENT_DIVERGENCE" }, data: { includeNonProduction: true } });
+    fake.control.refundStatus = "AWAITING_CRITICAL_ACTION_AUTHORIZATION";
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "diferença" });
+    expect(r).toMatchObject({ status: "REQUESTED", remoteStatus: "AWAITING_CRITICAL_ACTION_AUTHORIZATION" });
+    expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).amountRefunded.toString()).toBe("0");
+    expect(await retryDueRefunds(new Date(Date.now() + 86400_000))).toEqual([]); // não é reenviado
+    await evaluateAlerts(op.id, new Date(Date.now() + 31 * 60_000));
+    expect((await db.alert.findFirstOrThrow({ where: { dedupeKey: `refund-auth:${r.id}` } })).title).toMatch(/aguardando autorização/);
+  });
+
   it("P16: acerto do fim da sessão no cartão é agendado (não abre análise) e conclui na retentativa", async () => {
     const { driver, station, call } = await setup();
     const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, method: "CARD" });

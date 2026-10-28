@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import Link from "next/link";
 import { requirePage } from "@/server/auth/current";
 import { WO_STATUS_LABEL, getWorkOrder } from "@/server/modules/maintenance/service";
@@ -16,7 +17,7 @@ export const dynamic = "force-dynamic";
 
 export default async function WorkOrderPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await requirePage("maintenance:read");
-  const wo = await getWorkOrder(ctx, (await params).id);
+  const wo = await getWorkOrder(ctx, (await params).id).catch(() => notFound());
   const files = await listAttachments(ctx, "WorkOrder", wo.id);
   const active = ["OPEN", "SCHEDULED", "IN_PROGRESS"].includes(wo.status);
   const canWrite = ctx.permissions.has("maintenance:write") && active;

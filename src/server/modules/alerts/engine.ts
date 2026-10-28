@@ -96,7 +96,7 @@ async function detect(rule: AlertRule, now: Date): Promise<Candidate[]> {
       };
       const sessionScope: Prisma.ChargingSessionWhereInput = { stationId: { in: stationIds }, environment: { in: rule.includeNonProduction ? ["PRODUCTION", "TEST"] : ["PRODUCTION"] } };
       const live = { ...sessionScope, status: { in: ["ACTIVE", "COMMUNICATION_LOST"] as ("ACTIVE" | "COMMUNICATION_LOST")[] }, limitAmount: { not: null } };
-      const [stale, orphan, settled, stopUnconfirmed, nearLimit, funded, unprocessed, scheduled, review] = await Promise.all([
+      const [stale, orphan, settled, stopUnconfirmed, nearLimit, funded, unprocessed, scheduled, review, awaitingAuth] = await Promise.all([
         db.payment.findMany({ where: { ...scope, status: "AUTHORIZED", createdAt: { lt: new Date(now.getTime() - p.staleAuthorizationHours * 3600_000) } } }),
         db.payment.findMany({ where: { ...scope, status: { in: ["AUTHORIZED", "CAPTURED"] }, sessionId: null, createdAt: { lt: new Date(now.getTime() - 10 * 60_000) } } }),
         db.payment.findMany({ where: { ...scope, status: { in: ["CAPTURED", "PARTIALLY_REFUNDED", "REFUNDED"] }, session: { amount: { not: null } } }, include: { session: true } }),
@@ -107,6 +107,8 @@ async function detect(rule: AlertRule, now: Date): Promise<Candidate[]> {
         db.paymentEvent.findMany({ where: { processedAt: null, receivedAt: { lt: new Date(now.getTime() - 30 * 60_000) }, payment: scope }, select: { id: true, type: true, paymentId: true, attempts: true, outcome: true } }),
         db.refund.findMany({ where: { status: "SCHEDULED", nextAttemptAt: { lt: new Date(now.getTime() - 3600_000) }, payment: scope }, select: { id: true, amount: true, paymentId: true, nextAttemptAt: true, lastError: true } }),
         db.payment.findMany({ where: { ...scope, reviewOpenedAt: { not: null }, reviewResolvedAt: null }, select: { id: true, reviewReason: true, reviewOpenedAt: true } }),
+        // Estorno aceito pelo gateway mas parado aguardando autorização humana (ex.: Asaas "ação crítica").
+        db.refund.findMany({ where: { status: "REQUESTED", remoteStatus: { startsWith: "AWAITING_" }, createdAt: { lt: new Date(now.getTime() - 30 * 60_000) }, payment: scope }, select: { id: true, amount: true, paymentId: true, remoteStatus: true } }),
       ]);
       const commands = await db.remoteCommand.findMany({ where: { id: { in: stopUnconfirmed.map((x) => x.limitStopCommandId).filter((x): x is string => !!x) } }, select: { id: true, status: true } });
       const commandStatus = new Map(commands.map((c) => [c.id, c.status]));
@@ -124,6 +126,7 @@ async function detect(rule: AlertRule, now: Date): Promise<Candidate[]> {
           .map((x) => ({ dedupeKey: `session-telemetry:${x.id}`, title: `Sessão #${x.transactionId} (${x.station.ocppIdentity}) sem leitura do medidor há mais de 15 min`, detail: `Sem MeterValues o consumo não é acompanhado e o limite financeiro (R$ ${x.limitAmount}) só é verificado pelo tempo. Verificar a configuração de MeterValues do carregador.`, stationId: x.stationId, autoResolve: true })),
         ...unprocessed.map((x) => ({ dedupeKey: `webhook:${x.id}`, title: `Evento de pagamento ${x.type} não processado há mais de 30 min`, detail: `Pagamento ${x.paymentId ?? "—"}, ${x.attempts} tentativa(s). Último resultado: ${x.outcome ?? "—"}.`, autoResolve: true })),
         ...scheduled.map((x) => ({ dedupeKey: `refund-overdue:${x.id}`, title: `Estorno de R$ ${x.amount} agendado e não reprocessado`, detail: `Previsto para ${x.nextAttemptAt!.toISOString()} (pagamento ${x.paymentId}). Verificar se o servidor OCPP (ciclo de automações) está rodando. Último retorno: ${x.lastError ?? "—"}.`, autoResolve: true })),
+        ...awaitingAuth.map((x) => ({ dedupeKey: `refund-auth:${x.id}`, title: `Estorno de R$ ${x.amount} aguardando autorização no gateway`, detail: `Status no gateway: ${x.remoteStatus} (pagamento ${x.paymentId}). O dinheiro só volta ao cliente depois da autorização no painel do provedor.`, autoResolve: true })),
         ...review.map((x) => ({ dedupeKey: `payment:${x.id}:review`, title: "Pagamento em análise", detail: `${x.reviewReason ?? "—"} (desde ${x.reviewOpenedAt!.toISOString()}).`, autoResolve: true })),
         ...stale.map((x) => ({ dedupeKey: `payment:${x.id}:stale`, title: `Autorização pendente há mais de ${p.staleAuthorizationHours} h`, detail: `Pagamento ${x.id} (${x.amountAuthorized} reservado) sem captura nem cancelamento.`, autoResolve: true })),
         ...orphan.map((x) => ({ dedupeKey: `payment:${x.id}:orphan`, title: "Pagamento sem sessão de recarga", detail: `Pagamento ${x.id} (${x.status}) sem sessão vinculada.`, autoResolve: true })),

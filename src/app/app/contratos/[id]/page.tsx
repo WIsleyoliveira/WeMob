@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { requirePage } from "@/server/auth/current";
 import { BASE_LABEL, CONTRACT_STATUS_LABEL, LOSS_LABEL, contractFormOptions, getContract } from "@/server/modules/contracts/service";
 import { listAttachments } from "@/server/modules/attachments/service";
@@ -18,7 +19,7 @@ const VERSION_STATUS = { DRAFT: "Rascunho — aguardando decisão", APPROVED: "A
 
 export default async function ContratoPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await requirePage("contract:read");
-  const c = await getContract(ctx, (await params).id);
+  const c = await getContract(ctx, (await params).id).catch(() => notFound());
   const [docs, opts] = await Promise.all([listAttachments(ctx, "Contract", c.id), ctx.permissions.has("contract:write") ? contractFormOptions(ctx) : Promise.resolve(null)]);
   const name = (id: string | null) => (id ? c.userNames[id] ?? "—" : "—");
   const canApprove = ctx.permissions.has("contract:approve");

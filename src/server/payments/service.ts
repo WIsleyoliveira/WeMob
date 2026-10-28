@@ -2,6 +2,7 @@
  * Pagamentos: estado local sincronizado SOMENTE a partir do provedor (consulta ou webhook
  * verificado). Nenhuma confirmação vinda do navegador altera status.
  */
+import { randomInt } from "node:crypto";
 import Decimal from "decimal.js";
 import { z } from "zod";
 import { Prisma, type Payment, type PaymentStatus } from "@prisma/client";
@@ -354,13 +355,16 @@ async function dispatchRefund(refundId: string) {
  */
 export async function retryDueRefunds(now = new Date(), onlyRefundId?: string) {
   const due = await db.refund.findMany({
-    where: { ...(onlyRefundId ? { id: onlyRefundId } : {}), nextAttemptAt: { lte: now }, OR: [{ status: "SCHEDULED" }, { status: "REQUESTED", remoteStatus: "UNKNOWN" }] },
+    // RETRYING com reserva vencida = processo anterior caiu no meio: retoma (sempre consultando antes).
+    where: { ...(onlyRefundId ? { id: onlyRefundId } : {}), nextAttemptAt: { lte: now }, OR: [{ status: "SCHEDULED" }, { status: "REQUESTED", remoteStatus: { in: ["UNKNOWN", "RETRYING"] } }] },
     orderBy: { nextAttemptAt: "asc" },
     take: 20,
   });
   const out: { refundId: string; status: string }[] = [];
   for (const r of due) {
-    const claimed = await db.refund.updateMany({ where: { id: r.id, status: r.status, nextAttemptAt: r.nextAttemptAt }, data: { nextAttemptAt: new Date(now.getTime() + 10 * 60_000) } });
+    // Reserva com valor único (10 min + ms aleatórios): só quem a detém pode reenviar.
+    const lease = new Date(now.getTime() + 10 * 60_000 + randomInt(1, 60_000));
+    const claimed = await db.refund.updateMany({ where: { id: r.id, status: r.status, nextAttemptAt: r.nextAttemptAt }, data: { nextAttemptAt: lease, remoteStatus: "RETRYING" } });
     if (claimed.count !== 1) continue;
     const payment = await db.payment.findUniqueOrThrow({ where: { id: r.paymentId } });
     try {
@@ -375,6 +379,10 @@ export async function retryDueRefunds(now = new Date(), onlyRefundId?: string) {
       out.push({ refundId: r.id, status: current.status });
       continue;
     }
+    if (current.nextAttemptAt?.getTime() !== lease.getTime()) {
+      out.push({ refundId: r.id, status: "em processamento por outra execução" });
+      continue;
+    }
     const fresh = await db.payment.findUniqueOrThrow({ where: { id: r.paymentId } });
     const blocked =
       current.attempts >= MAX_REFUND_ATTEMPTS
@@ -385,12 +393,18 @@ export async function retryDueRefunds(now = new Date(), onlyRefundId?: string) {
             ? "valor acima do saldo estornável"
             : null;
     if (blocked) {
-      await db.refund.update({ where: { id: r.id }, data: { status: "FAILED", completedAt: now, nextAttemptAt: null, lastError: `${current.lastError ?? ""} · retentativa encerrada: ${blocked}`.slice(0, 300) } });
+      const closed = await db.refund.updateMany({ where: { id: r.id, nextAttemptAt: lease }, data: { status: "FAILED", completedAt: now, nextAttemptAt: null, remoteStatus: "REJECTED", lastError: `${current.lastError ?? ""} · retentativa encerrada: ${blocked}`.slice(0, 300) } });
+      if (closed.count !== 1) continue;
       await openReview(r.paymentId, `Estorno de R$ ${current.amount} não concluído (${blocked}). Último retorno do gateway: ${current.lastError ?? "—"}`);
       out.push({ refundId: r.id, status: "FAILED" });
       continue;
     }
-    await db.refund.update({ where: { id: r.id }, data: { status: "REQUESTED", remoteStatus: null, attempts: { increment: 1 }, nextAttemptAt: null } });
+    // Atualização condicional à reserva: se outra execução já reenviou/concluiu, esta não envia.
+    const mine = await db.refund.updateMany({ where: { id: r.id, nextAttemptAt: lease, remoteStatus: "RETRYING" }, data: { status: "REQUESTED", remoteStatus: null, attempts: { increment: 1 }, nextAttemptAt: null } });
+    if (mine.count !== 1) {
+      out.push({ refundId: r.id, status: "em processamento por outra execução" });
+      continue;
+    }
     await audit({ organizationId: fresh.operatorId, action: "payment.refund_retried", entityType: "Payment", entityId: fresh.id, data: { refundId: r.id, attempt: current.attempts + 1 } });
     const after = await dispatchRefund(r.id).catch(async (e) => {
       await openReview(r.paymentId, `Estorno de R$ ${current.amount} recusado na retentativa: ${e instanceof Error ? e.message : String(e)}`);
@@ -408,9 +422,11 @@ export async function retryRefundNow(ctx: AuthContext | null, raw: unknown) {
   const { refundId } = z.object({ refundId: z.string().min(1).max(40) }).parse(raw);
   const r = await db.refund.findFirst({ where: { id: refundId, payment: await operatorPaymentScope(ctx.organizationId) } });
   if (!r) throw notFound("Estorno não encontrado.");
-  if (!(r.status === "SCHEDULED" || (r.status === "REQUESTED" && r.remoteStatus === "UNKNOWN"))) throw new AppError("CONFLICT", "Este estorno não está aguardando nova tentativa.");
+  if (!(r.status === "SCHEDULED" || (r.status === "REQUESTED" && (r.remoteStatus === "UNKNOWN" || r.remoteStatus === "RETRYING")))) throw new AppError("CONFLICT", "Este estorno não está aguardando nova tentativa.");
   const now = new Date();
-  await db.refund.update({ where: { id: r.id }, data: { nextAttemptAt: now } });
+  // Não passa por cima de uma retentativa em andamento (reserva ativa do ciclo automático).
+  const moved = await db.refund.updateMany({ where: { id: r.id, status: r.status, nextAttemptAt: r.nextAttemptAt, NOT: { remoteStatus: "RETRYING", nextAttemptAt: { gt: now } } }, data: { nextAttemptAt: now } });
+  if (moved.count !== 1) throw new AppError("CONFLICT", "Este estorno já está em processamento; atualize a página em instantes.");
   await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "payment.refund_retry_requested", entityType: "Payment", entityId: r.paymentId, data: { refundId: r.id } });
   const [res] = await retryDueRefunds(now, r.id);
   return { status: res?.status ?? r.status };

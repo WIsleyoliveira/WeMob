@@ -89,13 +89,13 @@ export default async function PagamentoPage({ params }: { params: Promise<{ id: 
               <thead><tr><th>Solicitado</th><th className="text-right">Valor</th><th>Status</th><th>Motivo</th></tr></thead>
               <tbody>
                 {p.refunds.map((r) => {
-                  const waiting = r.status === "SCHEDULED" || (r.status === "REQUESTED" && r.remoteStatus === "UNKNOWN");
+                  const waiting = r.status === "SCHEDULED" || (r.status === "REQUESTED" && (r.remoteStatus === "UNKNOWN" || r.remoteStatus === "RETRYING"));
                   return (
                     <tr key={r.id}>
                       <td>{dateTime(r.createdAt)}</td>
                       <td className="tabular text-right">{brl(r.amount.toString())}{r.confirmedAmount ? <span className="block text-xs text-navy-500">confirmado {brl(r.confirmedAmount.toString())}</span> : null}</td>
                       <td>
-                        <Badge tone={r.status === "SUCCEEDED" ? "green" : r.status === "FAILED" ? "red" : "amber"}>{REFUND_STATUS_LABEL[r.status]}{r.status === "REQUESTED" && r.remoteStatus === "UNKNOWN" ? " · resultado incerto" : ""}</Badge>
+                        <Badge tone={r.status === "SUCCEEDED" ? "green" : r.status === "FAILED" ? "red" : "amber"}>{REFUND_STATUS_LABEL[r.status]}{r.status === "REQUESTED" && r.remoteStatus === "UNKNOWN" ? " · resultado incerto" : r.remoteStatus === "RETRYING" ? " · em processamento" : r.remoteStatus === "AWAITING_CRITICAL_ACTION_AUTHORIZATION" ? " · autorizar no painel do Asaas" : ""}</Badge>
                         <span className="mt-1 block text-xs text-navy-500">
                           {r.remoteStatus ? `gateway: ${r.remoteStatus} · ` : ""}tentativa {r.attempts}
                           {r.nextAttemptAt && waiting ? ` · próxima ${dateTime(r.nextAttemptAt)}` : ""}

@@ -22,11 +22,15 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
     rejectNextPayment: null as null | string,
     failAllRequests: false,
     failGetPayment: false,
-    refundStatus: "DONE" as "DONE" | "PENDING",
+    refundStatus: "DONE" as "DONE" | "PENDING" | "AWAITING_CRITICAL_ACTION_AUTHORIZATION",
     /** Estorno processado no gateway, mas a resposta se perde (timeout) — resultado incerto para a WeMob. */
     timeoutAfterProcessingNextRefund: false,
     /** Gateway responde 503 ANTES de processar o próximo estorno (nada foi estornado). */
     unavailableBeforeNextRefund: false,
+    /** Atraso (ms) na resposta de POST /refund — permite sobrepor execuções concorrentes nos testes. */
+    refundDelayMs: 0,
+    /** Atraso (ms) na resposta de GET /payments/{id}. */
+    getDelayMs: 0,
     rejectRefund: null as null | string,
     requests: [] as { method: string; path: string; userAgent?: string }[],
   };
@@ -101,6 +105,7 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
     if ((m = path.match(/^\/payments\/([^/]+)\/refund$/)) && init.method === "POST") {
       const p = payments.get(m[1]);
       if (!p) return err(404, "Não encontrado");
+      if (control.refundDelayMs) await new Promise((r) => setTimeout(r, control.refundDelayMs));
       if (control.rejectRefund) return err(400, control.rejectRefund);
       if (control.unavailableBeforeNextRefund) {
         control.unavailableBeforeNextRefund = false;
@@ -122,6 +127,7 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
       if (!p) return err(404, "Não encontrado");
       if (init.method === "GET") {
         if (control.failGetPayment) return json(503, { errors: [] });
+        if (control.getDelayMs) await new Promise((r) => setTimeout(r, control.getDelayMs));
         return json(200, view(p));
       }
       if (init.method === "DELETE") {

@@ -1,3 +1,4 @@
+import { notFound } from "next/navigation";
 import { requirePage } from "@/server/auth/current";
 import { getClosing } from "@/server/modules/finance/closing";
 import { financeFormOptions, CATEGORY_LABEL, ENTRY_STATUS_LABEL, KIND_LABEL } from "@/server/modules/finance/entries";
@@ -17,7 +18,7 @@ export const dynamic = "force-dynamic";
 
 export default async function ClosingPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await requirePage("finance:read");
-  const c = await getClosing(ctx, (await params).id);
+  const c = await getClosing(ctx, (await params).id).catch(() => notFound());
   const opts = await financeFormOptions(ctx);
   const t = c.result.totals;
   const name = (id: string | null) => (id ? c.userNames[id] ?? id : "—");
