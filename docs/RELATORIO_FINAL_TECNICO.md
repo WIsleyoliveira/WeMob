@@ -528,3 +528,24 @@ O WeMob está **pronto para iniciar a homologação em staging**. Isso **não** 
 
 ## 7. Decisão
 O repositório está **pronto para autorizar o push** que executará o CI remoto, **depois de configurado o remoto do GitHub**. A imagem Docker continua **NÃO TESTADA** até o job `docker` passar. Staging pode começar após o CI verde, com readiness em `/api/health`. Produção segue **não autorizada**.
+
+## 8. CI remoto — primeira execução (2026-10-28, após autorização)
+Remoto configurado (`origin` = `https://github.com/WIsleyoliveira/WeMob.git`, repositório **público**, vazio antes do push). Varredura dos 22 commits antes do envio: nenhum segredo (só exemplos `$aact_hmlg_…` e a senha de exemplo do Compose), nenhum `.env` versionado, nenhum CPF/telefone; e-mails apenas de teste; relatórios JSON do sandbox sem campos pessoais. Ficam públicos: o e-mail do autor dos commits e IDs de pagamentos/clientes do Asaas **sandbox**. Push de `main` (`2cf0aa9`) autorizado pelo usuário. Execução [40750195389](https://github.com/WIsleyoliveira/WeMob/actions/runs/40750195389), runner `ubuntu-26.04`:
+
+| Job / passo | Status | Saída real |
+|---|---|---|
+| `docker`: `docker build --target migrate` | **APROVADO COM EVIDÊNCIA** | `npm ci` no Alpine: "found 0 vulnerabilities" |
+| `docker`: `docker build` (aplicação) | **APROVADO COM EVIDÊNCIA** | "✓ Compiled successfully" |
+| `docker`: aplicação sobe sem migrar | **APROVADO COM EVIDÊNCIA** | `{"status":"degraded","db":"ok","schema":"migrations_pending"}` (503) |
+| `docker`: migração explícita + status | **APROVADO COM EVIDÊNCIA** | "All migrations have been successfully applied." / "Database schema is up to date!" |
+| `docker`: aplicação após migração | **APROVADO COM EVIDÊNCIA** | `{"status":"ok","db":"ok",…}` (200); sem aviso de OpenSSL do Prisma no Alpine |
+| `check`: `npm ci`, lint, typecheck | **APROVADO COM EVIDÊNCIA** | 0 vulnerabilidades; lint e tsc sem erros |
+| `check`: `npm test` | **APROVADO COM EVIDÊNCIA** | "Test Files 21 passed (21) · Tests 232 passed (232)" |
+| `check`: `npm audit --omit=dev` / `--audit-level=moderate` | **APROVADO COM EVIDÊNCIA** | 0 / 0 |
+| `check`: `npm run build` | **APROVADO COM EVIDÊNCIA** | "✓ Compiled successfully" |
+| `check`: `npx playwright install --with-deps chromium` | **REPROVADO** (ambiente) | "Playwright does not support chromium on ubuntu26.04-x64" — o rótulo `ubuntu-latest` migrou para o Ubuntu 26.04 |
+| `check`: `e2e:build` / `e2e:browser` no CI | NÃO TESTADO | pulados pela falha anterior (locais: 14/14 no P19) |
+
+Correção local (não enviada): os dois jobs fixados em `runs-on: ubuntu-24.04` (suportado pelo Playwright 1.56.1), em vez de atualizar dependências. Requer novo push autorizado para confirmar o Playwright no CI.
+
+**Atualização da decisão**: a imagem Docker passa a **APROVADO COM EVIDÊNCIA** (build real + teste integrado no CI). Pendente para fechar o CI: Playwright no CI após o push da correção.

@@ -2,7 +2,8 @@ name: CI
 on: [push, pull_request]
 jobs:
   check:
-    runs-on: ubuntu-latest
+    # Versão fixa: o ubuntu-latest migrou para o 26.04 (out/2026), sem Chromium no Playwright 1.56.1 (CI do P21).
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16.4-alpine
@@ -42,7 +43,8 @@ jobs:
   # Imagens Docker (P20): aplicação e migração do mesmo commit. A aplicação precisa subir SEM migrar (503
   # migrations_pending); a migração é um passo explícito; depois o health responde 200.
   docker:
-    runs-on: ubuntu-latest
+    # Versão fixa: o ubuntu-latest migrou para o 26.04 (out/2026), sem Chromium no Playwright 1.56.1 (CI do P21).
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: postgres:16.4-alpine

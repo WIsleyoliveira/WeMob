@@ -12,6 +12,7 @@ Relatório: `docs/RELATORIO_FINAL_TECNICO.md` (seção P21). Sem push/deploy.
 - Achado: com banco incompatível, páginas que leem o banco respondem 500 — o tráfego só é barrado por readiness em `/api/health` (runbook atualizado). Sem `HEALTHCHECK` na imagem.
 - `npm audit` 0/0. Testes não repetidos (nenhum código mudou desde o P19). Imagem real **não testada** (sem daemon).
 - O repositório não tem remoto Git: CI remoto depende de configurar o remoto e autorizar o push. CI não exige secrets.
+- CI remoto (execução 40750195389, após push autorizado para `WIsleyoliveira/WeMob`, público): job `docker` **verde** (imagens reais construídas; 503 → migração → 200); `check` com 232/232 testes, lint, tipos, auditoria 0 e build verdes, mas o Playwright falhou porque o `ubuntu-latest` virou 26.04 → runners fixados em `ubuntu-24.04` (correção local, aguardando push).
 
 ## P20 — Homologação em staging e gate de produção (2026-10-28)
 
