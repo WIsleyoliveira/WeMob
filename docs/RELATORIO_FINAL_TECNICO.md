@@ -94,7 +94,7 @@ Commit local desta etapa: `7a98acd` (sobre `c783402`). Nenhum push, deploy ou op
 
 # Auditoria final de aceitação — P17 (2026-10-28)
 
-Commit inicial: `1a99aca` (sobre `7a98acd` e `c783402`; árvore limpa; `main`). Commit final: ver seção 9. Nenhum push, deploy, operação financeira real, alteração de `.env` ou migração destrutiva.
+Commit inicial: `1a99aca` (sobre `7a98acd` e `c783402`; árvore limpa; `main`). Commit final: `9f2f0da` (código e relatório) + este registro. Nenhum push, deploy, operação financeira real, alteração de `.env` ou migração destrutiva.
 
 ## 1. Inventário de integrações
 | Integração | Endpoint / versão | Autenticação | Erros, timeout, idempotência | Evidência |
