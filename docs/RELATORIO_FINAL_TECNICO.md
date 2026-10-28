@@ -441,7 +441,7 @@ Desde `10836d6` **nenhum** arquivo de `src/`, `tests/`, `e2e/`, `scripts/`, `pri
 
 ## 5. Estorno de R$ 75,10 (29/10/2026)
 **Não consultado, antecipado, cancelado nem reenviado no P20** (a janela abre 29/10 06:00 BRT; agora 28/10 tarde). Estado conhecido (P18): local `SCHEDULED` para 2026-10-29 09:00 UTC; gateway `CONFIRMED`, `refunds: []`.
-**Bloqueio novo**: não há executor. A tarefa citada no P18 não existe e o servidor OCPP (que roda `retryDueRefunds`) está parado. **Ao chegar o horário, nada acontecerá sozinho.**
+**Bloqueio novo**: não há executor. A tarefa citada no P18 não existe e o servidor OCPP (que roda `retryDueRefunds`) está parado. **Ao chegar o horário, nada executará o estorno sozinho.** Agendada em 28/10 (autorizada pelo usuário) apenas a **leitura**: tarefa `wemob-estorno-7510-leitura`, 29/10 06:20 BRT — passos 1–2 abaixo e classificação, sem nenhuma escrita.
 Procedimento na janela (a executar por uma pessoa ou tarefa autorizada):
 1. Consultar o pagamento `pay_fzvllcs4rjfnze8h` no Asaas (`GET /payments/{id}` e estornos): já existe estorno? pendente? exige autorização (ação crítica)?
 2. Conferir o estado local do estorno `cmvs5o69u0001z1lujwc501g1` (`remoteStatus`, `nextAttemptAt`, tentativas, lease).
@@ -453,7 +453,7 @@ Procedimento na janela (a executar por uma pessoa ou tarefa autorizada):
 ## 6. Pendências externas
 | Pendência | Status | Evidência necessária | Risco | Responsável | Próxima ação |
 |---|---|---|---|---|---|
-| Execução do estorno de R$ 75,10 | BLOQUEADO EXTERNAMENTE (janela) + sem executor | §5 passos 1–6 | médio | operação WeMob (engenharia) | decidir executor (tarefa agendada só leitura + execução manual, ou OCPP no ar) antes de 29/10 06:00 |
+| Execução do estorno de R$ 75,10 | BLOQUEADO EXTERNAMENTE (janela) + sem executor | §5 passos 1–6 | médio | operação WeMob (engenharia) | leitura agendada (tarefa `wemob-estorno-7510-leitura`, 29/10 06:20 BRT, só GET/SELECT, relatório em `docs/homologacao/estorno-75-10-2026-10-29.md`); a execução continua dependendo de decisão humana (OCPP no ar **ou** um único "Tentar agora") |
 | 2ª carteira sandbox para split | BLOQUEADO EXTERNAMENTE | `walletId` de outra conta sandbox + split `DONE` num pagamento de teste | alto (repasses) | dono da conta Asaas (WAPE) | criar/convidar 2ª conta sandbox e informar o `walletId` |
 | Métodos compatíveis com split | BLOQUEADO EXTERNAMENTE | resposta escrita do Asaas (Pix, cartão, pré-pago) | médio | comercial WAPE ↔ gerente Asaas | abrir chamado no Asaas |
 | Rateio 50% bruto × líquido | BLOQUEADO EXTERNAMENTE | decisão assinada e versão de contrato aprovada | alto (financeiro/jurídico) | comercial + jurídico WAPE | decidir por escrito; o split do Asaas é sempre sobre o líquido |
