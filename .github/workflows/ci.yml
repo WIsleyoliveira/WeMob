@@ -9,7 +9,8 @@ jobs:
         image: postgres:16.4-alpine
         env: { POSTGRES_USER: ci, POSTGRES_PASSWORD: ci, POSTGRES_DB: sansol_test }
         ports: ["5432:5432"]
-        options: --health-cmd "pg_isready -U ci" --health-interval 5s --health-retries 10
+        # -d: sem ele o pg_isready conecta ao banco "ci" (nome do usuário), inexistente — FATAL a cada 5 s no log.
+        options: --health-cmd "pg_isready -U ci -d sansol_test" --health-interval 5s --health-retries 10
     env:
       DATABASE_URL: postgresql://ci:ci@localhost:5432/sansol_ci_unused
       TEST_DATABASE_URL: postgresql://ci:ci@localhost:5432/sansol_test
@@ -43,14 +44,13 @@ jobs:
   # Imagens Docker (P20): aplicação e migração do mesmo commit. A aplicação precisa subir SEM migrar (503
   # migrations_pending); a migração é um passo explícito; depois o health responde 200.
   docker:
-    # Versão fixa: o ubuntu-latest migrou para o 26.04 (out/2026), sem Chromium no Playwright 1.56.1 (CI do P21).
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     services:
       postgres:
         image: postgres:16.4-alpine
         env: { POSTGRES_USER: ci, POSTGRES_PASSWORD: ci, POSTGRES_DB: sansol_docker }
         ports: ["5432:5432"]
-        options: --health-cmd "pg_isready -U ci" --health-interval 5s --health-retries 10
+        options: --health-cmd "pg_isready -U ci -d sansol_docker" --health-interval 5s --health-retries 10
     env:
       DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/sansol_docker
     steps:
