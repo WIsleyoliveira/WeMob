@@ -22,5 +22,9 @@ COPY --from=build /app/node_modules/prisma ./node_modules/prisma
 COPY --from=build /app/node_modules/.prisma ./node_modules/.prisma
 USER app
 EXPOSE 3000
-# Migrações aplicadas de forma controlada (migrate deploy nunca descarta dados).
-CMD ["sh", "-c", "node node_modules/prisma/build/index.js migrate deploy && node server.js"]
+# A aplicação NÃO aplica migrações ao iniciar (réplicas não disputam o banco; nenhuma mudança de schema sem
+# etapa controlada). Migração é um passo explícito do deploy, com a mesma imagem e uma única execução:
+#   docker compose --profile migrate run --rm migrate
+#   (ou: docker run --rm -e DATABASE_URL=… <imagem> node node_modules/prisma/build/index.js migrate deploy)
+# Ver docs/runbook.md → "Deploy e migrações".
+CMD ["node", "server.js"]

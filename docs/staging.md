@@ -23,14 +23,14 @@ Não usar túnel temporário em staging: o endereço gratuito do localhost.run t
 - `DATA_ENCRYPTION_KEY` com backup separado do banco (sem ela os CPFs cifrados ficam ilegíveis).
 
 ## 3. Implantação (quando autorizada)
-1. Criar banco vazio → `npm run db:deploy` (verificado no P15: as migrations aplicam do zero sem divergência com o schema).
+1. Criar banco vazio → etapa de migração explícita (`docker compose --profile migrate run --rm migrate` ou job único com `migrate deploy`); conferir `migrate status` (verificado no P19: aplicação sobe sem migrar e o health indica `migrations_pending`).
 2. `npm run setup:first-admin` com `ADMIN_EMAIL`/`ADMIN_PASSWORD` do cofre.
 3. Subir app e OCPP; conferir `GET /api/health`.
 4. `npm run asaas:homologar` (sandbox) e `npm run asaas:webhook -- criar https://staging.<dominio>`.
 5. Cadastrar a estação de bancada como **TEST**; QR Code do conector aponta para `/motorista/carregar/<identity>/<conector>`.
 
 ### Observações do P18
-- O contêiner (`Dockerfile`) roda `prisma migrate deploy` a cada subida: em produção, preferir a migração como etapa manual e controlada do deploy (não alterado sem autorização).
+- ~~O contêiner roda `prisma migrate deploy` a cada subida~~ — **resolvido no P19**: o contêiner só inicia a aplicação; a migração é a etapa explícita do runbook ("Deploy e migrações"), antes de promover a versão.
 - O servidor de produção é `node server.js` (saída `standalone`); `next start` emite aviso nesse modo.
 - Após subir, rodar `E2E_BASE=https://staging.<dominio> npm run e2e:rotas` apontando para o banco de staging **somente se** o `DATABASE_URL` for de um banco de desenvolvimento/staging (o script recusa nomes sem `_dev`; para staging, adaptar o guarda conscientemente).
 

@@ -22,7 +22,8 @@ npm run dev            # http://localhost:3000
 
 Superadmin de desenvolvimento: `admin@sansolmob.local` com a senha definida em `SEED_ADMIN_PASSWORD`.
 
-Com Docker: `docker compose up --build` (Postgres na porta 5433, app na 3000).
+Com Docker (Postgres na porta 5433, app na 3000) — a aplicação não migra o banco ao iniciar:
+`docker compose --env-file .env.compose up -d db` → `docker compose --env-file .env.compose --profile migrate run --rm migrate` → `docker compose --env-file .env.compose up --build -d app ocpp`. O `.env.compose` precisa só de `APP_SECRET` (não use o `.env` com a chave do Asaas: o Compose expande `$` e a imprime nos avisos).
 
 ## Comandos
 | Comando | O que faz |

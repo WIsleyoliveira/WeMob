@@ -1,5 +1,12 @@
 node_modules
 .next
+.next-build
+# Nenhum arquivo de ambiente entra na imagem (o Next copia .env* para o build standalone).
 .env
+.env.*
+!.env.example
 .git
 tests
+playwright-report
+test-results
+*.log

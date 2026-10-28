@@ -1,5 +1,9 @@
 # Ambiente local reproduzível: Postgres + aplicação.
-# Uso: cp .env.example .env (ajuste) && docker compose up --build
+# Uso: cp .env.example .env (ajuste), depois:
+#   docker compose up -d db
+#   docker compose --profile migrate run --rm migrate   # etapa explícita: aplica as migrações uma única vez
+#   docker compose up --build -d app ocpp
+# A aplicação não migra o banco ao iniciar (ver Dockerfile e docs/runbook.md).
 services:
   db:
     image: postgres:16.4-alpine
@@ -13,6 +17,16 @@ services:
       test: ["CMD-SHELL", "pg_isready -U sansol -d sansol_dev"]
       interval: 5s
       retries: 10
+  migrate:
+    # Execução única e explícita de `prisma migrate deploy` (não sobe com `docker compose up`).
+    profiles: ["migrate"]
+    build: .
+    depends_on:
+      db: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgresql://sansol:sansol-dev-only@db:5432/sansol_dev
+    command: ["node", "node_modules/prisma/build/index.js", "migrate", "deploy"]
+    restart: "no"
   app:
     build: .
     depends_on:

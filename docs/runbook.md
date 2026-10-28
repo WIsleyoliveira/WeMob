@@ -28,11 +28,21 @@ Dados de estações `TEST`/`SIMULATED` nunca entram em fechamento financeiro nem
 - Execuções de automação (início, fim, erro, tentativa) em /app/alertas; falhas também em log `automation_failed`.
 - Logs: JSON em stdout (`level`, `msg`, `time`); campos com nome de senha/token/segredo/cartão são mascarados. Não há agregador de logs nem métricas configurados (pendente).
 
-## Deploy (procedimento — não executado)
-1. `npm run check` verde no CI e `npm run build` sem erros.
-2. Backup do banco (`pg_dump -Fc`).
-3. `prisma migrate deploy` (executado no start do container). Nunca usar `migrate reset` fora do banco de teste.
-4. Rollback de aplicação: reimplantar a imagem anterior. Migrações são somente aditivas; reversão de esquema exige migração nova.
+## Deploy e migrações (procedimento — não executado)
+**A aplicação não aplica migrações ao iniciar** (desde o P19): o contêiner roda só `node server.js`. Assim várias réplicas podem subir ao mesmo tempo sem disputar o banco, e nenhuma mudança de esquema acontece sem uma etapa controlada.
+1. CI verde (lint, tipos, testes, build) e imagem construída a partir do commit aprovado.
+2. **Backup verificado**: `pg_dump -Fc "$DATABASE_URL" > antes-<versão>.dump` e conferir que o arquivo restaura (`pg_restore --list`).
+3. **Conferir o que será aplicado**: `npm run db:status` (ou `node node_modules/prisma/build/index.js migrate status` na imagem) — lista as migrações pendentes; revisar o `migration.sql` de cada uma.
+4. **Migrar uma única vez, com a imagem nova, antes de promover a aplicação**:
+   - Compose: `docker compose --profile migrate run --rm migrate`
+   - Outros orquestradores: um job único com a mesma imagem e `node node_modules/prisma/build/index.js migrate deploy`.
+   Execuções simultâneas por engano são seguras: o Prisma serializa por trava no banco (testado no P19: duas execuções, uma aplicou e a outra viu "No pending migrations").
+5. **Verificar**: `migrate status` = "Database schema is up to date!"; `GET /api/health` da versão nova = `status: ok`. Se a aplicação subir antes da migração, o health responde **503 com `schema: "migrations_pending"`**.
+6. Só então promover a nova versão da aplicação (e do servidor OCPP).
+7. **Migração com falha**: o Prisma marca a migração como falha e não aplica as seguintes. Não promova a aplicação. Investigue o erro; corrija com uma migração nova ou, se a falha deixou o banco parcialmente alterado, restaure o backup do passo 2 e depois `prisma migrate resolve --rolled-back <nome>` para liberar nova tentativa. **Não há rollback automático.**
+8. **Reversão**: aplicação → reimplantar a imagem anterior (as migrações são aditivas, a versão anterior continua compatível). Esquema → `down.sql` manual da migração, somente com backup recente, janela de manutenção e autorização; alguns `down.sql` (P08/P09) **apagam dados** e não são reversíveis sem o backup.
+- Nunca usar `migrate reset` fora do banco de teste.
+- Docker Compose e `.env`: o Compose lê o `.env` do projeto e expande `$`; a chave do Asaas (`\$aact_…`, escape do Next) é interpretada como variável e **aparece em texto puro nos avisos**. Use `docker compose --env-file <arquivo-do-compose>` com um arquivo sem as chaves do Asaas (ou escape `$$` próprio do Compose). Nenhum `.env*` entra na imagem (`.dockerignore`).
 
 ## Backup e restauração
 - Diário: `pg_dump -Fc "$DATABASE_URL" > sansol-$(date +%F).dump` com retenção de 30 dias em storage externo.
