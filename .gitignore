@@ -16,6 +16,10 @@
 # next.js
 /.next/
 /.next-build/
+/.next-e2e/
+/playwright-report/
+/test-results/
+/e2e/.fixtures.json
 /out/
 
 # production

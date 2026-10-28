@@ -25,6 +25,7 @@ npm run asaas:homologar     # official Asaas SANDBOX check (refuses production);
 npm run asaas:webhook -- listar|criar <url>|atualizar <id> <url>|remover <id>   # sandbox webhooks only
 NEXT_DIST_DIR=.next-build npm run build   # build without stopping `npm run dev` (Next rewrites tsconfig.json include: restore it)
 npm run e2e:rotas           # HTTP route/permission E2E (dev DB only; E2E_BASE=http://localhost:3002 for a prod build — `next dev` restarts on memory with many routes)
+npm run e2e:build && npm run e2e:browser   # Playwright browser E2E: temp DB sansol_e2e_*, prod build served via standalone server.js, simulated gateway; cleans up
 ```
 - Port 3000 may be taken by another local project; `.claude/launch.json` has `sansol-dev-3001`.
 
@@ -41,6 +42,7 @@ Single Next.js 15 App Router app (TypeScript, Prisma/PostgreSQL, Zod, decimal.js
 - `src/domain/*` — pure rules, no I/O: viability engine (`viability/engine.ts`), commercial terms types, station status rules (`stations/status.ts`).
 - `src/server/modules/*`, `src/server/drivers/*`, `src/server/payments/*`, `src/server/ocpp/*` — services. Every staff-facing service takes an `AuthContext` and calls `requirePermission(ctx, "recurso:ação")` and filters by `ctx.organizationId` itself. Pages and actions must not query `db` directly for tenant data — go through a service.
 - `src/app/actions/*` — thin `"use server"` wrappers using `toActionState()` (`src/server/action-result.ts`), which maps `ZodError`/`AppError` to form state. Actions must return only plain data (ids/messages), never Prisma records (Decimal breaks client serialization).
+- Never add `loading.tsx` under `src/app/app`: in the production build (Next 15.5) it made server actions with `revalidatePath` never resolve (guard: `tests/unit/sem-loading-app.test.ts`).
 - UI: `src/components/ui/*` design system (tokens in `src/app/globals.css`, documented in `docs/design-system.md`); `ActionForm` (`src/components/app/action-form.tsx`) is the standard form-with-server-action component (pending/success/error + accessible confirm dialog).
 
 **Auth & tenancy:**

@@ -1,6 +1,8 @@
 node_modules
 .next
 .next-build
+.next-e2e
+e2e
 # Nenhum arquivo de ambiente entra na imagem (o Next copia .env* para o build standalone).
 .env
 .env.*

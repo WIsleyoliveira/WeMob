@@ -25,6 +25,6 @@ Escala de 4 px do Tailwind. Gutter de página: 16 px (celular), 32 px (desktop).
 ## Regras
 - Todo número exibido tem unidade, período e fonte; projeções levam o selo "Projeção".
 - Dados de demonstração recebem badge "demonstração" e nunca entram em indicadores reais.
-- Estados obrigatórios por tela: carregando (`loading.tsx`), vazio, erro (`error.tsx`), sem permissão (`/app/sem-permissao`).
+- Estados obrigatórios por tela: vazio, erro (`error.tsx`), sem permissão (`/app/sem-permissao`) e envio em andamento (`ActionForm`). **Não usar `loading.tsx` na área `/app`**: no build de produção (Next 15.5) ele fazia as server actions com `revalidatePath` nunca concluírem ("Salvando…" eterno) — removido no P19, protegido por `tests/unit/sem-loading-app.test.ts`. `PageSkeleton` segue disponível para carregamentos dentro da página.
 - Foco visível (`outline` Tiffany), link "Pular para o conteúdo", `prefers-reduced-motion` respeitado.
 - Ícones: somente `lucide-react`, 16 px no menu, decorativos com `aria-hidden`.

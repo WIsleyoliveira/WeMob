@@ -21,7 +21,9 @@
     "asaas:homologar": "tsx --import ./scripts/load-env.mjs scripts/asaas-homologar.ts",
     "asaas:webhook": "tsx --import ./scripts/load-env.mjs scripts/asaas-webhook.ts",
     "e2e:rotas": "tsx --import ./scripts/load-env.mjs scripts/e2e-rotas.ts",
-    "db:status": "prisma migrate status"
+    "db:status": "prisma migrate status",
+    "e2e:build": "node scripts/build-dist.mjs .next-e2e",
+    "e2e:browser": "tsx --import ./scripts/load-env.mjs scripts/e2e-browser.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",
@@ -38,6 +40,7 @@
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
+    "@playwright/test": "1.56.1",
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/qrcode": "^1.5.5",
