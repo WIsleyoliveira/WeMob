@@ -39,3 +39,32 @@ jobs:
             playwright-report
             test-results
           retention-days: 7
+  # Imagens Docker (P20): aplicação e migração do mesmo commit. A aplicação precisa subir SEM migrar (503
+  # migrations_pending); a migração é um passo explícito; depois o health responde 200.
+  docker:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16.4-alpine
+        env: { POSTGRES_USER: ci, POSTGRES_PASSWORD: ci, POSTGRES_DB: sansol_docker }
+        ports: ["5432:5432"]
+        options: --health-cmd "pg_isready -U ci" --health-interval 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/sansol_docker
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker build --target migrate -t wemob-migrate:ci .
+      - run: docker build -t wemob-app:ci .
+      - name: Aplicação sobe sem migrar (503 migrations_pending)
+        run: |
+          docker run -d --name app --network host -e DATABASE_URL -e APP_SECRET=ci-only-secret -e PORT=3000 -e HOSTNAME=127.0.0.1 wemob-app:ci
+          code=000
+          for i in $(seq 1 30); do code=$(curl -s -o body.json -w '%{http_code}' http://127.0.0.1:3000/api/health || true); [ "$code" != "000" ] && break; sleep 1; done
+          cat body.json; test "$code" = "503"; grep -q migrations_pending body.json
+      - run: docker run --rm --network host -e DATABASE_URL wemob-migrate:ci
+      - run: docker run --rm --network host -e DATABASE_URL wemob-migrate:ci node node_modules/prisma/build/index.js migrate status
+      - name: Aplicação após a migração (200)
+        run: |
+          code=$(curl -s -o body.json -w '%{http_code}' http://127.0.0.1:3000/api/health); cat body.json; test "$code" = "200"
+      - if: always()
+        run: docker logs app || true

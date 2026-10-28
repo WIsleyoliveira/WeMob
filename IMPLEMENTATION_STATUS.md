@@ -1,8 +1,18 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-28 (P19) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**, **P18 (homologação final — apto para staging; não apto para produção)**, **P19 (migrações explícitas, Playwright, Vitest 4 — 0 vulnerabilidades)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-28 (P20) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**, **P18 (homologação final — apto para staging; não apto para produção)**, **P19 (migrações explícitas, Playwright, Vitest 4 — 0 vulnerabilidades)**, **P20 (gate de staging — apto a iniciar staging; produção não autorizada)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P20 — Homologação em staging e gate de produção (2026-10-28)
+
+Relatório: `docs/RELATORIO_FINAL_TECNICO.md` (seção P20). Sem push/deploy.
+
+- Defeito corrigido: a imagem final não migrava (`Cannot find module '@prisma/engines'`, reproduzido em layout isolado). Novo estágio `migrate` no Dockerfile (Compose usa `target: migrate`); verificado em layout isolado: app 503 `migrations_pending` → migração OK → 200. Imagem real **não construída** (sem Docker daemon); novo job `docker` no CI, não executado.
+- Sem mudança de código desde o P19: regressão do P19 vale (232 testes, 14 Playwright, 700 rotas).
+- Divergência: a tarefa agendada do estorno de R$ 75,10 citada no P18 não existe e o `ocpp:server` está parado — nada executará o estorno sozinho em 29/10. Não consultado nem antecipado.
+- Limitação registrada: o health só detecta banco sem tabelas (migração pendente em banco existente exige `migrate status`).
+- Decisão: apto a **iniciar** staging (primeiro passo: CI remoto verde); integrações e física bloqueadas externamente; produção não autorizada.
 
 ## P19 — Fechamento técnico, E2E real e preparação de deploy (2026-10-28)
 

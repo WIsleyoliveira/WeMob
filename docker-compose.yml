@@ -20,7 +20,8 @@ services:
   migrate:
     # Execução única e explícita de `prisma migrate deploy` (não sobe com `docker compose up`).
     profiles: ["migrate"]
-    build: .
+    # Alvo "migrate" do Dockerfile: a imagem final da aplicação não contém o CLI completo do Prisma.
+    build: { context: ., target: migrate }
     depends_on:
       db: { condition: service_healthy }
     environment:

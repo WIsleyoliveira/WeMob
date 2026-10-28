@@ -40,12 +40,12 @@ Dados de estações `TEST`/`SIMULATED` nunca entram em fechamento financeiro nem
 
 ## Deploy e migrações (procedimento — não executado)
 **A aplicação não aplica migrações ao iniciar** (desde o P19): o contêiner roda só `node server.js`. Assim várias réplicas podem subir ao mesmo tempo sem disputar o banco, e nenhuma mudança de esquema acontece sem uma etapa controlada.
-1. CI verde (lint, tipos, testes, build) e imagem construída a partir do commit aprovado.
+1. CI verde (lint, tipos, testes, build, E2E) e, do **mesmo commit aprovado**, as duas imagens: aplicação (`docker build -t <app>:<versão> .`) e migração (`docker build --target migrate -t <app>-migrate:<versão> .`). A imagem da aplicação **não** roda o CLI do Prisma (não contém `@prisma/engines`; verificado no P20).
 2. **Backup verificado**: `pg_dump -Fc "$DATABASE_URL" > antes-<versão>.dump` e conferir que o arquivo restaura (`pg_restore --list`).
-3. **Conferir o que será aplicado**: `npm run db:status` (ou `node node_modules/prisma/build/index.js migrate status` na imagem) — lista as migrações pendentes; revisar o `migration.sql` de cada uma.
-4. **Migrar uma única vez, com a imagem nova, antes de promover a aplicação**:
+3. **Conferir o que será aplicado**: `npm run db:status` (ou `docker run --rm -e DATABASE_URL=… <app>-migrate:<versão> node node_modules/prisma/build/index.js migrate status`) — lista as migrações pendentes; revisar o `migration.sql` de cada uma.
+4. **Migrar uma única vez, com a imagem de migração da versão nova, antes de promover a aplicação**:
    - Compose: `docker compose --profile migrate run --rm migrate`
-   - Outros orquestradores: um job único com a mesma imagem e `node node_modules/prisma/build/index.js migrate deploy`.
+   - Outros orquestradores: um job único com `<app>-migrate:<versão>` (o comando padrão já é `migrate deploy`).
    Execuções simultâneas por engano são seguras: o Prisma serializa por trava no banco (testado no P19: duas execuções, uma aplicou e a outra viu "No pending migrations").
 5. **Verificar**: `migrate status` = "Database schema is up to date!"; `GET /api/health` da versão nova = `status: ok`. Se a aplicação subir antes da migração, o health responde **503 com `schema: "migrations_pending"`**.
 6. Só então promover a nova versão da aplicação (e do servidor OCPP).

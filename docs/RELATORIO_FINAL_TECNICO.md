@@ -396,3 +396,82 @@ Nenhuma conhecida (`npm audit`: 0 em produção e desenvolvimento). O CI passou 
 | Autorização de produção | **REPROVADO** (não autorizado) | sem staging, sem homologação física e de split, imagem Docker e CI não executados; habilitação por duas pessoas não feita |
 
 O WeMob está **tecnicamente preparado para homologação controlada em staging**: migrações explícitas, E2E reproduzível e dependências sem vulnerabilidades conhecidas. **Não está apto para produção.**
+
+
+---
+
+# Homologação em staging e gate de produção — P20 (2026-10-28)
+
+**Ambiente**: macOS (Darwin 25.2), Node 22.19.0, npm 10.9.3, PostgreSQL 14 local; Docker CLI/Compose/buildx presentes, **daemon indisponível**. Execução 15:33–15:45 BRT. Nenhum push, deploy, operação financeira, alteração de `.env`/credenciais/dados reais ou reescrita de histórico.
+
+## 1. Preservação inicial (verificado)
+- Branch `main`, HEAD `10836d6`, árvore limpa; commits P19 `0a5ba95`, `ddfdbb4`, `df97c16`, `10836d6` — confere com o relatório P19.
+- Disco 5,1 GB livres (confere com o fim do P19). Portas: 3000 = `next-server` de outro projeto (PID 1210, não tocado); 3001, 3002, 3100 e 9220 livres; Postgres em 5432 `accepting connections`. Nenhum cache apagado.
+- **Divergência registrada**: a "tarefa agendada 29/10 06:20 BRT" citada no P17/P18 **não existe** (nem nas tarefas agendadas do app, nem em `crontab`, nem em `~/Library/LaunchAgents`); e o `npm run ocpp:server` — único executor automático de `retryDueRefunds` — **não está em execução**. Ver §5.
+
+## 2. Defeito encontrado e corrigido (comprovado e testado)
+| Defeito | Reprodução | Correção | Verificação |
+|---|---|---|---|
+| A imagem final não conseguia migrar: o serviço `migrate` do Compose (P19) e o `CMD` antigo (pré-P19) rodavam `node node_modules/prisma/build/index.js` numa imagem que só copiava `node_modules/prisma` — sem `@prisma/engines`/`@prisma/config` | layout idêntico ao estágio `run` montado fora da árvore do projeto (standalone + `.prisma` + `prisma/` + `node_modules/prisma`): `Error: Cannot find module '@prisma/engines'` | novo estágio **`migrate`** (`FROM deps`, CLI completo, `USER node`, `CMD migrate deploy`); Compose `migrate` usa `target: migrate`; estágio `run` deixa de copiar o CLI incompleto e `prisma/` | mesmo layout isolado: app em banco vazio → **503 `migrations_pending`**; layout do estágio `migrate` → `migrate deploy` exit 0 "All migrations have been successfully applied"; app → **200 `ok`**; banco temporário `sansol_imgcheck_*` removido. `docker compose config` OK com `target: migrate`. **Imagem real não construída** (sem daemon) |
+
+Também: novo job **`docker`** no CI (constrói as duas imagens, exige 503 `migrations_pending` antes e 200 depois da migração explícita, `migrate status`) — **não executado** (sem push); `.env.example` documenta `SEED_ADMIN_EMAIL` (opcional).
+
+## 3. Preparação para staging
+| Item | Status | Evidência / observação |
+|---|---|---|
+| Dockerfile (estágios `deps`/`migrate`/`build`/`run`) | APROVADO COM EVIDÊNCIA (simulado) / NÃO TESTADO (imagem) | §2; build da imagem e Alpine (musl/OpenSSL do motor do Prisma) só no CI ou no staging |
+| Compose | APROVADO COM EVIDÊNCIA (config) | `config --quiet` OK; `migrate` só com `--profile migrate`, alvo `migrate` |
+| Migração separada do startup; réplicas sem concorrência | APROVADO COM EVIDÊNCIA | P19 §3 (0 tabelas após subir, idempotente, 2 execuções simultâneas seguras) + §2 |
+| Health sem migrations | APROVADO COM EVIDÊNCIA | 503 `schema: "migrations_pending"` com banco vazio. **Limitação**: só detecta banco sem tabelas; migração nova pendente num banco existente **não** aparece no health — o runbook exige `migrate status` antes de promover |
+| Variáveis e separação sandbox × produção | APROVADO COM EVIDÊNCIA (leitura + testes herdados) | todas as variáveis lidas pelo código estão no `.env.example`, exceto as de teste (`E2E_*`, `VITEST`, `NODE_ENV`); produção exige `ASAAS_PRODUCTION_ENABLED=1` **e** habilitação aprovada por duas pessoas (testes P13–P18) |
+| Scripts de build, testes, E2E e CI | APROVADO COM EVIDÊNCIA (local) / NÃO TESTADO (CI remoto) | P19 §6; CI com jobs `check` e `docker` (YAML válido) |
+| Logs, alertas, falhas, reversão | APROVADO COM EVIDÊNCIA (documental) | runbook ("Deploy e migrações", falha sem rollback automático, `down.sql` destrutivos sinalizados); staging §5. **Gaps conhecidos**: sem alerta automático para fila de webhook interrompida no Asaas nem para `UNPROCESSED_WEBHOOK` |
+| Documentação repetível por outra pessoa | APROVADO COM EVIDÊNCIA | runbook e staging atualizados com as duas imagens do mesmo commit e a ordem backup → status → migração → status → health → promoção |
+
+## 4. Fluxos críticos
+Desde `10836d6` **nenhum** arquivo de `src/`, `tests/`, `e2e/`, `scripts/`, `prisma/` ou dependências mudou (`git diff --stat 10836d6 -- …` vazio). A regressão do P19 (mesma tarde) permanece válida e **não foi repetida**; o único teste relevante às mudanças do P20 (Docker) está no §2.
+| Fluxo | Status | Evidência (P19) |
+|---|---|---|
+| Login, permissões, isolamento parceiro/motorista/equipe | APROVADO COM EVIDÊNCIA | Playwright A (5); `e2e:rotas` 700/0; `authz.test.ts` (15) |
+| Cobranças simuladas, webhooks, idempotência, reconciliação | APROVADO COM EVIDÊNCIA | `payments.test.ts` (18), `asaas.test.ts` (55), `resilience.test.ts`; Playwright B |
+| Estornos pendente/incerto/recusado/agendado, clique duplo, manual × automático | APROVADO COM EVIDÊNCIA | Playwright B e D; testes P16–P18 |
+| Split, incluindo `REFUSED` | APROVADO COM EVIDÊNCIA (simulado) | `split.test.ts`, `asaas.test.ts`; Playwright D (conciliação). Split real: §5 |
+| Recarga, telemetria, limite, parada aceita × confirmada | APROVADO COM EVIDÊNCIA (simulador) | Playwright C; `ocpp.test.ts` (15) |
+| Unitários/integração, lint, TypeScript, build | APROVADO COM EVIDÊNCIA | 232 testes, 0/0, build OK |
+
+## 5. Estorno de R$ 75,10 (29/10/2026)
+**Não consultado, antecipado, cancelado nem reenviado no P20** (a janela abre 29/10 06:00 BRT; agora 28/10 tarde). Estado conhecido (P18): local `SCHEDULED` para 2026-10-29 09:00 UTC; gateway `CONFIRMED`, `refunds: []`.
+**Bloqueio novo**: não há executor. A tarefa citada no P18 não existe e o servidor OCPP (que roda `retryDueRefunds`) está parado. **Ao chegar o horário, nada acontecerá sozinho.**
+Procedimento na janela (a executar por uma pessoa ou tarefa autorizada):
+1. Consultar o pagamento `pay_fzvllcs4rjfnze8h` no Asaas (`GET /payments/{id}` e estornos): já existe estorno? pendente? exige autorização (ação crítica)?
+2. Conferir o estado local do estorno `cmvs5o69u0001z1lujwc501g1` (`remoteStatus`, `nextAttemptAt`, tentativas, lease).
+3. Se houver execução automática em andamento (lease `RETRYING` ativo / servidor OCPP rodando), **não** clicar "Tentar agora".
+4. Para executar: **ou** subir `npm run ocpp:server` (retentativa automática, consulta o gateway pelo `refundMarker` antes de reenviar), **ou** um único "Tentar agora" na tela — nunca os dois.
+5. Se o Asaas exigir autorização no painel → registrar `BLOQUEADO` e aguardar o dono da conta.
+6. Declarar sucesso só com o estorno `DONE` no gateway **e** o pagamento conciliado no WeMob (`reconcile()` sem divergência).
+
+## 6. Pendências externas
+| Pendência | Status | Evidência necessária | Risco | Responsável | Próxima ação |
+|---|---|---|---|---|---|
+| Execução do estorno de R$ 75,10 | BLOQUEADO EXTERNAMENTE (janela) + sem executor | §5 passos 1–6 | médio | operação WeMob (engenharia) | decidir executor (tarefa agendada só leitura + execução manual, ou OCPP no ar) antes de 29/10 06:00 |
+| 2ª carteira sandbox para split | BLOQUEADO EXTERNAMENTE | `walletId` de outra conta sandbox + split `DONE` num pagamento de teste | alto (repasses) | dono da conta Asaas (WAPE) | criar/convidar 2ª conta sandbox e informar o `walletId` |
+| Métodos compatíveis com split | BLOQUEADO EXTERNAMENTE | resposta escrita do Asaas (Pix, cartão, pré-pago) | médio | comercial WAPE ↔ gerente Asaas | abrir chamado no Asaas |
+| Rateio 50% bruto × líquido | BLOQUEADO EXTERNAMENTE | decisão assinada e versão de contrato aprovada | alto (financeiro/jurídico) | comercial + jurídico WAPE | decidir por escrito; o split do Asaas é sempre sobre o líquido |
+| Permissões de estorno na conta de produção | BLOQUEADO EXTERNAMENTE | confirmação do Asaas + política de "ação crítica" | médio | dono da conta Asaas de produção | confirmar com o Asaas |
+| Carregador físico (OCPP e limite financeiro) | BLOQUEADO EXTERNAMENTE | log de sessão real: Boot, Start, MeterValues, RemoteStop no limite, Stop | alto | operações WAPE / fabricante | disponibilizar carregador de bancada como estação `TEST` |
+| CI remoto (`check` + `docker`) | NÃO TESTADO | execução verde no GitHub Actions | médio (imagem nunca construída) | responsável pelo repositório | autorizar push da branch |
+| Staging (domínio, TLS, cofre, backup, monitoramento) | BLOQUEADO EXTERNAMENTE | ambiente criado conforme `docs/staging.md` | — | gestão WAPE + infraestrutura | autorizar e provisionar |
+| Deploy e habilitação de produção (duas pessoas) | BLOQUEADO EXTERNAMENTE | autorização formal + `GatewayActivation` aprovada por duas pessoas | crítico | diretoria WAPE (dois aprovadores) | só após staging aprovado |
+
+## 7. Decisão
+**Requisitos do P20 cumpridos**: preservação e divergência registradas; Dockerfile/Compose/migração/health/env/CI/logs/reversão/documentação revisados; defeito da imagem de migração corrigido e testado em layout isolado; fluxos críticos cobertos pela regressão do P19 (sem mudança de código desde então); procedimento do estorno e pendências externas com responsável e próxima ação.
+**Pendentes**: imagem Docker real e CI remoto (NÃO TESTADO); estorno de R$ 75,10 (janela 29/10 + executor a decidir); split real, regra 50/50, permissões de produção, carregador físico, staging e autorização de produção (BLOQUEADO EXTERNAMENTE).
+
+| Dimensão | Classificação |
+|---|---|
+| Iniciar homologação em staging | **APROVADO COM EVIDÊNCIA**, com uma condição: o primeiro passo do staging é o CI remoto verde (job `docker`) — a imagem nunca foi construída |
+| Homologação de integrações | **BLOQUEADO EXTERNAMENTE** |
+| Homologação física | **BLOQUEADO EXTERNAMENTE** |
+| Autorização de produção | **REPROVADO** — não autorizada |
+
+O WeMob está **pronto para iniciar a homologação em staging**. Isso **não** é autorização para produção.
