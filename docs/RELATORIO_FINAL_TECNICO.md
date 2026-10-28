@@ -87,4 +87,4 @@ Testes novos relevantes: estorno agendado→concluído uma vez; timeout após pr
 - Tudo que roda no ciclo do servidor OCPP para se ele cair (monitorado por `/api/health`).
 
 ## 7. Git
-Commits locais desta etapa: ver `git log` após a autorização. Nenhum push, deploy ou operação financeira real.
+Commit local desta etapa: `7a98acd` (sobre `c783402`). Nenhum push, deploy ou operação financeira real.
