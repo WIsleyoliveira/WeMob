@@ -1,8 +1,19 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-28 (P18) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**, **P18 (homologação final — apto para staging; não apto para produção)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-28 (P19) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**, **P18 (homologação final — apto para staging; não apto para produção)**, **P19 (migrações explícitas, Playwright, Vitest 4 — 0 vulnerabilidades)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P19 — Fechamento técnico, E2E real e preparação de deploy (2026-10-28)
+
+Relatório: `docs/RELATORIO_FINAL_TECNICO.md` (seção P19). Commits locais: `0a5ba95` (migrações), `ddfdbb4` (Playwright), `df97c16` (dependências) e o registro de documentação. Sem push/deploy.
+
+- Migrações fora do startup: contêiner roda só `node server.js`; serviço `migrate` (perfil) no Compose; health 503 `migrations_pending`. Verificado em banco temporário: app sobe sem criar tabelas; `migrate deploy` aplica 12 e é idempotente; 2 execuções simultâneas → 1 aplica, a outra "No pending". Imagem Docker **não testada** (sem daemon).
+- Playwright 1.56.1: `npm run e2e:build && npm run e2e:browser` → **14 passed** no build de produção, banco temporário e gateway simulado (auth/isolamento, estorno com clique duplo, estados, recarga com limite/parada/sem comunicação, regressões P16–P18). Achou e corrigiu `loading.tsx` que travava server actions.
+- Vitest 3.2.7 → 4.1.12: `npm audit` **0** (eram 2 moderadas de dev); lockfile do npm 10.9.3 (idempotente, 158/158 pacotes de plataforma); npm 11 rejeitado (remove 4 opcionais `@emnapi/*`).
+- Regressão: `npm test` → 21 arquivos, **232 testes**; lint 0; typecheck 0; build OK; `e2e:rotas` 700/0 (produção); CI agora exige `npm audit --omit=dev` 0 e dev < moderada.
+- Não testado: imagem/Compose em execução, CI no GitHub, instalação limpa em Linux/Windows. Estorno de R$ 75,10 não consultado nem modificado.
+- Decisão: código aprovado; integrações e homologação física bloqueadas por terceiros; produção não autorizada.
 
 ## P18 — Homologação final e preparação para produção (2026-10-28)
 

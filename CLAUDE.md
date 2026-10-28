@@ -28,6 +28,7 @@ npm run e2e:rotas           # HTTP route/permission E2E (dev DB only; E2E_BASE=h
 npm run e2e:build && npm run e2e:browser   # Playwright browser E2E: temp DB sansol_e2e_*, prod build served via standalone server.js, simulated gateway; cleans up
 ```
 - Port 3000 may be taken by another local project; `.claude/launch.json` has `sansol-dev-3001`.
+- Lockfile: regenerate only with npm 10.9.3 (Node 22.19.0, same as Docker/CI). npm 11 drops optional `@emnapi/*` wasm32 entries (see `docs/runbook.md` → Dependências).
 
 - Tests run against `TEST_DATABASE_URL` (never `DATABASE_URL`): `tests/global-setup.ts` runs `migrate deploy` on it and `tests/integration/fixtures.ts#resetDb` truncates it. Files run sequentially (`fileParallelism: false`). Do not use `prisma migrate reset` (blocked in this environment and destructive).
 - After `prisma migrate dev`, **restart `npm run dev`**: the dev server caches the Prisma client on `globalThis` and fails with `Cannot read properties of undefined` on new models.

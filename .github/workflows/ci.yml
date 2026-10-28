@@ -22,8 +22,9 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      # Altas conhecidas exigem upgrades major (Next 16, Prisma 7, Zod 4) — ver IMPLEMENTATION_STATUS.md.
-      - run: npm audit --omit=dev --audit-level=critical
+      # Desde o P19: 0 vulnerabilidades (produção e desenvolvimento). Produção sem tolerância; desenvolvimento a partir de moderada.
+      - run: npm audit --omit=dev
+      - run: npm audit --audit-level=moderate
       - run: npm run build
       # E2E de navegador: banco temporário próprio no mesmo Postgres de teste, build de produção (.next-e2e)
       # servido como na imagem (node server.js) e gateway SIMULADO. Nenhum gateway real.

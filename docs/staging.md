@@ -7,7 +7,8 @@ conversam de ponta a ponta. **Nada disto foi implantado**: é o plano a executar
 ## 1. Topologia
 | Componente | Proposta | Observação |
 |---|---|---|
-| App Next.js | 1 instância (container `Dockerfile` do repositório) atrás de proxy reverso com TLS | `npm run build` + `next start`; `TRUST_PROXY=1` só atrás do proxy |
+| App Next.js | 1+ instâncias (container `Dockerfile` do repositório) atrás de proxy reverso com TLS | imagem roda `node server.js` (saída standalone) e **não migra ao iniciar**; `TRUST_PROXY=1` só atrás do proxy |
+| Migração | job único com a mesma imagem (`docker compose --profile migrate run --rm migrate`) | executado antes de promover cada versão — runbook "Deploy e migrações" |
 | Servidor OCPP | processo separado (`npm run ocpp:server`), porta 9220 atrás de TLS (**wss://**) | também roda: expiração de pedidos, retentativas de webhook e de estorno, **limites financeiros das sessões**, alertas e conciliação automática — precisa estar sempre no ar (monitorar `automation` em `/api/health`) |
 | PostgreSQL 14+ | gerenciado (backup automático e PITR) | banco próprio de staging; **nunca** reutilizar o de produção |
 | Domínios | `staging.<dominio>` (app) e `ocpp-staging.<dominio>` | o webhook do Asaas aponta para `https://staging.<dominio>/api/payments/webhooks/asaas` |
@@ -33,6 +34,13 @@ Não usar túnel temporário em staging: o endereço gratuito do localhost.run t
 - ~~O contêiner roda `prisma migrate deploy` a cada subida~~ — **resolvido no P19**: o contêiner só inicia a aplicação; a migração é a etapa explícita do runbook ("Deploy e migrações"), antes de promover a versão.
 - O servidor de produção é `node server.js` (saída `standalone`); `next start` emite aviso nesse modo.
 - Após subir, rodar `E2E_BASE=https://staging.<dominio> npm run e2e:rotas` apontando para o banco de staging **somente se** o `DATABASE_URL` for de um banco de desenvolvimento/staging (o script recusa nomes sem `_dev`; para staging, adaptar o guarda conscientemente).
+
+### Observações do P19
+- Ordem de cada implantação: backup verificado → `migrate status` → migração única (job) → `migrate status` "up to date" → health `ok` da versão nova → promover app e OCPP. Migração com falha: não promover; não há rollback automático (runbook).
+- Verificado localmente no P19 (não em staging): app em banco vazio responde 503 `migrations_pending` e cria 0 tabelas; `migrate deploy` aplica as 12 migrações e é idempotente; duas execuções simultâneas → uma aplica, a outra vê "No pending migrations".
+- **Não verificado**: build da imagem e `docker compose up` (Docker daemon indisponível nesta máquina) — primeira tarefa no staging.
+- Após o deploy de staging: `npm run e2e:rotas` (com o guarda acima) e, em ambiente com Postgres descartável, `npm run e2e:build && npm run e2e:browser` (cria e apaga banco próprio; gateway simulado).
+- Instalação: `npm ci` com o npm 10.9.3 do Node 22.19.0 (mesmo do Dockerfile e do CI); não regenerar o lockfile com npm 11 (remove entradas opcionais `@emnapi/*` dos fallbacks wasm32).
 
 ## 4. Backup e restauração
 - Backup automático diário + retenção de 7–30 dias (gerenciado) e `pg_dump` semanal fora do provedor.

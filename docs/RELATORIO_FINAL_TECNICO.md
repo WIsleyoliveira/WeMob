@@ -293,3 +293,106 @@ Ambiente de staging inexistente (domínio, TLS, cofre, backup automático, monit
 | Deploy/produção | BLOQUEADO EXTERNAMENTE | sem staging | — | autorizar staging |
 
 **Decisão**: o WeMob está **apto para homologação externa em staging** (código validado, integrações sandbox validadas onde havia credencial, defeitos encontrados corrigidos com regressão). **Não está apto para produção** pelos critérios da seção 6.
+
+
+---
+
+# Fechamento técnico, E2E real e preparação de deploy — P19 (2026-10-28)
+
+**Ambiente**: macOS (Darwin 25.2), Node 22.19.0, npm 10.9.3, PostgreSQL local (`sansol_dev`, `sansol_test` e bancos temporários `sansol_e2e_*`/`sansol_migcheck_*`/`sansol_migconc_*`, criados e apagados nesta etapa). Sem Docker daemon em execução (só a CLI e o Compose v2.40.3).
+**Regras respeitadas**: nenhum push, deploy, operação financeira real, alteração de `.env`/credenciais ou banco existente recriado/apagado. O estorno de R$ 75,10 **não foi consultado nem modificado** (o servidor usado no `e2e:rotas` rodou com as chaves do Asaas vazias: nenhuma chamada ao gateway).
+
+## 1. Estado inicial (verificado)
+- Branch `main`. Commits do P18 presentes (`f558e88`, `4c3471d`). Etapas 1 e 2 já commitadas no início desta rodada: `0a5ba95` (migrações fora do startup) e `ddfdbb4` (Playwright). Árvore com `package.json`/`package-lock.json` alterados = Etapa 3 em andamento (Vitest 4.1.12), sem trabalho de terceiros.
+- Disco: **1,2 GB livres** (1,0 GB após o build) — crítico; nenhuma limpeza feita (o cache `~/.npm` de 3,7 GB é compartilhado com outros projetos).
+- Portas: 3000 ocupada por `next-server (v16.3.6)` de **outro projeto** (PID 1210, não tocado); 3001 e 3002 livres.
+
+## 2. Commits locais do P19
+| Commit | Etapa | Arquivos |
+|---|---|---|
+| `0a5ba95` | 1 — migrações fora do startup | `Dockerfile`, `docker-compose.yml`, `.dockerignore`, `src/app/api/health/route.ts`, `package.json` (`db:status`), `docs/runbook.md`, `docs/staging.md`, `README.md`, `CLAUDE.md` |
+| `ddfdbb4` | 2 — Playwright | `playwright.config.ts`, `e2e/**`, `scripts/e2e-browser.ts`, `scripts/build-dist.mjs`, CI, `.gitignore`/`.dockerignore`, ESLint, remoção de `src/app/app/loading.tsx` + `tests/unit/sem-loading-app.test.ts`, docs |
+| `df97c16` | 3 — dependências | `package.json`, `package-lock.json` |
+| este registro | 5 — documentação | `docs/RELATORIO_FINAL_TECNICO.md`, `docs/staging.md`, `docs/runbook.md`, `IMPLEMENTATION_STATUS.md`, `CLAUDE.md`, `.github/workflows/ci.yml` (auditoria) |
+
+## 3. Etapa 1 — migrações explícitas
+**Antes**: o `CMD` do contêiner rodava `prisma migrate deploy && node server.js` a cada subida (cada réplica migrava). **Depois**: `CMD ["node", "server.js"]`; serviço `migrate` no Compose só com `--profile migrate`; `GET /api/health` com banco sem tabelas → 503 `schema: "migrations_pending"`; procedimento no runbook ("Deploy e migrações": backup, status, migração única, verificação, falha, reversão sem rollback automático).
+
+| Verificação | Status | Evidência (esta rodada) |
+|---|---|---|
+| App inicia sem migrar | APROVADO COM EVIDÊNCIA | build standalone (`node server.js`) em banco temporário vazio: health `503 {"db":"ok","schema":"migrations_pending"}`; **0 tabelas** após a subida |
+| Migração explícita em banco descartável | APROVADO COM EVIDÊNCIA | `migrate status` exit 1 (pendentes) → `migrate deploy` exit 0 "All migrations have been successfully applied" → 2ª execução "No pending migrations" → `status` "Database schema is up to date!" (12 migrações) → health 200 `ok`; banco removido |
+| Execuções concorrentes (réplicas/jobs duplicados) | APROVADO COM EVIDÊNCIA | 2 `migrate deploy` simultâneos: A aplicou, B "No pending migrations"; `_prisma_migrations` 12 registros, 0 incompletos |
+| Compose | APROVADO COM EVIDÊNCIA | `docker compose --env-file .env.example config --quiet` OK; serviços padrão `db ocpp app`; `migrate` só com `--profile migrate` |
+| Build da imagem / `docker compose up` | NÃO TESTADO | Docker daemon indisponível nesta máquina |
+| CI sem dependência do startup antigo | APROVADO COM EVIDÊNCIA (leitura) | CI não usa Docker; testes migram via `tests/global-setup.ts`, E2E via `scripts/e2e-browser.ts` (etapa explícita) |
+
+## 4. Etapa 2 — Playwright (E2E de navegador real)
+`@playwright/test` 1.56.1 (1 devDependency; Chromium headless). `npm run e2e:build && npm run e2e:browser`: banco temporário próprio, migração explícita, dados criados pelos serviços do app, **build de produção servido como na imagem** (`node server.js`), gateway **simulado** (`PAYMENT_PROVIDER=sandbox`, chaves do Asaas vazias), banco e fixtures apagados no fim; screenshot só em falha, trace só com `E2E_TRACE=1`.
+
+| Cenário | Status | Evidência |
+|---|---|---|
+| A. Login inválido/válido, página protegida, isolamento entre parceiros (404), logout revoga a sessão, motorista × motorista e equipe × motorista | APROVADO COM EVIDÊNCIA | 5 testes |
+| B. Cobrança capturada, estorno com **clique duplo → 1 estorno**, acima do disponível recusado sem gateway, estados pendente/incerto/aguardando autorização/recusado e saldo | APROVADO COM EVIDÊNCIA | 4 testes |
+| C. Recarga: início, consumo e barra de limite, alerta, parada aceita ≠ confirmada, sem comunicação, sem telemetria | APROVADO COM EVIDÊNCIA | 1 teste de fluxo (10,8 s) |
+| D. P18 agendado sem "Tentar agora", P17 manual × automático (outro processo) devolve 1×, P18 split recusado na conciliação, financeiro sem gestão de usuários | APROVADO COM EVIDÊNCIA | 4 testes |
+| Execução | APROVADO COM EVIDÊNCIA | `14 passed (27.7s)`; `banco E2E temporário removido: sansol_e2e_1793211952941` |
+| Playwright no CI | NÃO TESTADO | etapas no `ci.yml`; sem push nesta etapa |
+| Defeito real achado pelo E2E | APROVADO COM EVIDÊNCIA | `src/app/app/loading.tsx` travava server actions com `revalidatePath` no build de produção; removido + teste de guarda (commit `ddfdbb4`) |
+
+`npm run e2e:rotas` continua uma verificação distinta (HTTP, banco de desenvolvimento).
+
+## 5. Etapa 3 — npm 11, Vitest 4 e vulnerabilidades
+- **Antes** (`HEAD` com o lockfile do P18): `npm audit` → 2 moderadas: `@vitest/mocker <=4.1.11` (GHSA-82fw-gwwq-j7x9 path traversal; GHSA-qxg6-89mg-rqv8 injeção via registro de mock) e `vitest 2.1.0-beta.1 – 4.1.10`; ambas só desenvolvimento. `--omit=dev`: 0.
+- **Correção**: `vitest` 3.2.7 → **4.1.12** (puxa `@vitest/*` 4.1.12, `chai` 6.3.0, `es-module-lexer` 2.3.2, `std-env` 4.3.0, `tinyrainbow` 3.2.0; mantém `vite` 7.3.7); override de `tinypool` removido (o Vitest 4 não usa). `vitest.config.ts` sem alteração; nenhum snapshot no projeto.
+- **npm**: o lockfile foi regenerado com o **npm 10.9.3** (mesmo do Node 22.19.0, do Dockerfile e do CI) e é idempotente (`npm install --package-lock-only` não muda nada). O bloqueio do P18 (npm 10 falhando na resolução) **não se repetiu** com o override de `tinypool` removido.
+- **npm 11.6.2** avaliado com `npx` numa cópia (sem instalação global): **rejeitado** — retiraria 4 entradas opcionais (`@emnapi/core`, `@emnapi/runtime` na raiz e aninhadas em `@tailwindcss/oxide-wasm32-wasi`), fallbacks wasm32-wasi.
+- **Lockfile**: 597 → 594 entradas (−11 exclusivas do Vitest 3: `cac`, `check-error`, `deep-eql`, `loupe`, `pathval`, `strip-literal`(+`js-tokens`), `tinypool`, `tinyspy`, `vite-node`, `vitest/node_modules/tinyexec`; +8: `convert-source-map`, `obug` e 6 dependências empacotadas do `oxide-wasm32-wasi`). Pacotes com `os`/`cpu`/`libc`: **158 → 158, nenhum removido**. Binários de `@next/swc`, `lightningcss`, `@tailwindcss/oxide`, `@unrs/resolver-binding`, `@esbuild`, `@rollup` presentes para linux x64/arm64 glibc e musl (Alpine do Dockerfile), darwin x64/arm64 e win32 x64/arm64.
+
+| Verificação | Status | Evidência |
+|---|---|---|
+| `npm ci` limpo (macOS) | APROVADO COM EVIDÊNCIA | "added 435 packages… found 0 vulnerabilities" |
+| `npm audit` / `npm audit --omit=dev` | APROVADO COM EVIDÊNCIA | 0 / 0 |
+| Testes, lint, tipos, build com Vitest 4 | APROVADO COM EVIDÊNCIA | ver §6 |
+| Instalação limpa Linux (Docker/CI) e Windows | NÃO TESTADO | sem Docker daemon e sem push; só conferência estática do lockfile (acima) |
+
+## 6. Etapa 4 — regressão integrada (saída real, 15:10–15:30 BRT)
+| Comando | Status | Resultado |
+|---|---|---|
+| `npm test` | APROVADO COM EVIDÊNCIA | Vitest 4.1.12: **21 arquivos, 232 testes, 0 falhas** (341 s) |
+| `npm run lint` / `npm run typecheck` | APROVADO COM EVIDÊNCIA | 0 / 0 |
+| `npm run build` | APROVADO COM EVIDÊNCIA | sucesso (standalone) |
+| Migrações em banco temporário limpo | APROVADO COM EVIDÊNCIA | §3 (12 aplicadas, idempotente, concorrência segura) |
+| `E2E_BASE=http://127.0.0.1:3002 npm run e2e:rotas` (build de produção, banco de desenvolvimento) | APROVADO COM EVIDÊNCIA | **10 perfis × 70 rotas = 700 verificações; falhas: 0**; servidor encerrado ao final |
+| `npm run e2e:build && npm run e2e:browser` | APROVADO COM EVIDÊNCIA | **14 passed** |
+| Compose e fluxo de migração explícito | APROVADO COM EVIDÊNCIA (config) / NÃO TESTADO (imagem) | §3 |
+| `npm audit` | APROVADO COM EVIDÊNCIA | 0 vulnerabilidades |
+| `git diff --check`, histórico, árvore | APROVADO COM EVIDÊNCIA | sem erros; 4 commits P19 locais; árvore limpa após o commit de documentação |
+
+Efeito colateral registrado: o `e2e:rotas` cria sessões temporárias (revogadas no fim) e, para papéis sem usuário, usuários de teste que ficam **desativados** no banco de desenvolvimento — comportamento do script desde o P18.
+
+## 7. Vulnerabilidades restantes
+Nenhuma conhecida (`npm audit`: 0 em produção e desenvolvimento). O CI passou a falhar com qualquer vulnerabilidade de produção e com moderada+ em desenvolvimento.
+
+## 8. Riscos e lacunas de homologação
+| Item | Status | Observação |
+|---|---|---|
+| Imagem Docker e Compose em execução | NÃO TESTADO | primeira tarefa no staging |
+| CI no GitHub (inclui Playwright e `npm ci` em Linux) | NÃO TESTADO | sem push autorizado |
+| Windows | NÃO TESTADO | só lockfile |
+| Estorno real de R$ 75,10 | BLOQUEADO (externo) | `SCHEDULED` para 29/10 06:00 BRT; não consultado nem antecipado nesta etapa |
+| Split no sandbox / regra 50/50 | BLOQUEADO (externo) | 2ª carteira e decisão comercial |
+| Carregador físico | BLOQUEADO (externo) | E2E de recarga usa carregador simulado |
+| Staging (domínio, TLS, cofre, backup, monitoramento) | BLOQUEADO | não autorizado |
+| Disco local com ~1 GB livre | risco operacional | builds e E2E podem falhar por espaço |
+| Aviso do Prisma (`package.json#prisma` obsoleto no Prisma 7) | aceito | sem efeito no Prisma 6 |
+
+## 9. Decisão
+| Dimensão | Classificação | Base |
+|---|---|---|
+| Qualidade de código | **APROVADO COM EVIDÊNCIA** | 232 testes, lint, tipos, build, 700 verificações de rota, 14 E2E de navegador, 0 vulnerabilidades, migrações explícitas verificadas |
+| Homologação de integrações | **BLOQUEADO** (parcial) | Asaas sandbox validado onde havia credencial (P14–P18); estorno de cartão em D+1 e split pendentes de terceiros |
+| Homologação física | **BLOQUEADO** | nenhum carregador homologado |
+| Autorização de produção | **REPROVADO** (não autorizado) | sem staging, sem homologação física e de split, imagem Docker e CI não executados; habilitação por duas pessoas não feita |
+
+O WeMob está **tecnicamente preparado para homologação controlada em staging**: migrações explícitas, E2E reproduzível e dependências sem vulnerabilidades conhecidas. **Não está apto para produção.**

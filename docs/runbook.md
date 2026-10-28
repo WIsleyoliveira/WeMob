@@ -33,6 +33,11 @@ Dados de estações `TEST`/`SIMULATED` nunca entram em fechamento financeiro nem
 - `npm run e2e:build && npm run e2e:browser` — E2E de **navegador** (Playwright 1.56.1, Chromium): cria um banco temporário `sansol_e2e_<carimbo>` no servidor do `TEST_DATABASE_URL`, migra, monta os dados de teste pelos serviços do app, sobe o build de produção como na imagem (`node server.js`) com gateway **simulado**, roda `e2e/*.spec.ts` e apaga o banco e os dados ao final. Falhas guardam screenshot em `test-results/`; trace só com `E2E_TRACE=1` (contém cookies das sessões de teste). Primeira vez numa máquina: `npx playwright install chromium`.
 - Os dois não substituem `npm test` (unidade e integração).
 
+## Dependências
+- Instalar sempre com `npm ci`. O lockfile é gerado com o **npm 10.9.3** do Node 22.19.0 (o mesmo do Dockerfile e do CI) e contém os binários opcionais de Linux (glibc e musl), macOS e Windows; conferir que `npm install --package-lock-only` não o altera.
+- Não regenerar com npm 11: no P19 ele retirou 4 entradas opcionais `@emnapi/*` (fallbacks wasm32-wasi do Tailwind e do resolvedor do ESLint). Se for preciso testar outra versão do npm, use `npx npm@<versão>` numa cópia, sem instalação global.
+- CI: `npm audit --omit=dev` sem tolerância e `npm audit --audit-level=moderate` (0 vulnerabilidades desde o Vitest 4.1.12).
+
 ## Deploy e migrações (procedimento — não executado)
 **A aplicação não aplica migrações ao iniciar** (desde o P19): o contêiner roda só `node server.js`. Assim várias réplicas podem subir ao mesmo tempo sem disputar o banco, e nenhuma mudança de esquema acontece sem uma etapa controlada.
 1. CI verde (lint, tipos, testes, build) e imagem construída a partir do commit aprovado.
