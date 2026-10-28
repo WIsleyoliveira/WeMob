@@ -6,7 +6,7 @@ Classificação usada nos relatórios de etapa: **implementado** (código existe
 
 ## P18 — Homologação final e preparação para produção (2026-10-28)
 
-Relatório: `docs/RELATORIO_FINAL_TECNICO.md` (seção P18), com matriz A–F, plano de reversão, checklist de produção e tabela de decisão. **Alterações não commitadas** (para revisão).
+Relatório: `docs/RELATORIO_FINAL_TECNICO.md` (seção P18), com matriz A–F, plano de reversão, checklist de produção e tabela de decisão. Commit local `f558e88` (autorizado após revisão).
 
 - Defeitos corrigidos com regressão: "Tentar agora" antecipando estorno agendado pelo gateway (6 cliques → FAILED; agora recusado); split `REFUSED` sem análise imediata (agora análise + `SPLIT_REFUSED`).
 - Testes novos: parada aceita sem `StopTransaction` não conta como parada; unitários de split.

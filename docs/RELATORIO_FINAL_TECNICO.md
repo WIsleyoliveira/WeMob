@@ -175,7 +175,7 @@ Iguais às da seção 5/6 do P16, com o estorno agora preparado para 29/10. Risc
 # Homologação final e preparação para produção — P18 (2026-10-28)
 
 **Ambiente**: macOS (Darwin 25.2), Node 22.19.0, npm 10.9.3, PostgreSQL 14 local (`sansol_dev`, `sansol_test`, bancos temporários descartáveis), Asaas **sandbox** (somente leitura nesta etapa). Execução 13:33–14:10 BRT.
-**Commit inicial**: `3bfc71c` (sobre `9f2f0da` → `1a99aca`; ordem confirmada com `git merge-base`), árvore limpa. **Commit final**: nenhum — alterações **não commitadas**, para revisão (seção 9). Nenhum push, deploy, operação financeira real, alteração de `.env` ou migração destrutiva.
+**Commit inicial**: `3bfc71c` (sobre `9f2f0da` → `1a99aca`; ordem confirmada com `git merge-base`), árvore limpa. **Commit final**: `f558e88` (autorizado pelo usuário após a revisão), mais este registro. Nenhum push, deploy, operação financeira real, alteração de `.env` ou migração destrutiva.
 **Fatos verificados nesta etapa** estão marcados com a evidência; itens marcados "(herdado)" vêm de relatórios anteriores e não foram reexecutados.
 
 ## 1. Estado inicial (verificado)
