@@ -79,7 +79,8 @@ describe("webhooks de pagamento", () => {
     expect(await processWebhook("sandbox", hook.body, hook.headers)).toMatchObject({ http: 503 });
     expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("PENDING");
     sandboxControl.failNetwork = false;
-    expect(await retryPendingWebhookEvents()).toBe(1);
+    expect(await retryPendingWebhookEvents()).toBe(0); // espera mínima de 1 min entre tentativas
+    expect(await retryPendingWebhookEvents(new Date(Date.now() + 2 * 60_000))).toBe(1);
     expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("AUTHORIZED");
   });
 

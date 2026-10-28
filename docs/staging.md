@@ -8,7 +8,7 @@ conversam de ponta a ponta. **Nada disto foi implantado**: é o plano a executar
 | Componente | Proposta | Observação |
 |---|---|---|
 | App Next.js | 1 instância (container `Dockerfile` do repositório) atrás de proxy reverso com TLS | `npm run build` + `next start`; `TRUST_PROXY=1` só atrás do proxy |
-| Servidor OCPP | processo separado (`npm run ocpp:server`), porta 9220 atrás de TLS (**wss://**) | também roda o ciclo de alertas/expiração a cada minuto — precisa estar sempre no ar |
+| Servidor OCPP | processo separado (`npm run ocpp:server`), porta 9220 atrás de TLS (**wss://**) | também roda: expiração de pedidos, retentativas de webhook e de estorno, **limites financeiros das sessões**, alertas e conciliação automática — precisa estar sempre no ar (monitorar `automation` em `/api/health`) |
 | PostgreSQL 14+ | gerenciado (backup automático e PITR) | banco próprio de staging; **nunca** reutilizar o de produção |
 | Domínios | `staging.<dominio>` (app) e `ocpp-staging.<dominio>` | o webhook do Asaas aponta para `https://staging.<dominio>/api/payments/webhooks/asaas` |
 
@@ -16,6 +16,7 @@ Não usar túnel temporário em staging: o endereço gratuito do localhost.run t
 
 ## 2. Segredos
 - Em cofre do provedor de hospedagem (ex.: secrets do orquestrador), injetados como variáveis de ambiente; nunca no repositório nem em imagem.
+- Configuração (não secreta) relevante para dinheiro: `SESSION_LIMIT_MARGIN` (margem do limite financeiro, padrão 0,10), `PIX_PAYMENT_WINDOW_MINUTES`, `ASAAS_SPLIT_ENABLED` (com split, produção exige política aprovada e recebedor de produção validado).
 - Por ambiente e independentes: `APP_SECRET`, `DATA_ENCRYPTION_KEY`, `ASAAS_SANDBOX_API_KEY`, `ASAAS_WEBHOOK_TOKEN` (≥ 32, diferente da chave), senhas de estação OCPP.
 - Chaves do Asaas começam com `$`: no `.env` escrever `\$…`; em cofre o valor vai literal (sem escape).
 - Rotação: chave de API do Asaas expira (a gerada em 2026-10 vence 24/11/2026) e é desativada após 3 meses sem uso; registrar data e responsável.

@@ -37,6 +37,17 @@ export default async function RecargaPage({ params }: { params: Promise<{ id: st
             Tarifa congelada no início: {s.tariffPricePerKwh ? `${brl(s.tariffPricePerKwh.toString())}/kWh` : "—"}{s.tariffPricePerMin && Number(s.tariffPricePerMin) > 0 ? ` + ${brl(s.tariffPricePerMin.toString())}/min` : ""}.
             {v.amountKind === "ESTIMATED" && " Pode variar até o encerramento."}
           </p>
+          {s.limitAmount && (
+            <div className="mt-3 border-t border-brand-200 pt-3">
+              <div className="flex justify-between text-xs text-navy-600"><span>Limite desta recarga</span><b className="tabular">{brl(s.limitAmount.toString())}</b></div>
+              <div className="mt-1 h-2 overflow-hidden rounded-full bg-white" role="progressbar" aria-label="Uso do limite" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.round((Number(v.amount) / Number(s.limitAmount)) * 100))}>
+                <div className="h-full rounded-full bg-brand-600" style={{ width: `${Math.min(100, (Number(v.amount) / Number(s.limitAmount)) * 100)}%` }} />
+              </div>
+              <p className="mt-1 text-xs text-navy-500">
+                {s.limitStopRequestedAt ? "Limite atingido: pedimos ao carregador para encerrar a recarga." : "Ao chegar no limite (o valor pago menos uma margem de segurança), a recarga é encerrada automaticamente."}
+              </p>
+            </div>
+          )}
         </div>
       </div>
       {v.lastPowerW !== null && live && <p className="mt-2 text-xs text-navy-500">Potência na última medição: {num(v.lastPowerW / 1000, 1)} kW</p>}

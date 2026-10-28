@@ -20,6 +20,8 @@ import { OcppError, SUPPORTED_INCOMING, STATUS_MAP, isSupported, readSample, typ
 export interface SessionHooks {
   onStarted?(station: ChargingStation, sessionId: string): Promise<void>;
   onStopped?(sessionId: string): Promise<void>;
+  /** Após cada MeterValues de uma sessão: verificação do limite financeiro. */
+  onMeter?(sessionId: string): Promise<void>;
 }
 
 export type CallOutcome = { result: Record<string, unknown> } | { error: { code: OcppErrorCode; description: string } };
@@ -76,6 +78,7 @@ export async function handleCall(
     try {
       if (r.startedSessionId && opts.hooks?.onStarted) await opts.hooks.onStarted(station, r.startedSessionId);
       if (r.stoppedSessionId && opts.hooks?.onStopped) await opts.hooks.onStopped(r.stoppedSessionId);
+      if (r.meterSessionId && opts.hooks?.onMeter) await opts.hooks.onMeter(r.meterSessionId);
     } catch (e) {
       log.error("ocpp_session_hook_failed", { station: station.ocppIdentity, action, error: e instanceof Error ? e.message : String(e) });
     }
@@ -115,7 +118,7 @@ async function process(
   p: never,
   now: Date,
   authorizer: IdTagAuthorizer,
-): Promise<{ result: Record<string, unknown>; anomaly?: string; startedSessionId?: string; stoppedSessionId?: string }> {
+): Promise<{ result: Record<string, unknown>; anomaly?: string; startedSessionId?: string; stoppedSessionId?: string; meterSessionId?: string }> {
   switch (action) {
     case "BootNotification": {
       const b = p as In<"BootNotification">;
@@ -222,7 +225,7 @@ async function process(
       const session = await db.chargingSession.findUnique({ where: { stationId_transactionId: { stationId: station.id, transactionId: mv.transactionId } } });
       if (!session) return { result: {}, anomaly: `MeterValues para transação desconhecida ${mv.transactionId}.` };
       await storeMeterValues(session.id, mv.meterValue);
-      return { result: {} };
+      return { result: {}, meterSessionId: session.id };
     }
   }
 }

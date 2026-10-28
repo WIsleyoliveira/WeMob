@@ -29,6 +29,8 @@ import { productionReadiness } from "@/server/payments/activation";
 import { PAYMENT_METHOD_LABEL, PREPAID_METHODS, isPrepaidMethod } from "@/server/payments/provider";
 import type { IdTagAuthorizer } from "@/server/ocpp/handler";
 import { requireDriver, type DriverContext } from "./auth";
+import { hit } from "@/server/rate-limit";
+import { limitMargin, limitState, sessionLimit } from "@/domain/charging/limit";
 
 export const START_TIMEOUT_MS = 3 * 60_000;
 /** Janela para pagar (Pix ou cartão) antes de a cobrança ser removida no gateway. */
@@ -72,6 +74,8 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
   if (station.environment === "TEST" && !(provider.status === "configured" && provider.environment === "SANDBOX")) throw new AppError("VALIDATION", "Provedor de pagamento em ambiente de testes não configurado para a estação de teste.");
   if (!demo && provider.flow === "PREPAID" && !(await db.driver.findUnique({ where: { id: driver.driverId } }))?.documentEnc) throw new AppError("VALIDATION", "Informe seu CPF em Minha conta para pagar a recarga.");
 
+  // Cada pedido cria cliente/cobrança no gateway: limita ciclos de pedir-e-cancelar (protege a cota da conta).
+  if (!demo && !(await hit(`charge-start:${driver.driverId}`, 10, 3600_000))) throw new AppError("RATE_LIMITED", "Muitos pedidos de recarga em pouco tempo. Aguarde alguns minutos.");
   const open = await db.chargeRequest.findFirst({ where: { driverId: driver.driverId, status: { in: ["AWAITING_PAYMENT", "START_REQUESTED", "STARTED"] }, session: { is: null } } });
   if (open) throw new AppError("CONFLICT", "Você já tem um pedido de recarga em andamento.");
   const busy = await db.chargingSession.findFirst({ where: { stationId: station.id, connectorId, status: { in: ["ACTIVE", "COMMUNICATION_LOST"] } } });
@@ -174,7 +178,77 @@ export async function onSessionStarted(station: ChargingStation, sessionId: stri
   });
   if (!req) return;
   await db.chargeRequest.update({ where: { id: req.id }, data: { status: "STARTED", sessionId: session.id } });
-  if (req.paymentId) await db.payment.update({ where: { id: req.paymentId }, data: { sessionId: session.id } });
+  if (!req.paymentId) return;
+  const payment = await db.payment.update({ where: { id: req.paymentId }, data: { sessionId: session.id } });
+  // Cobertura e limite financeiro da sessão: a recarga é parada antes de consumir além do que está pago/reservado.
+  const funded = isPrepaidMethod(payment.method) ? new Decimal(payment.amountCaptured.toString()).minus(payment.amountRefunded.toString()) : new Decimal(payment.amountAuthorized.toString());
+  const limit = sessionLimit(funded, limitMargin(process.env.SESSION_LIMIT_MARGIN));
+  await db.chargingSession.update({ where: { id: session.id }, data: { fundedAmount: funded.toFixed(2), limitAmount: limit.toFixed(2) } });
+  await checkSessionLimit(session.id);
+}
+
+/**
+ * Limite financeiro: valor estimado (última leitura do medidor + minutos) × limite da sessão.
+ * Perto do limite → sinaliza (alerta); no limite → UMA parada remota (RemoteStopTransaction). Enviar o comando
+ * não prova a parada: o alerta "parada não confirmada" segue aberto até o StopTransaction do carregador.
+ */
+export async function checkSessionLimit(sessionId: string, now = new Date()) {
+  const s = await db.chargingSession.findUnique({ where: { id: sessionId } });
+  if (!s || !s.limitAmount || !["ACTIVE", "COMMUNICATION_LOST"].includes(s.status) || s.limitStopRequestedAt) return null;
+  const { amount: estimate } = sessionAmount(s, now, s.lastMeterWh);
+  const state = limitState(estimate, s.limitAmount.toString());
+  if (state === "NEAR" && !s.limitWarnedAt) {
+    const upd = await db.chargingSession.updateMany({ where: { id: s.id, limitWarnedAt: null }, data: { limitWarnedAt: now } });
+    if (upd.count === 1) {
+      await audit({ action: "session.limit_near", entityType: "ChargingSession", entityId: s.id, data: { estimate: estimate.toFixed(2), limit: s.limitAmount.toString() } });
+      log.warn("session_limit_near", { sessionId: s.id, estimate: estimate.toFixed(2), limit: s.limitAmount.toString() });
+    }
+  }
+  if (state !== "REACHED") return state;
+  // Reserva atômica: só um processo pede a parada.
+  const claimed = await db.chargingSession.updateMany({ where: { id: s.id, limitStopRequestedAt: null }, data: { limitStopRequestedAt: now, limitWarnedAt: s.limitWarnedAt ?? now } });
+  if (claimed.count !== 1) return state;
+  const pending = await db.remoteCommand.findFirst({ where: { stationId: s.stationId, type: "REMOTE_STOP", status: { in: ["PENDING", "SENT"] } } });
+  const cmd = pending ?? (await db.remoteCommand.create({ data: { stationId: s.stationId, type: "REMOTE_STOP", payload: { transactionId: s.transactionId }, requestedById: "system:limit" } }));
+  await db.chargingSession.update({ where: { id: s.id }, data: { limitStopCommandId: cmd.id } });
+  await audit({ action: "session.limit_stop_requested", entityType: "ChargingSession", entityId: s.id, data: { estimate: estimate.toFixed(2), limit: s.limitAmount.toString(), funded: s.fundedAmount?.toString() ?? null, commandId: cmd.id } });
+  log.warn("session_limit_reached", { sessionId: s.id, estimate: estimate.toFixed(2), limit: s.limitAmount.toString(), commandId: cmd.id });
+  return state;
+}
+
+/** Varredura periódica (o preço por minuto cresce mesmo sem leitura do medidor; carregador pode ter caído). */
+export async function enforceSessionLimits(now = new Date()) {
+  const active = await db.chargingSession.findMany({ where: { status: { in: ["ACTIVE", "COMMUNICATION_LOST"] }, limitAmount: { not: null }, limitStopRequestedAt: null }, select: { id: true }, take: 500 });
+  let stops = 0;
+  for (const s of active) if ((await checkSessionLimit(s.id, now)) === "REACHED") stops++;
+  return { checked: active.length, stops, retried: await retryLimitStops(now) };
+}
+
+export const MAX_LIMIT_STOP_ATTEMPTS = 5;
+
+/**
+ * Parada por limite sem efeito (comando expirou, falhou ou foi recusado; carregador caiu e voltou): repete a
+ * parada enquanto a sessão seguir ativa, até MAX_LIMIT_STOP_ATTEMPTS, nunca com outra parada pendente.
+ * O alerta de contingência continua aberto até o StopTransaction.
+ */
+async function retryLimitStops(now: Date) {
+  const waiting = await db.chargingSession.findMany({ where: { status: { in: ["ACTIVE", "COMMUNICATION_LOST"] }, limitStopRequestedAt: { not: null } }, take: 200 });
+  let retried = 0;
+  for (const s of waiting) {
+    // Inclui a parada reaproveitada no limite (ex.: pedida pelo motorista instantes antes).
+    const cmds = await db.remoteCommand.findMany({
+      where: { stationId: s.stationId, type: "REMOTE_STOP", OR: [{ id: s.limitStopCommandId ?? "" }, { requestedById: "system:limit", payload: { equals: { transactionId: s.transactionId } } }] },
+      orderBy: { createdAt: "desc" },
+    });
+    const last = cmds[0];
+    if (!last || ["PENDING", "SENT", "ACCEPTED"].includes(last.status) || cmds.length >= MAX_LIMIT_STOP_ATTEMPTS) continue;
+    if (now.getTime() - (last.completedAt ?? last.createdAt).getTime() < 60_000) continue; // espera mínima entre tentativas
+    const cmd = await db.remoteCommand.create({ data: { stationId: s.stationId, type: "REMOTE_STOP", payload: { transactionId: s.transactionId }, requestedById: "system:limit" } });
+    await db.chargingSession.update({ where: { id: s.id }, data: { limitStopCommandId: cmd.id } });
+    await audit({ action: "session.limit_stop_retried", entityType: "ChargingSession", entityId: s.id, data: { previous: last.id, previousStatus: last.status, attempt: cmds.length + 1, commandId: cmd.id } });
+    retried++;
+  }
+  return retried;
 }
 
 /** Chamado após StopTransaction: apura o valor e captura (até o valor reservado). Falhas ficam para a conciliação. */

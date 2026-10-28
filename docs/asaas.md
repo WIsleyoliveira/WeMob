@@ -33,6 +33,15 @@ Regras invariantes: status local só muda pela consulta autenticada ao Asaas (o 
 - Débito: segundo a documentação, só pela página do Asaas com `billingType` `CREDIT_CARD`/`UNDEFINED`; não habilitado.
 - Sandbox: criação e página de pagamento confirmadas (`asaas-sandbox-20261028T1123.json`); pagamento com cartão de teste **ainda não feito**.
 
+## Estornos, webhooks e conciliação — comportamento do código (P16, 2026-10-28)
+- **Estados do estorno**: `REQUESTED` (enviado, aguardando `DONE`) · `SCHEDULED` (recusa temporária; `nextAttemptAt`) · `SUCCEEDED` (só com `refunds[].status = DONE`; `confirmedAmount`) · `FAILED` (recusa definitiva ou 5 tentativas → análise). Cada linha guarda valor pedido, tentativas, último retorno do gateway e próxima tentativa; telas em /app/pagamentos/<id> com "Tentar agora".
+- **Classificação** (`src/domain/payments/refund.ts`): "próximo dia" → agendado para 06:00 de Brasília do dia seguinte; 429/bloqueio temporário → +15 min; timeout/rede/5xx → **resultado incerto** (consulta o gateway pelo marcador `[wemob-refund:<id>]` antes de qualquer reenvio); demais 4xx → falha.
+- **Saldo estornável** = pago − estornado − (em andamento + agendados): nunca estorna acima do pago, mesmo com retentativas concorrentes (lease de 10 min por estorno).
+- Sandbox real (2026-10-28 10:34): estorno parcial de R$ 75,10 do cartão `pay_fzvllcs4rjfnze8h` → **`SCHEDULED` para 2026-10-29 06:00 (BRT)** com o texto do Asaas. A conclusão real depende da retentativa no dia 29 (pendente).
+- **Webhooks**: evento gravado antes de processar; retentativas com espera crescente (1 → 60 min) por `PaymentEvent.nextAttemptAt`, sem fila presa por eventos de cobranças desconhecidas.
+- **Conciliação automática**: `payments.reconcile` a cada 1 h (últimos 7 dias) no ciclo de automações; só aponta (divergências por tipo em `AutomationRun.stats`).
+- **Split em produção**: com `ASAAS_SPLIT_ENABLED=1`, `productionReadiness` exige política de split aprovada e vigente **e** recebedor de produção validado. A base contratual do 50/50 (`partnerShareBase`) é escolhida explicitamente em cada contrato (sem valor pré-selecionado).
+
 ## Webhook e estorno no sandbox — resultados reais (P15, 2026-10-28)
 - Webhook real recebido e aplicado (`PAYMENT_CONFIRMED`); falha temporária e **reenvio automático** do Asaas observados (~5 min). Detalhes: `docs/RELATORIO_P15.md`.
 - `npm run asaas:webhook -- listar | criar <url> | atualizar <id> <url> | remover <id>` (só sandbox). Ao trocar o endereço, prefira **atualizar** (mantém a fila de eventos pendentes).

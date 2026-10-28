@@ -90,3 +90,12 @@ Ciclo verificado: estação → forma de pagamento → cobrança (sandbox) → c
 
 ## 9. Bloqueios para produção
 Webhook com domínio próprio e monitorado · decisões 1–4 acima · split homologado · carregador real homologado · deploy com TLS, cofre, backup e monitoramento · vitest (dev) · textos jurídicos e validação contábil · habilitação de produção aprovada por dois superadministradores (código já exige).
+
+---
+
+## Adendo (P16, 2026-10-28) — o que mudou depois deste relatório
+Registro posterior; o conteúdo acima descreve o estado do P15 e não foi alterado.
+- Decisão 1 (estorno parcial do cartão): implementado o **agendamento automático** (`SCHEDULED`, nova tentativa 06:00 de Brasília do dia seguinte, consulta ao gateway antes de reenviar). Validado no sandbox em 2026-10-28 10:34 (`pay_fzvllcs4rjfnze8h` → `SCHEDULED` para 2026-10-29 09:00 UTC). Conclusão real **pendente** até a retentativa.
+- Decisão 3 (consumo acima do pré-pago): implementado **limite financeiro por sessão** com parada remota automática, repetição limitada e alertas de contingência. Excedente continua em análise, sem cobrança complementar.
+- Vulnerabilidades de desenvolvimento: `tinypool` 2.1.2 (override) e `vitest` 3.2.7 — críticas eliminadas; restam 2 moderadas (`@vitest/mocker`, exige vitest 4.1.12, bloqueado por bug do npm 10.9.3).
+- Detalhes: `docs/RELATORIO_FINAL_TECNICO.md`.

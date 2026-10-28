@@ -11,8 +11,11 @@ import { handleCall } from "@/server/ocpp/handler";
 import { createSite, createStation, upsertConnector, addTariff } from "@/server/modules/stations/service";
 import { signupDriver, resolveDriver } from "@/server/drivers/auth";
 import { getDriverStation, listDriverStations, setMyDocument, syncPendingPayment } from "@/server/drivers/service";
-import { cancelChargeRequest, driverAwareAuthorizer, expireStaleChargeRequests, onSessionStarted, onSessionStopped, startCharge } from "@/server/drivers/charging";
-import { getPayment, listPayments, processWebhook, reconcile, requestRefund, resolveReview, retryPendingWebhookEvents } from "@/server/payments/service";
+import { cancelChargeRequest, checkSessionLimit, driverAwareAuthorizer, enforceSessionLimits, expireStaleChargeRequests, onSessionStarted, onSessionStopped, startCharge } from "@/server/drivers/charging";
+import { evaluateAlerts } from "@/server/modules/alerts/engine";
+import { runOperationsCycle } from "@/server/modules/automation/runner";
+import { ensureDefaultAlertRules } from "@/server/modules/alerts/rules";
+import { getPayment, listPayments, processWebhook, reconcile, requestRefund, resolveReview, retryDueRefunds, retryPendingWebhookEvents, retryRefundNow } from "@/server/payments/service";
 import { createChargePayment, refreshFromProvider } from "@/server/payments/charges";
 import { __setAsaasFetchForTests } from "@/server/payments/asaas/provider";
 import { readAsaasConfig } from "@/server/payments/asaas/config";
@@ -232,9 +235,30 @@ describe("webhooks Asaas", () => {
     expect(await processWebhook("asaas", h.body, h.headers)).toMatchObject({ http: 200, outcome: "registrado; processamento pendente" });
     expect((await db.paymentEvent.findFirstOrThrow()).processedAt).toBeNull();
     fake.control.failGetPayment = false;
-    expect(await retryPendingWebhookEvents()).toBe(1);
+    expect(await retryPendingWebhookEvents()).toBe(0); // espera de 1 min antes da retentativa
+    expect(await retryPendingWebhookEvents(new Date(Date.now() + 2 * 60_000))).toBe(1);
     expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("CAPTURED");
-    expect(await retryPendingWebhookEvents()).toBe(0);
+    expect(await retryPendingWebhookEvents(new Date(Date.now() + 3 * 60_000))).toBe(0);
+  });
+
+  it("P16: retentativa com espera crescente (1, 2, 4… até 60 min) e sem fila presa por eventos antigos de cobranças desconhecidas", async () => {
+    const { payment } = await paidFlow();
+    // 120 eventos antigos de cobranças desconhecidas (como os das cobranças do script de homologação)
+    await db.paymentEvent.createMany({ data: Array.from({ length: 120 }, (_, i) => ({ provider: "asaas", eventId: `old-${i}`, type: "PAYMENT_CREATED", signatureValid: true, payload: { payment: { id: `pay_desconhecida_${i}` } }, receivedAt: new Date(Date.now() - 3600_000) })) });
+    fake.pay(payment.providerRef);
+    fake.control.failGetPayment = true;
+    const h = hook("PAYMENT_RECEIVED", payment.providerRef);
+    await processWebhook("asaas", h.body, h.headers);
+    const t0 = Date.now();
+    await retryPendingWebhookEvents(new Date(t0 + 2 * 60_000)); // desconhecidos: adiados 15 min; o real falha de novo
+    const ev = await db.paymentEvent.findFirstOrThrow({ where: { type: "PAYMENT_RECEIVED" } });
+    expect(ev.attempts).toBe(2);
+    expect(ev.nextAttemptAt!.getTime() - (t0 + 2 * 60_000)).toBe(2 * 60_000);
+    fake.control.failGetPayment = false;
+    expect(await retryPendingWebhookEvents(new Date(t0 + 5 * 60_000))).toBe(1); // não ficou atrás dos 120 antigos
+    expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("CAPTURED");
+    const { webhookRetryAt } = await import("@/server/payments/service");
+    expect(webhookRetryAt(new Date(0), 30).getTime()).toBe(60 * 60_000);
   });
 
   it("[27] eventos concorrentes (CONFIRMED e RECEIVED): um único comando de início", async () => {
@@ -428,6 +452,124 @@ describe("ciclo de cobrança: duplicidade e autorização (P15)", () => {
   });
 });
 
+describe("conciliação automática (P16)", () => {
+  it("roda no ciclo de automações no máximo 1×/h, só aponta (sem alterar status nem estornar) e registra o resumo", async () => {
+    const { driver, station, op } = await setup();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    const p = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } });
+    fake.pay(p.providerRef); // pago no gateway sem webhook
+    const t = new Date(Date.now() + 20 * 60_000);
+    await runOperationsCycle(t);
+    const runs = await db.automationRun.findMany({ where: { job: "payments.reconcile", operatorId: op.id } });
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe("SUCCEEDED");
+    expect((runs[0].stats as { byKind: Record<string, number> }).byKind.PROVIDER_MISMATCH).toBe(1);
+    expect((await db.payment.findUniqueOrThrow({ where: { id: p.id } })).status).toBe("PENDING"); // não muda status sozinha
+    expect(await db.refund.count()).toBe(0); // nenhum ajuste financeiro automático
+    await runOperationsCycle(new Date(t.getTime() + 10 * 60_000));
+    expect(await db.automationRun.count({ where: { job: "payments.reconcile", operatorId: op.id } })).toBe(1);
+    await runOperationsCycle(new Date(t.getTime() + 61 * 60_000));
+    expect(await db.automationRun.count({ where: { job: "payments.reconcile", operatorId: op.id } })).toBe(2);
+  });
+});
+
+describe("limite financeiro da sessão (P16)", () => {
+  // Pix de R$ 50, tarifa R$ 2/kWh, margem padrão 10% → limite R$ 45 (22,5 kWh); aviso a 90% (R$ 40,50).
+  async function charging() {
+    const s = await setup();
+    const req = await startCharge(s.driver, { identity: s.station.ocppIdentity, connectorId: 1 });
+    const p = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } });
+    fake.pay(p.providerRef);
+    const h = hook("PAYMENT_RECEIVED", p.providerRef);
+    await processWebhook("asaas", h.body, h.headers);
+    const hooks = { onStarted: onSessionStarted, onStopped: onSessionStopped, onMeter: async (id: string) => void (await checkSessionLimit(id)) };
+    const call = async (id: string, action: string, payload: unknown) =>
+      handleCall(await db.chargingStation.findUniqueOrThrow({ where: { id: s.station.id } }), id, action, payload, { authorizer: driverAwareAuthorizer, hooks });
+    const start = (await call("lim-start", "StartTransaction", { connectorId: 1, idTag: req.idTag, meterStart: 0, timestamp: iso(new Date()) })) as { result: { transactionId: number } };
+    const tx = start.result.transactionId;
+    const meter = (id: string, wh: number) => call(id, "MeterValues", { connectorId: 1, transactionId: tx, meterValue: [{ timestamp: iso(new Date()), sampledValue: [{ value: String(wh) }] }] });
+    const session = () => db.chargingSession.findFirstOrThrow({ where: { stationId: s.station.id, transactionId: tx } });
+    return { ...s, req, payment: p, call, tx, meter, session };
+  }
+  const stops = () => db.remoteCommand.count({ where: { type: "REMOTE_STOP" } });
+
+  it("cobertura e limite gravados no início; aviso a 90%; no limite UMA parada remota, mesmo com leituras e varreduras repetidas", async () => {
+    const { meter, session, call, tx, payment } = await charging();
+    expect((await session()).fundedAmount?.toString()).toBe("50");
+    expect((await session()).limitAmount?.toString()).toBe("45");
+    await meter("m1", 20_000); // R$ 40 → abaixo do aviso
+    expect((await session()).limitWarnedAt).toBeNull();
+    await meter("m2", 21_000); // R$ 42 → aviso
+    expect((await session()).limitWarnedAt).not.toBeNull();
+    expect(await stops()).toBe(0);
+    await meter("m3", 22_600); // R$ 45,20 → limite
+    expect(await stops()).toBe(1);
+    await meter("m4", 22_700);
+    await Promise.all([enforceSessionLimits(), enforceSessionLimits()]);
+    expect(await stops()).toBe(1);
+    const s1 = await session();
+    expect(s1.limitStopRequestedAt).not.toBeNull();
+    expect((await db.remoteCommand.findUniqueOrThrow({ where: { id: s1.limitStopCommandId! } })).payload).toEqual({ transactionId: tx });
+    // O carregador encerra pouco depois do limite: valor dentro da cobertura, diferença estornada.
+    await call("lim-stop", "StopTransaction", { transactionId: tx, meterStop: 22_900, timestamp: iso(new Date()) });
+    const after = await db.payment.findUniqueOrThrow({ where: { id: payment.id }, include: { refunds: true } });
+    expect((await session()).amount?.toString()).toBe("45.8");
+    expect(after.refunds[0].amount.toString()).toBe("4.2");
+    expect(after.reviewOpenedAt).toBeNull();
+  });
+
+  it("sem leituras do medidor: a varredura periódica aplica o limite pelo tempo (tarifa por minuto)", async () => {
+    const { session, site, admin } = await charging();
+    await db.chargingSession.update({ where: { id: (await session()).id }, data: { tariffPricePerKwh: 0, tariffPricePerMin: 1 } }); // R$ 1/min
+    void site; void admin;
+    expect((await enforceSessionLimits(new Date(Date.now() + 30 * 60_000))).stops).toBe(0); // R$ 30
+    expect((await enforceSessionLimits(new Date(Date.now() + 46 * 60_000))).stops).toBe(1); // R$ 46 ≥ 45
+    expect(await stops()).toBe(1);
+  });
+
+  it("parada não confirmada (carregador ignora/offline): alerta de contingência; excedente vai para análise sem cobrança complementar", async () => {
+    const { meter, session, call, tx, payment, op } = await charging();
+    await ensureDefaultAlertRules(db, op.id);
+    await db.alertRule.updateMany({ where: { operatorId: op.id, kind: "PAYMENT_DIVERGENCE" }, data: { includeNonProduction: true } });
+    await meter("x1", 23_000);
+    expect(await stops()).toBe(1);
+    await db.remoteCommand.updateMany({ where: { type: "REMOTE_STOP" }, data: { status: "TIMEOUT", completedAt: new Date() } }); // carregador não respondeu
+    expect((await enforceSessionLimits(new Date(Date.now() + 2 * 60_000))).retried).toBe(1); // nova parada
+    expect(await stops()).toBe(2);
+    expect((await enforceSessionLimits(new Date(Date.now() + 2 * 60_000))).retried).toBe(0); // já há uma pendente
+    for (let i = 0; i < 5; i++) {
+      await db.remoteCommand.updateMany({ where: { type: "REMOTE_STOP", status: "PENDING" }, data: { status: "TIMEOUT", completedAt: new Date() } });
+      await enforceSessionLimits(new Date(Date.now() + (3 + i) * 60_000));
+    }
+    expect(await stops()).toBe(5); // limite de tentativas
+    await evaluateAlerts(op.id, new Date(Date.now() + 4 * 60_000));
+    const alert = await db.alert.findFirstOrThrow({ where: { dedupeKey: `session-limit-stop:${(await session()).id}` } });
+    expect(alert.title).toMatch(/parada NÃO confirmada/);
+    expect(alert.detail).toMatch(/TIMEOUT/);
+    // Encerrado depois, acima da cobertura: R$ 56 consumidos × R$ 50 pagos.
+    await call("x-stop", "StopTransaction", { transactionId: tx, meterStop: 28_000, timestamp: iso(new Date()) });
+    const after = await db.payment.findUniqueOrThrow({ where: { id: payment.id }, include: { refunds: true } });
+    expect(after.refunds).toHaveLength(0);
+    expect(after.reviewReason).toMatch(/Consumo acima do valor pré-pago: R\$ 6\.00/);
+    expect(fake.control.requests.filter((x) => x.method === "POST" && x.path === "/payments")).toHaveLength(1); // nenhuma cobrança complementar
+    await evaluateAlerts(op.id, new Date(Date.now() + 5 * 60_000));
+    expect((await db.alert.findFirstOrThrow({ where: { dedupeKey: `session-limit-stop:${(await session()).id}` } })).status).toBe("RESOLVED");
+  });
+
+  it("margem configurável dentro de 2–30%; sessão sem cobertura (bancada) não tem limite", async () => {
+    const { limitMargin, sessionLimit } = await import("@/domain/charging/limit");
+    expect(limitMargin(undefined)).toBe(0.1);
+    expect(limitMargin("0.5")).toBe(0.3);
+    expect(limitMargin("0")).toBe(0.02);
+    expect(limitMargin("abc")).toBe(0.1);
+    expect(sessionLimit("49.99", 0.1).toString()).toBe("44.99");
+    const { station, call } = await setup();
+    await call("b1", "StartTransaction", { connectorId: 1, idTag: "TEST-BANCADA", meterStart: 0, timestamp: iso(new Date()) });
+    const b = await db.chargingSession.findFirstOrThrow({ where: { stationId: station.id, idTag: "TEST-BANCADA" } });
+    expect(b.limitAmount).toBeNull();
+  });
+});
+
 describe("estornos", () => {
   async function captured() {
     const s = await setup();
@@ -438,6 +580,99 @@ describe("estornos", () => {
     await processWebhook("asaas", h.body, h.headers);
     return { ...s, payment: p };
   }
+
+  const NEXT_DAY = "Esta transação só pode ser estornada parcialmente no próximo dia."; // texto real do sandbox (P15)
+
+  it("P16: cartão recusa estorno parcial no mesmo dia → AGENDADO (nada devolvido); retentativa no dia seguinte conclui uma vez", async () => {
+    const { payment, fin } = await captured();
+    fake.control.rejectRefund = NEXT_DAY;
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "diferença" });
+    expect(r).toMatchObject({ status: "SCHEDULED", remoteStatus: "RETRY_LATER", attempts: 1, lastError: NEXT_DAY });
+    expect(r.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now());
+    let p = await db.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(p.status).toBe("CAPTURED");
+    expect(p.amountRefunded.toString()).toBe("0");
+    // Agendado conta como em andamento: não permite estornar além do pago.
+    await expect(requestRefund(fin.ctx, { paymentId: payment.id, amount: "45", reason: "segundo estorno" })).rejects.toThrow(/disponível/);
+    expect(await retryDueRefunds(new Date())).toEqual([]); // ainda não venceu
+    fake.control.rejectRefund = null;
+    const res = await retryDueRefunds(new Date(r.nextAttemptAt!.getTime() + 1000));
+    expect(res).toEqual([{ refundId: r.id, status: "SUCCEEDED" }]);
+    const done = await db.refund.findUniqueOrThrow({ where: { id: r.id } });
+    expect(done).toMatchObject({ status: "SUCCEEDED", remoteStatus: "DONE", attempts: 2, nextAttemptAt: null });
+    expect(done.confirmedAmount?.toString()).toBe("10");
+    p = await db.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(p.amountRefunded.toString()).toBe("10");
+    expect((await remoteOf(payment.id)).refunds).toHaveLength(1);
+    expect(await retryDueRefunds(new Date(Date.now() + 86400_000 * 3))).toEqual([]); // nada a repetir
+  });
+
+  it("P16: timeout APÓS o gateway estornar → resultado incerto; a verificação encontra o estorno pelo marcador e NÃO reenvia", async () => {
+    const { payment, fin } = await captured();
+    fake.control.timeoutAfterProcessingNextRefund = true;
+    fake.control.failGetPayment = true; // a consulta imediata também falha
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "12.5", reason: "diferença" });
+    expect(r).toMatchObject({ status: "REQUESTED", remoteStatus: "UNKNOWN" });
+    fake.control.failGetPayment = false;
+    const res = await retryDueRefunds(new Date(r.nextAttemptAt!.getTime() + 1000));
+    expect(res).toEqual([{ refundId: r.id, status: "SUCCEEDED" }]);
+    expect((await remoteOf(payment.id)).refunds).toHaveLength(1); // um único estorno no gateway
+    expect((await db.refund.findUniqueOrThrow({ where: { id: r.id } })).attempts).toBe(1);
+  });
+
+  it("P16: gateway indisponível ANTES de processar → incerto; verificação não encontra o estorno e reenvia uma vez", async () => {
+    const { payment, fin } = await captured();
+    fake.control.unavailableBeforeNextRefund = true;
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "5", reason: "diferença" });
+    expect(r).toMatchObject({ status: "REQUESTED", remoteStatus: "UNKNOWN" });
+    expect((await remoteOf(payment.id)).refunds).toHaveLength(0);
+    await retryDueRefunds(new Date(r.nextAttemptAt!.getTime() + 1000));
+    expect(await db.refund.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ status: "SUCCEEDED", attempts: 2 });
+    expect((await remoteOf(payment.id)).refunds).toHaveLength(1);
+  });
+
+  it("P16: recusa permanente nas retentativas → FALHO após o limite, pagamento em análise; retentativa concorrente não duplica", async () => {
+    const { payment, fin, admin } = await captured();
+    fake.control.rejectRefund = NEXT_DAY;
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "diferença" });
+    let t = r.nextAttemptAt!.getTime();
+    for (let i = 0; i < 6; i++) {
+      // duas execuções simultâneas do ciclo: o lease garante um único envio por vez
+      await Promise.all([retryDueRefunds(new Date(t + 1000)), retryDueRefunds(new Date(t + 1000))]);
+      const cur = await db.refund.findUniqueOrThrow({ where: { id: r.id } });
+      if (cur.status === "FAILED") break;
+      t = cur.nextAttemptAt!.getTime();
+    }
+    const end = await db.refund.findUniqueOrThrow({ where: { id: r.id } });
+    expect(end.status).toBe("FAILED");
+    expect(end.attempts).toBe(5);
+    expect(fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund"))).toHaveLength(5);
+    const p = await db.payment.findUniqueOrThrow({ where: { id: payment.id } });
+    expect(p.reviewOpenedAt).not.toBeNull();
+    expect(p.amountRefunded.toString()).toBe("0");
+    // "Tentar agora" só para estorno aguardando; sem permissão é negado
+    await expect(retryRefundNow(fin.ctx, { refundId: r.id })).rejects.toThrow(/aguardando/);
+    void admin;
+  });
+
+  it("P16: acerto do fim da sessão no cartão é agendado (não abre análise) e conclui na retentativa", async () => {
+    const { driver, station, call } = await setup();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, method: "CARD" });
+    const p0 = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } });
+    fake.pay(p0.providerRef, "CONFIRMED");
+    const h = hook("PAYMENT_CONFIRMED", p0.providerRef);
+    await processWebhook("asaas", h.body, h.headers);
+    const start = (await call("cs", "StartTransaction", { connectorId: 1, idTag: req.idTag, meterStart: 0, timestamp: iso(new Date()) })) as { result: { transactionId: number } };
+    fake.control.rejectRefund = NEXT_DAY;
+    await call("ce", "StopTransaction", { transactionId: start.result.transactionId, meterStop: 10_000, timestamp: iso(new Date()) });
+    const refund = await db.refund.findFirstOrThrow({ where: { paymentId: p0.id } });
+    expect(refund).toMatchObject({ status: "SCHEDULED", requestedById: "system:settlement" });
+    expect(refund.amount.toString()).toBe("30");
+    expect((await db.payment.findUniqueOrThrow({ where: { id: p0.id } })).reviewOpenedAt).toBeNull();
+    fake.control.rejectRefund = null;
+    await retryDueRefunds(new Date(refund.nextAttemptAt!.getTime() + 1000));
+    expect((await db.payment.findUniqueOrThrow({ where: { id: p0.id } })).amountRefunded.toString()).toBe("30");
+  });
 
   it("[14][15] estorno pendente no gateway não é concluído; webhook + consulta confirmam (DONE)", async () => {
     const { payment, fin } = await captured();
@@ -599,6 +834,20 @@ describe("painel do parceiro", () => {
 });
 
 describe("configuração e ambientes", () => {
+  it("P16: split habilitado sem política aprovada nem recebedor de produção bloqueia a produção (motivos explícitos)", async () => {
+    const { op } = await setup();
+    process.env.ASAAS_SPLIT_ENABLED = "1";
+    try {
+      const r = await productionReadiness(op.id);
+      expect(r.allowed).toBe(false);
+      expect(r.reasons.some((x) => /política de split aprovada/.test(x))).toBe(true);
+      expect(r.reasons.some((x) => /recebedor de PRODUÇÃO/.test(x))).toBe(true);
+    } finally {
+      delete process.env.ASAAS_SPLIT_ENABLED;
+    }
+    expect((await productionReadiness(op.id)).reasons.some((x) => /split/i.test(x))).toBe(false);
+  });
+
   it("[24][25] produção sem credenciais/habilitação fica bloqueada; sandbox funciona sem chave de produção", async () => {
     expect(readAsaasConfig({ ASAAS_ENVIRONMENT: "sandbox", ASAAS_SANDBOX_API_KEY: "k", ASAAS_WEBHOOK_TOKEN: TOKEN } as unknown as NodeJS.ProcessEnv).ok).toBe(true);
     const prodNoKey = readAsaasConfig({ ASAAS_ENVIRONMENT: "production", ASAAS_SANDBOX_API_KEY: "k", ASAAS_WEBHOOK_TOKEN: TOKEN } as unknown as NodeJS.ProcessEnv);

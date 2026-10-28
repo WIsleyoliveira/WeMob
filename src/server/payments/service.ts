@@ -11,7 +11,8 @@ import { log } from "@/server/log";
 import { AppError, notFound } from "@/server/errors";
 import { requireOperator, requirePermission, type AuthContext } from "@/server/auth/context";
 import { getProvider } from "./registry";
-import { isPrepaidMethod, type ProviderPayment } from "./provider";
+import { isPrepaidMethod, ProviderUnavailableError, type ProviderPayment } from "./provider";
+import { classifyRefundFailure, MAX_REFUND_ATTEMPTS, type RefundFailureKind } from "@/domain/payments/refund";
 import { ASAAS_EVENT_EXPECTATION, refundMarker } from "@/domain/payments/asaas";
 import { syncSplitsFromProvider } from "./split";
 import { AsaasError } from "./asaas/client";
@@ -38,6 +39,13 @@ export const PAYMENT_TRANSITIONS: Record<PaymentStatus, PaymentStatus[]> = {
   FAILED: [],
   CANCELLED: [],
   REFUNDED: [],
+};
+
+export const REFUND_STATUS_LABEL: Record<"REQUESTED" | "SCHEDULED" | "SUCCEEDED" | "FAILED", string> = {
+  REQUESTED: "aguardando gateway",
+  SCHEDULED: "agendado (nova tentativa)",
+  SUCCEEDED: "concluído",
+  FAILED: "falhou",
 };
 
 export function canTransition(from: PaymentStatus, to: PaymentStatus) {
@@ -104,12 +112,15 @@ export async function applyProviderState(payment: Payment, p: ProviderPayment, s
 
 /** Estornos locais em andamento ← estornos do gateway (casados pelo marcador na descrição). Concluído só com DONE. */
 async function syncRefunds(paymentId: string, remote: NonNullable<ProviderPayment["refunds"]>) {
-  const pending = await db.refund.findMany({ where: { paymentId, status: "REQUESTED" } });
+  const pending = await db.refund.findMany({ where: { paymentId, status: { in: ["REQUESTED", "SCHEDULED"] } } });
   for (const r of pending) {
     const m = remote.find((x) => x.description?.includes(refundMarker(r.id)));
     if (!m) continue;
     const status = m.status === "DONE" ? "SUCCEEDED" : m.status === "CANCELLED" ? "FAILED" : "REQUESTED";
-    await db.refund.updateMany({ where: { id: r.id, status: "REQUESTED" }, data: { remoteStatus: m.status, status, ...(status !== "REQUESTED" ? { completedAt: new Date() } : {}) } });
+    await db.refund.updateMany({
+      where: { id: r.id, status: r.status },
+      data: { remoteStatus: m.status, status, ...(status !== "REQUESTED" ? { completedAt: new Date(), nextAttemptAt: null } : {}), ...(status === "SUCCEEDED" ? { confirmedAmount: m.value ?? r.amount } : {}) },
+    });
   }
 }
 
@@ -189,7 +200,7 @@ export async function processWebhook(providerName: string, rawBody: string, head
   const payment = await db.payment.findUnique({ where: { provider_providerRef: { provider: providerName, providerRef: event.providerRef } } });
   if (!payment) {
     // Pode chegar antes de a cobrança local ser gravada: fica pendente; após 24 h vira divergência de conciliação.
-    await db.paymentEvent.update({ where: { id: row.id }, data: { outcome: "pagamento ainda desconhecido (pendente; conciliação)", attempts: { increment: 1 } } });
+    await db.paymentEvent.update({ where: { id: row.id }, data: { outcome: "pagamento ainda desconhecido (pendente; conciliação)", attempts: { increment: 1 }, nextAttemptAt: new Date(Date.now() + 15 * 60_000) } });
     return { http: 200, outcome: "pagamento desconhecido" };
   }
   try {
@@ -200,15 +211,23 @@ export async function processWebhook(providerName: string, rawBody: string, head
     });
     return { http: 200, outcome: r.applied ? truth.status : "ignorado" };
   } catch (e) {
-    await db.paymentEvent.update({ where: { id: row.id }, data: { paymentId: payment.id, outcome: `falha ao consultar provedor: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300), attempts: { increment: 1 } } });
+    await db.paymentEvent.update({ where: { id: row.id }, data: { paymentId: payment.id, outcome: `falha ao consultar provedor: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300), attempts: { increment: 1 }, nextAttemptAt: webhookRetryAt(new Date(), row.attempts + 1) } });
     if (provider.ackWebhookBeforeProcessing) return { http: 200, outcome: "registrado; processamento pendente" };
     return { http: 503, outcome: "falha ao consultar provedor" };
   }
 }
 
 /** Reprocessa eventos não concluídos (provedor indisponível ou cobrança local ainda inexistente). */
+/** Espera crescente entre retentativas de um evento: 1, 2, 4, 8… min, no máximo 1 h (nunca desiste: o alerta fica aberto). */
+export const webhookRetryAt = (now: Date, attempts: number) => new Date(now.getTime() + Math.min(60, 2 ** Math.max(0, attempts - 1)) * 60_000);
+
 export async function retryPendingWebhookEvents(now = new Date()) {
-  const pending = await db.paymentEvent.findMany({ where: { processedAt: null, signatureValid: true }, orderBy: { receivedAt: "asc" }, take: 100 });
+  // Só os vencidos, pelo vencimento: eventos antigos de cobranças desconhecidas não prendem a fila.
+  const pending = await db.paymentEvent.findMany({
+    where: { processedAt: null, signatureValid: true, OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }] },
+    orderBy: [{ nextAttemptAt: { sort: "asc", nulls: "last" } }, { receivedAt: "asc" }],
+    take: 100,
+  });
   let done = 0;
   for (const ev of pending) {
     const ref = refFromPayload(ev.payload);
@@ -218,15 +237,20 @@ export async function retryPendingWebhookEvents(now = new Date()) {
     if (!payment) {
       if (now.getTime() - ev.receivedAt.getTime() > 24 * 3600_000) {
         await db.paymentEvent.update({ where: { id: ev.id }, data: { processedAt: now, outcome: "pagamento desconhecido (registrado para conciliação)", attempts: { increment: 1 } } });
+      } else {
+        await db.paymentEvent.update({ where: { id: ev.id }, data: { nextAttemptAt: new Date(now.getTime() + 15 * 60_000) } });
       }
       continue;
     }
     try {
       const { r, truth } = await processEventForPayment(ev.provider, ev.type, payment, `retry:${ev.type}`);
-      await db.paymentEvent.update({ where: { id: ev.id }, data: { paymentId: payment.id, processedAt: now, outcome: r.applied ? `aplicado na retentativa: ${truth.status}` : "ignorado na retentativa", attempts: { increment: 1 } } });
+      await db.paymentEvent.update({ where: { id: ev.id }, data: { paymentId: payment.id, processedAt: now, nextAttemptAt: null, outcome: r.applied ? `aplicado na retentativa: ${truth.status}` : "ignorado na retentativa", attempts: { increment: 1 } } });
       done++;
-    } catch {
-      await db.paymentEvent.update({ where: { id: ev.id }, data: { paymentId: payment.id, attempts: { increment: 1 } } });
+    } catch (e) {
+      await db.paymentEvent.update({
+        where: { id: ev.id },
+        data: { paymentId: payment.id, attempts: { increment: 1 }, nextAttemptAt: webhookRetryAt(now, ev.attempts + 1), outcome: `falha ao consultar provedor: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300) },
+      });
     }
   }
   return done;
@@ -260,42 +284,136 @@ export const refundSchema = z.object({
  * vira falha nem nova tentativa: o estado é verificado pelo marcador na descrição e fica pendente se incerto.
  */
 async function performRefund(input: { paymentId: string; amount: Decimal; reason: string; requestedById: string; organizationId?: string | null; scope?: Prisma.PaymentWhereInput }) {
-  const { refund, payment } = await db.$transaction(async (tx) => {
+  const { refund } = await db.$transaction(async (tx) => {
     await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${"refund:" + input.paymentId}))`;
     const payment = await tx.payment.findFirst({ where: { id: input.paymentId, ...(input.scope ?? {}) } });
     if (!payment) throw notFound("Pagamento não encontrado.");
     if (!["CAPTURED", "PARTIALLY_REFUNDED"].includes(payment.status)) throw new AppError("CONFLICT", "Só é possível reembolsar pagamento capturado.");
-    const inFlight = await tx.refund.aggregate({ where: { paymentId: payment.id, status: "REQUESTED" }, _sum: { amount: true } });
-    const available = new Decimal(payment.amountCaptured.toString()).minus(payment.amountRefunded.toString()).minus(inFlight._sum.amount?.toString() ?? 0);
+    const available = await refundableAmount(tx, payment);
     const amount = input.amount.toDecimalPlaces(2);
-    if (amount.gt(available)) throw new AppError("VALIDATION", `Valor acima do disponível para reembolso (${available.toFixed(2)}; considera estornos em andamento).`);
+    if (amount.gt(available)) throw new AppError("VALIDATION", `Valor acima do disponível para reembolso (${available.toFixed(2)}; considera estornos em andamento e agendados).`);
     const refund = await tx.refund.create({ data: { paymentId: payment.id, amount: amount.toFixed(2), reason: input.reason, requestedById: input.requestedById } });
     await audit({ organizationId: input.organizationId ?? payment.operatorId, actorUserId: input.requestedById.startsWith("system:") ? null : input.requestedById, action: "payment.refund_requested", entityType: "Payment", entityId: payment.id, data: { refundId: refund.id, amount: amount.toFixed(2), reason: input.reason } }, tx);
-    return { refund, payment };
+    return { refund };
   });
+  return dispatchRefund(refund.id);
+}
+
+/** Saldo estornável: pago − estornado − estornos em andamento/agendados (excluindo `exceptRefundId`). */
+async function refundableAmount(tx: Prisma.TransactionClient, payment: Payment, exceptRefundId?: string) {
+  const inFlight = await tx.refund.aggregate({ where: { paymentId: payment.id, status: { in: ["REQUESTED", "SCHEDULED"] }, ...(exceptRefundId ? { id: { not: exceptRefundId } } : {}) }, _sum: { amount: true } });
+  return new Decimal(payment.amountCaptured.toString()).minus(payment.amountRefunded.toString()).minus(inFlight._sum.amount?.toString() ?? 0);
+}
+
+function failureKind(e: unknown): RefundFailureKind {
+  if (e instanceof AsaasError) return e.kind;
+  if (e instanceof ProviderUnavailableError) return "UNAVAILABLE";
+  return "UNKNOWN";
+}
+
+/**
+ * Envia o estorno ao gateway (com o marcador do estorno na descrição) e classifica a resposta:
+ * concluído só com confirmação do gateway; recusa temporária → AGENDADO; resultado incerto → verificação
+ * antes de qualquer reenvio; recusa definitiva → FALHO (e exceção para quem pediu).
+ */
+async function dispatchRefund(refundId: string) {
+  const refund = await db.refund.findUniqueOrThrow({ where: { id: refundId }, include: { payment: true } });
+  const payment = refund.payment;
   const provider = getProvider(payment.provider);
-  const description = `${input.reason} ${refundMarker(refund.id)}`;
+  const now = new Date();
   try {
-    const truth = await provider.refund(payment.providerRef, refund.amount.toString(), { description });
-    if (!truth.refunds) await db.refund.update({ where: { id: refund.id }, data: { status: "SUCCEEDED", completedAt: new Date(), providerRef: truth.providerRef, remoteStatus: "DONE" } });
+    const truth = await provider.refund(payment.providerRef, refund.amount.toString(), { description: `${refund.reason} ${refundMarker(refund.id)}` });
+    if (!truth.refunds) await db.refund.update({ where: { id: refund.id }, data: { status: "SUCCEEDED", completedAt: now, providerRef: truth.providerRef, remoteStatus: "DONE", confirmedAmount: refund.amount, lastError: null, nextAttemptAt: null } });
     await applyProviderState(payment, truth, "refund");
   } catch (e) {
-    if (e instanceof AsaasError && e.kind === "TIMEOUT") {
-      // Resultado incerto: verificar antes de qualquer outra tentativa.
+    const decision = classifyRefundFailure(failureKind(e), e instanceof Error ? e.message : String(e), now);
+    if (decision.action === "VERIFY") {
       try {
-        const truth = await provider.fetch(payment.providerRef);
-        await applyProviderState(payment, truth, "refund-timeout-check");
+        await applyProviderState(payment, await provider.fetch(payment.providerRef), "refund-verify");
       } catch {
-        /* verificação fica para a conciliação */
+        /* a verificação agendada tenta de novo */
       }
-      const now = await db.refund.findUniqueOrThrow({ where: { id: refund.id } });
-      if (now.status === "REQUESTED" && !now.remoteStatus) await db.refund.update({ where: { id: refund.id }, data: { remoteStatus: "UNKNOWN" } });
-      return db.refund.findUniqueOrThrow({ where: { id: refund.id } });
+      await db.refund.updateMany({ where: { id: refund.id, status: "REQUESTED" }, data: { remoteStatus: "UNKNOWN", lastError: decision.reason, nextAttemptAt: decision.retryAt } });
+      log.warn("payment_refund_uncertain", { refundId: refund.id, paymentId: payment.id, error: decision.reason });
+    } else if (decision.action === "SCHEDULE") {
+      await db.refund.update({ where: { id: refund.id }, data: { status: "SCHEDULED", remoteStatus: "RETRY_LATER", lastError: decision.reason, nextAttemptAt: decision.retryAt } });
+      await audit({ organizationId: payment.operatorId, action: "payment.refund_scheduled", entityType: "Payment", entityId: payment.id, data: { refundId: refund.id, amount: refund.amount.toString(), nextAttemptAt: decision.retryAt?.toISOString(), reason: decision.reason } });
+      log.info("payment_refund_scheduled", { refundId: refund.id, paymentId: payment.id, nextAttemptAt: decision.retryAt?.toISOString() });
+    } else {
+      await db.refund.update({ where: { id: refund.id }, data: { status: "FAILED", completedAt: now, remoteStatus: "REJECTED", lastError: decision.reason, nextAttemptAt: null } });
+      throw new AppError("VALIDATION", `Reembolso não confirmado pelo provedor: ${decision.reason}`);
     }
-    await db.refund.update({ where: { id: refund.id }, data: { status: "FAILED", completedAt: new Date(), remoteStatus: "REJECTED" } });
-    throw new AppError("VALIDATION", `Reembolso não confirmado pelo provedor: ${e instanceof Error ? e.message : String(e)}`);
   }
   return db.refund.findUniqueOrThrow({ where: { id: refund.id } });
+}
+
+/**
+ * Retentativas de estorno vencidas (ciclo de 1 min do servidor OCPP). Para cada estorno AGENDADO ou de
+ * resultado incerto: reserva (lease de 10 min, seguro com mais de um processo), consulta o gateway; se o
+ * estorno já consta (marcador), só sincroniza; senão, reenvia — até MAX_REFUND_ATTEMPTS, depois FALHO + análise.
+ */
+export async function retryDueRefunds(now = new Date(), onlyRefundId?: string) {
+  const due = await db.refund.findMany({
+    where: { ...(onlyRefundId ? { id: onlyRefundId } : {}), nextAttemptAt: { lte: now }, OR: [{ status: "SCHEDULED" }, { status: "REQUESTED", remoteStatus: "UNKNOWN" }] },
+    orderBy: { nextAttemptAt: "asc" },
+    take: 20,
+  });
+  const out: { refundId: string; status: string }[] = [];
+  for (const r of due) {
+    const claimed = await db.refund.updateMany({ where: { id: r.id, status: r.status, nextAttemptAt: r.nextAttemptAt }, data: { nextAttemptAt: new Date(now.getTime() + 10 * 60_000) } });
+    if (claimed.count !== 1) continue;
+    const payment = await db.payment.findUniqueOrThrow({ where: { id: r.paymentId } });
+    try {
+      await applyProviderState(payment, await getProvider(payment.provider).fetch(payment.providerRef), "refund-retry-check");
+    } catch (e) {
+      log.warn("payment_refund_retry_check_failed", { refundId: r.id, error: e instanceof Error ? e.message : String(e) });
+      out.push({ refundId: r.id, status: "verificação adiada" });
+      continue;
+    }
+    const current = await db.refund.findUniqueOrThrow({ where: { id: r.id } });
+    if (!["SCHEDULED", "REQUESTED"].includes(current.status)) {
+      out.push({ refundId: r.id, status: current.status });
+      continue;
+    }
+    const fresh = await db.payment.findUniqueOrThrow({ where: { id: r.paymentId } });
+    const blocked =
+      current.attempts >= MAX_REFUND_ATTEMPTS
+        ? `limite de ${MAX_REFUND_ATTEMPTS} tentativas atingido`
+        : !["CAPTURED", "PARTIALLY_REFUNDED"].includes(fresh.status)
+          ? `pagamento ${fresh.status}`
+          : new Decimal(current.amount.toString()).gt(await refundableAmount(db, fresh, current.id))
+            ? "valor acima do saldo estornável"
+            : null;
+    if (blocked) {
+      await db.refund.update({ where: { id: r.id }, data: { status: "FAILED", completedAt: now, nextAttemptAt: null, lastError: `${current.lastError ?? ""} · retentativa encerrada: ${blocked}`.slice(0, 300) } });
+      await openReview(r.paymentId, `Estorno de R$ ${current.amount} não concluído (${blocked}). Último retorno do gateway: ${current.lastError ?? "—"}`);
+      out.push({ refundId: r.id, status: "FAILED" });
+      continue;
+    }
+    await db.refund.update({ where: { id: r.id }, data: { status: "REQUESTED", remoteStatus: null, attempts: { increment: 1 }, nextAttemptAt: null } });
+    await audit({ organizationId: fresh.operatorId, action: "payment.refund_retried", entityType: "Payment", entityId: fresh.id, data: { refundId: r.id, attempt: current.attempts + 1 } });
+    const after = await dispatchRefund(r.id).catch(async (e) => {
+      await openReview(r.paymentId, `Estorno de R$ ${current.amount} recusado na retentativa: ${e instanceof Error ? e.message : String(e)}`);
+      return db.refund.findUniqueOrThrow({ where: { id: r.id } });
+    });
+    out.push({ refundId: r.id, status: after.status });
+  }
+  return out;
+}
+
+/** "Tentar agora" pela equipe (payment:refund): antecipa a retentativa de um estorno agendado/incerto. */
+export async function retryRefundNow(ctx: AuthContext | null, raw: unknown) {
+  requirePermission(ctx, "payment:refund");
+  requireOperator(ctx);
+  const { refundId } = z.object({ refundId: z.string().min(1).max(40) }).parse(raw);
+  const r = await db.refund.findFirst({ where: { id: refundId, payment: await operatorPaymentScope(ctx.organizationId) } });
+  if (!r) throw notFound("Estorno não encontrado.");
+  if (!(r.status === "SCHEDULED" || (r.status === "REQUESTED" && r.remoteStatus === "UNKNOWN"))) throw new AppError("CONFLICT", "Este estorno não está aguardando nova tentativa.");
+  const now = new Date();
+  await db.refund.update({ where: { id: r.id }, data: { nextAttemptAt: now } });
+  await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "payment.refund_retry_requested", entityType: "Payment", entityId: r.paymentId, data: { refundId: r.id } });
+  const [res] = await retryDueRefunds(now, r.id);
+  return { status: res?.status ?? r.status };
 }
 
 /** Reembolso solicitado pela equipe (payment:refund), com motivo, valor e auditoria. */
@@ -338,7 +456,8 @@ export async function settleSessionPayment(paymentId: string, sessionId: string,
   }
   try {
     const refund = await performRefund({ paymentId: payment.id, amount: diff, reason: "Devolução do saldo pré-pago não consumido", requestedById: "system:settlement" });
-    await db.paymentOperation.update({ where: { key }, data: { status: refund.status === "FAILED" ? "FAILED" : refund.status === "SUCCEEDED" ? "SUCCEEDED" : "UNKNOWN", response: { refundId: refund.id, status: refund.status } } });
+    // AGENDADO (ex.: cartão só no dia seguinte) é o caminho normal: a retentativa conclui sem intervenção.
+    await db.paymentOperation.update({ where: { key }, data: { status: refund.status === "FAILED" ? "FAILED" : refund.status === "REQUESTED" && refund.remoteStatus === "UNKNOWN" ? "UNKNOWN" : "SUCCEEDED", response: { refundId: refund.id, status: refund.status, nextAttemptAt: refund.nextAttemptAt?.toISOString() ?? null } } });
   } catch (e) {
     await db.paymentOperation.update({ where: { key }, data: { status: "FAILED", lastError: e instanceof Error ? e.message.slice(0, 300) : String(e) } });
     await openReview(payment.id, `Falha ao devolver o saldo não consumido (R$ ${diff.toFixed(2)}): ${e instanceof Error ? e.message : String(e)}`);
@@ -401,7 +520,7 @@ export async function getPayment(ctx: AuthContext | null, id: string) {
 
 export type DivergenceKind =
   | "PAYMENT_WITHOUT_SESSION" | "SESSION_WITHOUT_PAYMENT" | "AMOUNT_MISMATCH" | "STALE_AUTHORIZATION" | "PROVIDER_MISMATCH" | "PROVIDER_UNREACHABLE" | "UNKNOWN_PAYMENT_EVENT"
-  | "LOCAL_WITHOUT_REMOTE" | "REMOTE_WITHOUT_LOCAL" | "DUPLICATE_CHARGE" | "OPERATION_UNKNOWN" | "REFUND_PENDING" | "SPLIT_NOT_SETTLED" | "SPLIT_DIVERGENCE" | "UNPROCESSED_WEBHOOK" | "UNDER_REVIEW";
+  | "LOCAL_WITHOUT_REMOTE" | "REMOTE_WITHOUT_LOCAL" | "DUPLICATE_CHARGE" | "OPERATION_UNKNOWN" | "REFUND_PENDING" | "REFUND_RETRY_OVERDUE" | "SPLIT_NOT_SETTLED" | "SPLIT_DIVERGENCE" | "UNPROCESSED_WEBHOOK" | "UNDER_REVIEW";
 export type Divergence = { kind: DivergenceKind; text: string; paymentId?: string; sessionId?: string; remoteId?: string; amount?: string };
 
 const MAX_FETCH_PER_RUN = 200;
@@ -414,11 +533,27 @@ const MAX_FETCH_PER_RUN = 200;
 export async function reconcile(ctx: AuthContext | null, raw: { from: Date; to: Date }) {
   requirePermission(ctx, "payment:reconcile");
   requireOperator(ctx);
+  return reconcileOperator(ctx.organizationId, raw, ctx.userId);
+}
+
+/**
+ * Conciliação automática (ciclo de automações, no máximo 1×/h; após falha, 15 min): últimos 7 dias. Compara
+ * local × gateway e marca como conciliado o que confere — não altera status nem faz ajuste financeiro;
+ * divergências vão para o resumo (AutomationRun.stats) e para os alertas/telas de pagamentos.
+ */
+export async function reconcileAutomatically(operatorId: string, now = new Date()) {
+  const r = await reconcileOperator(operatorId, { from: new Date(now.getTime() - 7 * 86400_000), to: now }, null);
+  const byKind: Record<string, number> = {};
+  for (const d of r.divergences) byKind[d.kind] = (byKind[d.kind] ?? 0) + 1;
+  return { matched: r.matched, divergences: r.divergences.length, byKind };
+}
+
+async function reconcileOperator(operatorId: string, raw: { from: Date; to: Date }, actorUserId: string | null) {
   const { from, to } = raw;
   const now = new Date();
   const divergences: Divergence[] = [];
   const payments = await db.payment.findMany({
-    where: { createdAt: { gte: from, lte: to }, ...(await operatorPaymentScope(ctx.organizationId)) },
+    where: { createdAt: { gte: from, lte: to }, ...(await operatorPaymentScope(operatorId)) },
     include: { session: true, chargeRequest: true, refunds: true, splits: true },
     take: MAX_FETCH_PER_RUN,
     orderBy: { createdAt: "asc" },
@@ -430,7 +565,7 @@ export async function reconcile(ctx: AuthContext | null, raw: { from: Date; to: 
       divergences.push({ kind: "PAYMENT_WITHOUT_SESSION", text: `Pagamento ${PAYMENT_STATUS_LABEL[p.status].toLowerCase()} sem sessão de recarga vinculada.`, paymentId: p.id });
     }
     if (p.status === "AUTHORIZED" && age > 24 * 3600_000) divergences.push({ kind: "STALE_AUTHORIZATION", text: "Autorização há mais de 24 h sem captura nem cancelamento.", paymentId: p.id });
-    const pendingRefund = p.refunds.some((r) => r.status === "REQUESTED");
+    const pendingRefund = p.refunds.some((r) => r.status === "REQUESTED" || r.status === "SCHEDULED");
     if (p.session?.amount && ["CAPTURED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(p.status)) {
       // PREAUTH: capturado deve igualar o apurado. Pré-pago (Pix/cartão): pago − estornado deve igualar o apurado (após o acerto).
       const charged = isPrepaidMethod(p.method) ? new Decimal(p.amountCaptured.toString()).minus(p.amountRefunded.toString()) : new Decimal(p.amountCaptured.toString());
@@ -440,6 +575,9 @@ export async function reconcile(ctx: AuthContext | null, raw: { from: Date; to: 
     }
     for (const r of p.refunds.filter((x) => x.status === "REQUESTED" && now.getTime() - x.createdAt.getTime() > 3600_000)) {
       divergences.push({ kind: "REFUND_PENDING", text: `Estorno de R$ ${r.amount} pendente há mais de 1 h (gateway: ${r.remoteStatus ?? "sem resposta"}).`, paymentId: p.id, amount: r.amount.toFixed(2) });
+    }
+    for (const r of p.refunds.filter((x) => x.status === "SCHEDULED" && x.nextAttemptAt && now.getTime() - x.nextAttemptAt.getTime() > 3600_000)) {
+      divergences.push({ kind: "REFUND_RETRY_OVERDUE", text: `Estorno de R$ ${r.amount} agendado para ${r.nextAttemptAt!.toISOString()} e não reprocessado (o ciclo do servidor OCPP está rodando?). Último retorno: ${r.lastError ?? "—"}.`, paymentId: p.id, amount: r.amount.toFixed(2) });
     }
     for (const sp of p.splits) {
       if (sp.status === "BLOCKED_BY_VALUE_DIVERGENCE") divergences.push({ kind: "SPLIT_DIVERGENCE", text: `Split ${sp.externalReference} bloqueado por divergência de valor (prazo de correção: 2 dias úteis).`, paymentId: p.id });
@@ -482,7 +620,7 @@ export async function reconcile(ctx: AuthContext | null, raw: { from: Date; to: 
       divergences.push({ kind: "PROVIDER_UNREACHABLE", text: "Não foi possível listar as cobranças do gateway no período." });
     }
   }
-  const unknownOps = await db.paymentOperation.findMany({ where: { operatorId: ctx.organizationId, status: "UNKNOWN" }, take: 50 });
+  const unknownOps = await db.paymentOperation.findMany({ where: { operatorId, status: "UNKNOWN" }, take: 50 });
   for (const op of unknownOps) {
     let found: ProviderPayment[] | null = null;
     try {
@@ -494,7 +632,7 @@ export async function reconcile(ctx: AuthContext | null, raw: { from: Date; to: 
   }
 
   const sessions = await db.chargingSession.findMany({
-    where: { status: "COMPLETED", stoppedAt: { gte: from, lte: to }, environment: { not: "SIMULATED" }, driverId: { not: null }, amount: { gt: 0 }, station: { operatorId: ctx.organizationId } },
+    where: { status: "COMPLETED", stoppedAt: { gte: from, lte: to }, environment: { not: "SIMULATED" }, driverId: { not: null }, amount: { gt: 0 }, station: { operatorId } },
     include: { payments: true },
   });
   for (const s of sessions) {
@@ -507,6 +645,6 @@ export async function reconcile(ctx: AuthContext | null, raw: { from: Date; to: 
   const stuck = await db.paymentEvent.count({ where: { processedAt: null, receivedAt: { lt: new Date(now.getTime() - 10 * 60_000) } } });
   if (stuck > 0) divergences.push({ kind: "UNPROCESSED_WEBHOOK", text: `${stuck} evento(s) de webhook ainda não processado(s) há mais de 10 min (reprocessamento automático em curso).` });
   if (matched.length) await db.payment.updateMany({ where: { id: { in: matched } }, data: { reconciledAt: now } });
-  await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "payment.reconciled", entityType: "Payment", data: { from: from.toISOString(), to: to.toISOString(), matched: matched.length, divergences: divergences.length } });
+  await audit({ organizationId: operatorId, actorUserId, action: "payment.reconciled", entityType: "Payment", data: { from: from.toISOString(), to: to.toISOString(), matched: matched.length, divergences: divergences.length } });
   return { computedAt: now, checked: payments.length, sessionsChecked: sessions.length, matched: matched.length, divergences, truncated: payments.length === MAX_FETCH_PER_RUN };
 }

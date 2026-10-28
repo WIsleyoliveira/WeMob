@@ -23,6 +23,10 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
     failAllRequests: false,
     failGetPayment: false,
     refundStatus: "DONE" as "DONE" | "PENDING",
+    /** Estorno processado no gateway, mas a resposta se perde (timeout) — resultado incerto para a WeMob. */
+    timeoutAfterProcessingNextRefund: false,
+    /** Gateway responde 503 ANTES de processar o próximo estorno (nada foi estornado). */
+    unavailableBeforeNextRefund: false,
     rejectRefund: null as null | string,
     requests: [] as { method: string; path: string; userAgent?: string }[],
   };
@@ -98,11 +102,19 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
       const p = payments.get(m[1]);
       if (!p) return err(404, "Não encontrado");
       if (control.rejectRefund) return err(400, control.rejectRefund);
+      if (control.unavailableBeforeNextRefund) {
+        control.unavailableBeforeNextRefund = false;
+        return json(503, { errors: [] });
+      }
       if (!["RECEIVED", "CONFIRMED"].includes(p.status) && !p.refunds.length) return err(400, "Só é possível estornar cobranças recebidas.");
       const done = p.refunds.filter((r) => r.status !== "CANCELLED").reduce((a, r) => a + r.value, 0);
       if (body.value > p.value - done + 1e-9) return err(400, "Valor do estorno maior que o disponível.");
       p.refunds.push({ status: control.refundStatus, value: body.value, description: body.description, dateCreated: new Date().toISOString() });
       settleRefundStatus(p);
+      if (control.timeoutAfterProcessingNextRefund) {
+        control.timeoutAfterProcessingNextRefund = false;
+        return abort();
+      }
       return json(200, view(p));
     }
     if ((m = path.match(/^\/payments\/([^/]+)$/))) {

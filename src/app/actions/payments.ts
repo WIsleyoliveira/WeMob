@@ -2,19 +2,36 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentContext } from "@/server/auth/current";
 import { toActionState, type ActionState } from "@/server/action-result";
-import { reconcile, requestRefund, resolveReview } from "@/server/payments/service";
+import { reconcile, requestRefund, retryRefundNow, resolveReview } from "@/server/payments/service";
 import { createRecipient, createSplitPolicy, decideSplitPolicy, disableRecipient, validateRecipient } from "@/server/payments/split";
 import { decideActivation, requestActivation, revokeActivation, ACTIVATION_ITEMS } from "@/server/payments/activation";
 
 export async function refundAction(_p: ActionState, f: FormData): Promise<ActionState> {
   const ctx = await getCurrentContext();
-  const r = await toActionState(async () => (await requestRefund(ctx, { paymentId: f.get("paymentId"), amount: String(f.get("amount") ?? "").replace(",", "."), reason: f.get("reason") })).status);
+  const r = await toActionState(async () => {
+    const x = await requestRefund(ctx, { paymentId: f.get("paymentId"), amount: String(f.get("amount") ?? "").replace(",", "."), reason: f.get("reason") });
+    return { status: x.status, remoteStatus: x.remoteStatus, nextAttemptAt: x.nextAttemptAt?.toISOString() ?? null, lastError: x.lastError };
+  });
   revalidatePath(`/app/pagamentos/${f.get("paymentId")}`);
-  if (r.status !== "ok") return r as ActionState;
+  if (r.status !== "ok" || !r.data) return r as ActionState;
+  const d = r.data;
+  const when = d.nextAttemptAt ? new Date(d.nextAttemptAt).toLocaleString("pt-BR", { timeZone: "America/Sao_Paulo" }) : "";
   return {
     status: "ok",
-    message: r.data === "SUCCEEDED" ? "Estorno confirmado pelo provedor." : "Estorno solicitado. Ainda NÃO está concluído: será confirmado quando o provedor informar (webhook ou consulta).",
+    message:
+      d.status === "SUCCEEDED" ? "Estorno confirmado pelo provedor."
+      : d.status === "SCHEDULED" ? `Estorno AGENDADO (nada devolvido ainda): o provedor pediu nova tentativa — ${d.lastError ?? ""} Próxima tentativa automática: ${when}.`
+      : d.remoteStatus === "UNKNOWN" ? `Resultado incerto (sem resposta do provedor). Nada é reenviado antes de consultar o provedor; verificação automática em ${when}.`
+      : "Estorno solicitado. Ainda NÃO está concluído: será confirmado quando o provedor informar (webhook ou consulta).",
   };
+}
+
+export async function retryRefundAction(_p: ActionState, f: FormData): Promise<ActionState> {
+  const ctx = await getCurrentContext();
+  const r = await toActionState(async () => (await retryRefundNow(ctx, { refundId: f.get("refundId") })).status);
+  revalidatePath(`/app/pagamentos/${f.get("paymentId")}`);
+  if (r.status !== "ok") return r as ActionState;
+  return { status: "ok", message: r.data === "SUCCEEDED" ? "Estorno confirmado pelo provedor." : `Nova tentativa feita. Situação atual: ${r.data}.` };
 }
 
 export async function reconcileAction(_p: ActionState, f: FormData): Promise<ActionState> {

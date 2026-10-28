@@ -51,9 +51,11 @@ export async function signupDriver(raw: unknown, meta: { ip?: string } = {}) {
   return openSession(driver.id);
 }
 
-export async function loginDriver(raw: unknown) {
+export async function loginDriver(raw: unknown, meta: { ip?: string } = {}) {
   const { email, password } = z.object({ email: z.string().trim().toLowerCase().email("E-mail inválido."), password: z.string().min(1).max(128) }).parse(raw);
-  if (!(await hit(`driver-login:${sha256(email)}`, 10, 15 * 60_000))) throw new AppError("RATE_LIMITED", "Muitas tentativas. Aguarde alguns minutos.");
+  // Por conta e por IP (o mesmo IP testando muitas contas também é barrado).
+  if (!(await hit(`driver-login:${sha256(email)}`, 10, 15 * 60_000)) || !(await hit(`driver-login-ip:${meta.ip ? keyedHash(meta.ip) : "unknown"}`, 30, 15 * 60_000)))
+    throw new AppError("RATE_LIMITED", "Muitas tentativas. Aguarde alguns minutos.");
   const driver = await db.driver.findUnique({ where: { email } });
   const ok = await verifyPassword(password, driver?.passwordHash ?? DUMMY_HASH);
   if (!driver || !ok || driver.disabledAt) throw new AppError("UNAUTHENTICATED", "E-mail ou senha inválidos.");

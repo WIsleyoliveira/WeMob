@@ -1,8 +1,9 @@
+import Decimal from "decimal.js";
 import { notFound } from "next/navigation";
 import { requirePage } from "@/server/auth/current";
-import { getPayment, PAYMENT_STATUS_LABEL } from "@/server/payments/service";
+import { getPayment, PAYMENT_STATUS_LABEL, REFUND_STATUS_LABEL } from "@/server/payments/service";
 import { PAYMENT_METHOD_LABEL, isPrepaidMethod } from "@/server/payments/provider";
-import { refundAction, resolveReviewAction } from "@/app/actions/payments";
+import { refundAction, resolveReviewAction, retryRefundAction } from "@/app/actions/payments";
 import { Alert } from "@/components/ui/alert";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -17,9 +18,12 @@ export const dynamic = "force-dynamic";
 export default async function PagamentoPage({ params }: { params: Promise<{ id: string }> }) {
   const ctx = await requirePage("payment:read");
   const p = await getPayment(ctx, (await params).id).catch(() => notFound());
-  const available = Number(p.amountCaptured) - Number(p.amountRefunded);
+  // Mesma regra do servidor: estornos em andamento e agendados já comprometem o saldo.
+  const inFlight = p.refunds.filter((r) => r.status === "REQUESTED" || r.status === "SCHEDULED").reduce((a, r) => a.plus(r.amount.toString()), new Decimal(0));
+  const available = Decimal.max(0, new Decimal(p.amountCaptured.toString()).minus(p.amountRefunded.toString()).minus(inFlight)).toNumber();
   const canRefund = ctx.permissions.has("payment:refund") && ["CAPTURED", "PARTIALLY_REFUNDED"].includes(p.status) && available > 0;
   const reviewOpen = !!p.reviewOpenedAt && !p.reviewResolvedAt;
+  const canRetry = ctx.permissions.has("payment:refund");
   const prepaid = isPrepaidMethod(p.method);
   const methodLabel = PAYMENT_METHOD_LABEL[p.method] ?? p.method;
   return (
@@ -84,7 +88,30 @@ export default async function PagamentoPage({ params }: { params: Promise<{ id: 
             <Table className="text-xs">
               <thead><tr><th>Solicitado</th><th className="text-right">Valor</th><th>Status</th><th>Motivo</th></tr></thead>
               <tbody>
-                {p.refunds.map((r) => <tr key={r.id}><td>{dateTime(r.createdAt)}</td><td className="tabular text-right">{brl(r.amount.toString())}</td><td>{r.status === "SUCCEEDED" ? "concluído" : r.status === "FAILED" ? "falhou" : "aguardando gateway"}{r.remoteStatus ? ` (${r.remoteStatus})` : ""}</td><td>{r.reason}</td></tr>)}
+                {p.refunds.map((r) => {
+                  const waiting = r.status === "SCHEDULED" || (r.status === "REQUESTED" && r.remoteStatus === "UNKNOWN");
+                  return (
+                    <tr key={r.id}>
+                      <td>{dateTime(r.createdAt)}</td>
+                      <td className="tabular text-right">{brl(r.amount.toString())}{r.confirmedAmount ? <span className="block text-xs text-navy-500">confirmado {brl(r.confirmedAmount.toString())}</span> : null}</td>
+                      <td>
+                        <Badge tone={r.status === "SUCCEEDED" ? "green" : r.status === "FAILED" ? "red" : "amber"}>{REFUND_STATUS_LABEL[r.status]}{r.status === "REQUESTED" && r.remoteStatus === "UNKNOWN" ? " · resultado incerto" : ""}</Badge>
+                        <span className="mt-1 block text-xs text-navy-500">
+                          {r.remoteStatus ? `gateway: ${r.remoteStatus} · ` : ""}tentativa {r.attempts}
+                          {r.nextAttemptAt && waiting ? ` · próxima ${dateTime(r.nextAttemptAt)}` : ""}
+                        </span>
+                        {r.lastError && <span className="block text-xs text-navy-600">{r.lastError}</span>}
+                        {waiting && canRetry && (
+                          <ActionForm action={retryRefundAction} submitLabel="Tentar agora" variant="secondary" size="sm" className="mt-2">
+                            <input type="hidden" name="refundId" value={r.id} />
+                            <input type="hidden" name="paymentId" value={p.id} />
+                          </ActionForm>
+                        )}
+                      </td>
+                      <td>{r.reason}</td>
+                    </tr>
+                  );
+                })}
                 {p.refunds.length === 0 && <tr><td colSpan={4} className="text-navy-500">Nenhum reembolso.</td></tr>}
               </tbody>
             </Table>
@@ -104,7 +131,7 @@ export default async function PagamentoPage({ params }: { params: Promise<{ id: 
         )}
         {canRefund && (
           <Card>
-            <CardHeader title="Reembolsar" description={`Disponível: ${brl(available.toFixed(2))}. Confirmado somente quando o provedor aceitar.`} />
+            <CardHeader title="Reembolsar" description={`Disponível: ${brl(available.toFixed(2))}${inFlight.gt(0) ? ` (já descontados ${brl(inFlight.toFixed(2))} em andamento/agendados)` : ""}. Confirmado somente quando o provedor aceitar.`} />
             <CardBody>
               <ActionForm action={refundAction} submitLabel="Solicitar reembolso" variant="danger" confirm="Solicitar reembolso ao provedor? A operação é registrada e não pode ser desfeita.">
                 <input type="hidden" name="paymentId" value={p.id} />

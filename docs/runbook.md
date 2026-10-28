@@ -53,10 +53,17 @@ Dados de estações `TEST`/`SIMULATED` nunca entram em fechamento financeiro nem
 - Senha de carregador vazada: "Gerar nova senha" na página da estação e reconfigurar o equipamento.
 
 ## Pagamentos
-- Provedor ativo por `PAYMENT_PROVIDER`. `sandbox` = gateway simulado (sem dinheiro real), aceito só em estações TEST. Produção exige adaptador real (não implementado).
-- Webhooks: `POST /api/payments/webhooks/<provedor>`; 401 = assinatura inválida; 503 = provedor indisponível na consulta (o provedor deve reenviar; eventos pendentes também são reprocessados pelo ciclo do servidor OCPP).
-- Conciliação diária recomendada em /app/pagamentos; divergências: pagamento sem sessão, sessão sem pagamento, valor divergente, autorização pendurada > 24 h, status local × provedor.
-- Reembolso: /app/pagamentos/<id> (perfil financeiro/admin); só é confirmado quando o provedor aceita.
+- Provedor ativo por `PAYMENT_PROVIDER`: `sandbox` (gateway local simulado, só estações TEST) ou `asaas` (sandbox oficial ou produção — ver `docs/asaas.md`). Produção exige `ASAAS_PRODUCTION_ENABLED=1` **e** habilitação aprovada por duas pessoas.
+- Webhooks: `POST /api/payments/webhooks/<provedor>`; 401 = token/assinatura inválidos (nada gravado); evento é gravado antes de processar; falha na consulta ao provedor → evento pendente com **espera crescente** (1, 2, 4… até 60 min) reprocessado pelo ciclo do servidor OCPP. Pendente > 30 min → alerta.
+- Conciliação: automática a cada 1 h (job `payments.reconcile`, últimos 7 dias, resumo em Automações) e manual em /app/pagamentos. Só aponta divergências; nada é ajustado sozinho.
+- Reembolso: /app/pagamentos/<id> (perfil financeiro/admin). Estados: *aguardando gateway* → *concluído*; *agendado* (recusa temporária, ex.: cartão só aceita estorno parcial no dia seguinte — nova tentativa 06:00 de Brasília); *resultado incerto* (timeout/5xx: consulta o gateway pelo marcador antes de reenviar); *falhou* (recusa definitiva ou 5 tentativas → pagamento em análise). Botão "Tentar agora" para agendados/incertos.
+- **O servidor OCPP precisa estar no ar** para: retentativas de estorno e webhook, limites financeiros das sessões, expiração de pedidos, alertas e conciliação automática. `GET /api/health` mostra `automation: stale` se o ciclo parou.
+
+## Limite financeiro das sessões
+- Cada sessão paga recebe cobertura (pago − estornado, ou reservado) e limite = cobertura × (1 − `SESSION_LIMIT_MARGIN`).
+- Verificado a cada MeterValues e a cada 30 s (preço por minuto cresce sem leitura). 90% → alerta "perto do limite"; 100% → `RemoteStopTransaction` automático (um só; repetido até 5× se expirar/falhar).
+- **Contingência**: alerta "Limite atingido e parada NÃO confirmada" após 3 min → parar a recarga no equipamento/painel do fabricante. Consumo acima do pago fica em análise do pagamento; **não há cobrança complementar automática**.
+- Sem MeterValues por 15 min → alerta de telemetria (limite só pelo tempo).
 
 ## Financeiro e contratos
 - **Fechamento mensal**: /app/financeiro/fechamento → prévia do mês encerrado → resolver impedimentos (contrato aprovado vigente, tributo com vigência integral, ordem dos períodos) → "Solicitar" → **outra pessoa** com `finance:approve` aprova. A aprovação recalcula: se algo mudou desde a solicitação, o pedido vira "superado" e é preciso nova prévia.

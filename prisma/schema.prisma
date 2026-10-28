@@ -648,29 +648,36 @@ enum SessionStatus {
 }
 
 model ChargingSession {
-  id                String             @id @default(cuid())
-  stationId         String
-  station           ChargingStation    @relation(fields: [stationId], references: [id])
-  connectorId       Int
-  transactionId     Int
-  idTag             String
-  environment       StationEnvironment
-  meterStartWh      Int
-  meterStopWh       Int?
-  lastMeterWh       Int?
-  startedAt         DateTime
-  stoppedAt         DateTime?
-  stopReason        String?
-  status            SessionStatus      @default(ACTIVE)
-  driverId          String?
-  driver            Driver?            @relation(fields: [driverId], references: [id])
+  id                   String             @id @default(cuid())
+  stationId            String
+  station              ChargingStation    @relation(fields: [stationId], references: [id])
+  connectorId          Int
+  transactionId        Int
+  idTag                String
+  environment          StationEnvironment
+  meterStartWh         Int
+  meterStopWh          Int?
+  lastMeterWh          Int?
+  startedAt            DateTime
+  stoppedAt            DateTime?
+  stopReason           String?
+  status               SessionStatus      @default(ACTIVE)
+  driverId             String?
+  driver               Driver?            @relation(fields: [driverId], references: [id])
   /// Tarifa vigente no início (snapshot): o custo final não muda se a tarifa mudar depois.
-  tariffPricePerKwh Decimal?           @db.Decimal(10, 4)
-  tariffPricePerMin Decimal?           @db.Decimal(10, 4)
+  tariffPricePerKwh    Decimal?           @db.Decimal(10, 4)
+  tariffPricePerMin    Decimal?           @db.Decimal(10, 4)
   /// Valor apurado no encerramento (energia × tarifa + minutos × tarifa/min). Não significa pago.
-  amount            Decimal?           @db.Decimal(14, 2)
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
+  amount               Decimal?           @db.Decimal(14, 2)
+  /// Cobertura financeira no início (pré-pago: pago − estornado; pré-autorização: reservado). Nulo = sem cobertura (bancada/demonstração).
+  fundedAmount         Decimal?           @db.Decimal(14, 2)
+  /// Limite de consumo da sessão (cobertura − margem de segurança). Atingido → parada remota.
+  limitAmount          Decimal?           @db.Decimal(14, 2)
+  limitWarnedAt        DateTime?
+  limitStopRequestedAt DateTime?
+  limitStopCommandId   String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
 
   measurements  SessionMeasurement[]
   chargeRequest ChargeRequest?
@@ -931,29 +938,45 @@ model PaymentEvent {
   processedAt    DateTime?
   outcome        String?
   attempts       Int       @default(0)
+  /// Próxima retentativa (espera crescente até 1 h). Nulo = elegível já.
+  nextAttemptAt  DateTime?
 
   @@unique([provider, eventId])
+  @@index([processedAt, nextAttemptAt])
 }
 
 enum RefundStatus {
   REQUESTED
+  /// Recusado temporariamente pelo gateway (ex.: cartão só aceita estorno parcial no dia seguinte, limite de
+  /// requisições): nova tentativa em nextAttemptAt, sempre consultando o gateway antes de reenviar.
+  SCHEDULED
   SUCCEEDED
   FAILED
 }
 
 model Refund {
-  id            String       @id @default(cuid())
-  paymentId     String
-  payment       Payment      @relation(fields: [paymentId], references: [id])
-  amount        Decimal      @db.Decimal(14, 2)
-  status        RefundStatus @default(REQUESTED)
-  providerRef   String?
+  id              String       @id @default(cuid())
+  paymentId       String
+  payment         Payment      @relation(fields: [paymentId], references: [id])
+  amount          Decimal      @db.Decimal(14, 2)
+  status          RefundStatus @default(REQUESTED)
+  providerRef     String?
   /// Status do estorno no gateway (PENDING, DONE, CANCELLED…). SUCCEEDED somente com DONE.
-  remoteStatus  String?
-  reason        String
-  requestedById String
-  createdAt     DateTime     @default(now())
-  completedAt   DateTime?
+  remoteStatus    String?
+  reason          String
+  requestedById   String
+  createdAt       DateTime     @default(now())
+  completedAt     DateTime?
+  /// Envios ao gateway (o primeiro inclusive). Limitado; esgotado → FAILED + análise.
+  attempts        Int          @default(1)
+  /// Último motivo de recusa/erro informado pelo gateway (sem segredos).
+  lastError       String?
+  /// Próxima tentativa (SCHEDULED) ou verificação de resultado incerto (REQUESTED + remoteStatus UNKNOWN).
+  nextAttemptAt   DateTime?
+  /// Valor confirmado pelo gateway (refunds[].status = DONE). Nulo até a confirmação.
+  confirmedAmount Decimal?     @db.Decimal(14, 2)
+
+  @@index([status, nextAttemptAt])
 }
 
 /// Estado interno do GATEWAY SANDBOX (simulado). Não é dado financeiro real; existe para testar

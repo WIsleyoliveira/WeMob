@@ -144,6 +144,7 @@ export async function createSupportRequest(driver: DriverContext | null, raw: un
   requireDriver(driver);
   const d = z.object({ subject: z.string().trim().min(3).max(120), message: z.string().trim().min(10, "Descreva o problema.").max(3000), sessionId: z.string().optional() }).parse(raw);
   if (d.sessionId && !(await db.chargingSession.findFirst({ where: { id: d.sessionId, driverId: driver.driverId } }))) throw notFound("Sessão não encontrada.");
+  if (!(await hit(`driver-support:${driver.driverId}`, 10, 3600_000))) throw new AppError("RATE_LIMITED", "Muitos chamados em pouco tempo. Aguarde e, se for urgente, responda ao chamado já aberto.");
   return db.supportRequest.create({ data: { ...d, driverId: driver.driverId } });
 }
 

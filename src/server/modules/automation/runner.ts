@@ -12,6 +12,7 @@ import { evaluateAlerts } from "@/server/modules/alerts/engine";
 import { dispatchNotifications } from "@/server/modules/alerts/notifications";
 import { runPreventive } from "@/server/modules/maintenance/service";
 import { importDriverSupportRequests } from "@/server/modules/support/tickets";
+import { reconcileAutomatically } from "@/server/payments/service";
 
 export async function runJob<T>(job: string, operatorId: string | null, fn: () => Promise<T>) {
   const lastRuns = await db.automationRun.findMany({ where: { job, operatorId }, orderBy: { startedAt: "desc" }, take: 20, select: { status: true } });
@@ -36,6 +37,11 @@ export async function runOperationsCycle(now = new Date()) {
     await runJob("alerts.evaluate", op.id, () => evaluateAlerts(op.id, now));
     await runJob("maintenance.preventive", op.id, () => runPreventive(op.id, now).then((created) => ({ created })));
     await runJob("support.import_driver_requests", op.id, () => importDriverSupportRequests(op.id).then((created) => ({ created })));
+    // Conciliação com o gateway: no máximo 1×/h por operadora (consulta autenticada com limite por execução).
+    // Após falha (ex.: gateway fora do ar), nova tentativa em 15 min — nunca a cada minuto.
+    const lastRecon = await db.automationRun.findFirst({ where: { job: "payments.reconcile", operatorId: op.id }, orderBy: { startedAt: "desc" }, select: { startedAt: true, status: true } });
+    const wait = lastRecon?.status === "FAILED" ? 15 * 60_000 : 3600_000;
+    if (!lastRecon || now.getTime() - lastRecon.startedAt.getTime() >= wait) await runJob("payments.reconcile", op.id, () => reconcileAutomatically(op.id, now));
   }
   await runJob("notifications.dispatch", null, () => dispatchNotifications(now));
 }

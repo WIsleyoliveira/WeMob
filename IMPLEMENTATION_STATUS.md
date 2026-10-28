@@ -1,8 +1,26 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-28 (P15) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-28 (P16) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P16 — Finalização técnica (2026-10-28)
+
+Relatório com evidências, inventário P0–P3 e dependências externas: `docs/RELATORIO_FINAL_TECNICO.md`.
+
+| Categoria | Itens |
+|---|---|
+| **Sandbox oficialmente validado** | estorno parcial de cartão recusado ("próximo dia") agora registrado como **AGENDADO** para 2026-10-29 06:00 BRT (`pay_fzvllcs4rjfnze8h`), sem marcar devolução |
+| **Teste automatizado** | estorno agendado/incerto/limite de tentativas/concorrência; acerto do cartão agendado; limite financeiro (aviso, parada única, varredura por tempo, contingência, repetição até 5×, excedente em análise); webhook com espera crescente e fila sem bloqueio; conciliação horária; trava de split em produção |
+| **Código** | migrations `20261028150000_refund_retry_session_limit` e `20261028160000_payment_event_retry_backoff` (aditivas, `down.sql` testado); limites de requisição em pedir recarga, chamado e login de motorista por IP; saldo estornável correto na tela; base do repasse sem pré-seleção; `vitest` 3.2.7 + `tinypool` 2.1.2 |
+| **Produção homologada** | **nada** |
+| **Pendente / externo** | conclusão do estorno parcial no dia 29; split no sandbox (segunda carteira); permissões de estorno em produção; base do 50/50; carregador físico; deploy; `@vitest/mocker` (npm 10.9.3); E2E |
+
+### Verificação (saída real)
+- `npm test` → 18 arquivos, **222 testes passando**; `npm run lint` → 0; `npm run typecheck` → 0.
+- `NEXT_DIST_DIR=.next-build npm run build` → sucesso, 76 rotas (pasta removida, `tsconfig.json` restaurado).
+- Migrations do zero: 12 aplicadas, sem diferença com o schema; `down.sql` do P16 revertido com sucesso em banco temporário.
+- `npm audit --omit=dev` → 0; `npm audit` → 2 moderadas (`@vitest/mocker`/`vitest`), 0 críticas/altas.
 
 ## P15 — Homologação financeira, segurança e preparação para staging (2026-10-28)
 

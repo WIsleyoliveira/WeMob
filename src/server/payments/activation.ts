@@ -31,6 +31,16 @@ export async function productionReadiness(operatorId: string) {
   else if (p.environment !== "PRODUCTION") reasons.push(`Gateway em ambiente ${p.environment === "SANDBOX" ? "sandbox" : p.environment}: produção desabilitada.`);
   const act = await db.gatewayActivation.findFirst({ where: { provider: p.name, operatorId, status: "APPROVED", revokedAt: null } });
   if (!act) reasons.push("Sem habilitação de produção aprovada na plataforma.");
+  // Split no gateway (Asaas: % sobre o valor LÍQUIDO) só com política aprovada para o ambiente de produção.
+  if (process.env.ASAAS_SPLIT_ENABLED === "1") {
+    const now = new Date();
+    const [policy, recipient] = await Promise.all([
+      db.splitPolicy.findFirst({ where: { operatorId, status: "APPROVED", effectiveFrom: { lte: now }, OR: [{ effectiveTo: null }, { effectiveTo: { gt: now } }] } }),
+      db.paymentRecipient.findFirst({ where: { operatorId, environment: "PRODUCTION", status: "ACTIVE" } }),
+    ]);
+    if (!policy) reasons.push("Split habilitado sem política de split aprovada e vigente.");
+    if (!recipient) reasons.push("Split habilitado sem recebedor de PRODUÇÃO validado (carteira real confirmada por duas pessoas).");
+  }
   return { allowed: reasons.length === 0, reasons, activationId: act?.id ?? null };
 }
 

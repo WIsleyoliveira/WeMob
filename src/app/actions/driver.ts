@@ -29,7 +29,8 @@ export async function driverSignupAction(_p: ActionState, f: FormData): Promise<
 }
 
 export async function driverLoginAction(_p: ActionState, f: FormData): Promise<ActionState> {
-  const r = await toActionState(() => loginDriver({ email: s(f, "email"), password: f.get("password") }));
+  const meta = await requestMeta();
+  const r = await toActionState(() => loginDriver({ email: s(f, "email"), password: f.get("password") }, meta));
   if (r.status !== "ok" || !r.data) return r as ActionState;
   await setCookie(r.data.token, r.data.expiresAt);
   redirect(safeNext(s(f, "voltar")));
