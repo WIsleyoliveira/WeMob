@@ -54,7 +54,7 @@
     "tsx": "^4.20.5",
     "typescript": "^5",
     "vite-tsconfig-paths": "^5.1.4",
-    "vitest": "^3.2.7"
+    "vitest": "4.1.12"
   },
   "prisma": {
     "seed": "tsx --import ./scripts/load-env.mjs prisma/seed.ts"
@@ -66,9 +66,6 @@
     "@prisma/config": {
       "effect": "3.22.4",
       "deepmerge-ts": "8.0.2"
-    },
-    "vitest": {
-      "tinypool": "2.1.2"
     }
   }
 }
