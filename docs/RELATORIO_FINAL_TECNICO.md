@@ -549,3 +549,12 @@ Remoto configurado (`origin` = `https://github.com/WIsleyoliveira/WeMob.git`, re
 Correção (hotfix CI-01): só o job `check` fixado em `runs-on: ubuntu-24.04` (suportado pelo Playwright 1.56.1), sem atualizar dependências nem o lockfile; o job `docker`, que passou no 26.04, continua em `ubuntu-latest`. Também corrigido o health check dos serviços Postgres: `pg_isready -U ci` sem `-d` conectava ao banco `ci` (nome do usuário), inexistente — 93 (`check`) + 35 (`docker`) linhas `FATAL: database "ci" does not exist`, a cada ~5,05 s (= `--health-interval 5s`); o serviço era considerado saudável mesmo assim (o `pg_isready` só testa se o servidor aceita conexões), então os testes não foram afetados. Agora `-d sansol_test` / `-d sansol_docker`. Os demais `ERROR` do Postgres no log são esperados: violações de unicidade provocadas pelos testes de idempotência e `AutomationRun` ausente no teste de banco não migrado.
 
 **Atualização da decisão**: a imagem Docker passa a **APROVADO COM EVIDÊNCIA** (build real + teste integrado no CI). Pendente para fechar o CI: Playwright no CI após o push da correção.
+
+### 8.1 CI remoto após o hotfix CI-01 — execução [40753259295](https://github.com/WIsleyoliveira/WeMob/actions/runs/40753259295) (`666a115`)
+| Job | Runner | Status | Saída real |
+|---|---|---|---|
+| `check` | `ubuntu-24.04` | **APROVADO COM EVIDÊNCIA** | `npm ci` 0 vulnerabilidades; lint, typecheck OK; "Test Files 21 passed (21) · Tests 232 passed (232)"; `npm audit` 0 / 0; build OK; Chromium instalado; `e2e:browser` "**14 passed (40.8s)**" com banco temporário `sansol_e2e_1793215816124` criado e removido |
+| `docker` | `ubuntu-latest` (26.04) | **APROVADO COM EVIDÊNCIA** | imagem `migrate` (`npm ci` 0 vulnerabilidades) e aplicação construídas; 503 `migrations_pending` → "All migrations have been successfully applied." → "Database schema is up to date!" → 200 `ok` |
+| Health dos Postgres de serviço | — | **APROVADO COM EVIDÊNCIA** | 0 linhas `FATAL: database "ci" does not exist` (eram 128) |
+
+**CI remoto: APROVADO COM EVIDÊNCIA** — os dois jobs terminaram com sucesso. Avisos não bloqueantes do GitHub: actions `@v4` em Node 20 (descontinuado, forçadas a Node 24). Produção continua **não autorizada**; staging pode começar com readiness em `/api/health`.
