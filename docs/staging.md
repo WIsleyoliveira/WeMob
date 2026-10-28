@@ -46,6 +46,11 @@ Não usar túnel temporário em staging: o endereço gratuito do localhost.run t
 - Duas imagens do mesmo commit: aplicação (padrão) e migração (`--target migrate`); a imagem da aplicação não contém o CLI completo do Prisma. O job `docker` do CI verifica 503 → migração → 200 — **primeiro passo do staging é vê-lo verde**.
 - O health só acusa banco **sem tabelas**; migração nova pendente num banco existente não aparece nele — sempre `migrate status` antes de promover.
 
+### Observações do P21
+- O build da imagem falharia (`e2e/` fora do contexto Docker); corrigido no `.dockerignore` e verificado num contexto idêntico sem `.env`. Build Docker real continua pendente do CI.
+- Configurar readiness em `/api/health` (200) antes de expor o app: com o banco incompatível as páginas que leem o banco dão 500.
+- O repositório local não tem remoto Git: o CI só roda depois de configurado o remoto e autorizado o push.
+
 ## 4. Backup e restauração
 - Backup automático diário + retenção de 7–30 dias (gerenciado) e `pg_dump` semanal fora do provedor.
 - **Teste de restauração mensal** obrigatório: restaurar em banco temporário, comparar contagens das tabelas principais e o número de migrations (procedimento já exercitado localmente no P14, nunca em staging).

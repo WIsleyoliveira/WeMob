@@ -49,6 +49,7 @@ Dados de estações `TEST`/`SIMULATED` nunca entram em fechamento financeiro nem
    Execuções simultâneas por engano são seguras: o Prisma serializa por trava no banco (testado no P19: duas execuções, uma aplicou e a outra viu "No pending migrations").
 5. **Verificar**: `migrate status` = "Database schema is up to date!"; `GET /api/health` da versão nova = `status: ok`. Se a aplicação subir antes da migração, o health responde **503 com `schema: "migrations_pending"`**.
 6. Só então promover a nova versão da aplicação (e do servidor OCPP).
+   **Readiness obrigatório**: o orquestrador só deve mandar tráfego a réplicas com `GET /api/health` = 200 (a imagem não declara `HEALTHCHECK`). Com o banco incompatível a aplicação não se bloqueia sozinha: páginas que leem o banco respondem 500 (verificado no P21); só o health acusa (503).
 7. **Migração com falha**: o Prisma marca a migração como falha e não aplica as seguintes. Não promova a aplicação. Investigue o erro; corrija com uma migração nova ou, se a falha deixou o banco parcialmente alterado, restaure o backup do passo 2 e depois `prisma migrate resolve --rolled-back <nome>` para liberar nova tentativa. **Não há rollback automático.**
 8. **Reversão**: aplicação → reimplantar a imagem anterior (as migrações são aditivas, a versão anterior continua compatível). Esquema → `down.sql` manual da migração, somente com backup recente, janela de manutenção e autorização; alguns `down.sql` (P08/P09) **apagam dados** e não são reversíveis sem o backup.
 - Nunca usar `migrate reset` fora do banco de teste.

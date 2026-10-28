@@ -475,3 +475,56 @@ Procedimento na janela (a executar por uma pessoa ou tarefa autorizada):
 | Autorização de produção | **REPROVADO** — não autorizada |
 
 O WeMob está **pronto para iniciar a homologação em staging**. Isso **não** é autorização para produção.
+
+
+---
+
+# Preparação para CI remoto e staging — P21 (2026-10-28)
+
+**Ambiente**: o mesmo do P20 (macOS, Node 22.19.0, npm 10.9.3, PostgreSQL 14 local). Docker CLI presente, **daemon indisponível**. Execução 15:45–15:55 BRT. Sem push, deploy, migração em banco existente, alteração de `.env` ou contato com o estorno de R$ 75,10.
+
+## 1. Estado do Git (verificado)
+- `main`, árvore limpa no início. Sequência conferida por pai de cada commit: `0a5ba95` → `ddfdbb4` → `df97c16` → `10836d6` (P19) → `f494cf3` (P20, pai `10836d6`) → `6f2af8a` (registro do agendamento, pai `f494cf3`).
+- Diff `10836d6..6f2af8a` revisado arquivo a arquivo: só `Dockerfile`, `docker-compose.yml`, `.github/workflows/ci.yml`, `.env.example` e documentação; nenhuma mudança de código de aplicação, testes ou dependências.
+- **O repositório não tem remote** (`git remote -v` vazio; `main` sem upstream). Não há destino para push até alguém configurar o remoto do GitHub.
+
+## 2. Defeito encontrado e corrigido
+| Defeito | Reprodução | Correção | Verificação |
+|---|---|---|---|
+| **O build da imagem falharia**: o `.dockerignore` (P19, `ddfdbb4`) excluía `e2e/`, mas o `next build` checa os tipos de todo `**/*.ts`, inclusive `scripts/e2e-browser.ts`, que importa `../e2e/support/seed` | contexto idêntico ao do Docker (`git archive HEAD` menos os caminhos do `.dockerignore`, sem `.env`, `env -i`): `Type error: Cannot find module '../e2e/support/seed'`, build abortado | `.dockerignore`: `e2e/` volta ao contexto; só `e2e/.fixtures.json` (senhas temporárias dos usuários de teste) fica de fora | mesmo contexto: `✓ Compiled successfully`, standalone gerado **sem `.env` e sem variáveis de ambiente**; único import de pasta excluída no projeto (busca em `src`, `scripts`, `prisma` e raiz) |
+
+## 3. Docker
+| Verificação | Status | Evidência |
+|---|---|---|
+| Estágio `migrate` com o CLI completo do Prisma | APROVADO COM EVIDÊNCIA (simulado) | layout do estágio a partir do contexto Docker: `migrate status` exit 1 (pendentes) → `deploy` exit 0 → `deploy` de novo "No pending migrations" → `status` "Database schema is up to date!" |
+| Aplicação sem migração no startup e sem CLI na imagem | APROVADO COM EVIDÊNCIA (simulado) | layout do estágio `run` (standalone + static + `.prisma`): `node_modules/prisma` ausente; banco vazio → `/api/health` **503 `migrations_pending`**, 0 migrações aplicadas pela aplicação; após a migração explícita → **200** |
+| Aplicação indisponível para tráfego com banco incompatível | **REPROVADO** (na aplicação) | banco vazio: `/` 200, `/login` 200, `/app` 307 → `/login`, mas `/modelos`, `/simulador` e `/motorista` **500**. Só o health acusa. A proteção depende do orquestrador (readiness em `/api/health`) e da ordem do runbook; a imagem não tem `HEALTHCHECK`; migração pendente num banco já existente não aparece no health (P20) |
+| Execução explícita, idempotente e documentada; falha e reversão | APROVADO COM EVIDÊNCIA | acima + P19 §3 (concorrência) + runbook "Deploy e migrações" |
+| Build real das imagens e teste em contêiner | **NÃO TESTADO** | daemon indisponível; as simulações acima **não** são build Docker (macOS/APFS, não Alpine) |
+| Job `docker` do CI (constrói `migrate` e app, 503 → migração → 200 com Postgres temporário) | APROVADO COM EVIDÊNCIA (revisão) / NÃO TESTADO (execução) | YAML válido; usa `--network host` com o Postgres de serviço; sem secrets |
+
+## 4. Verificações locais desta rodada
+| Comando | Resultado |
+|---|---|
+| `npm audit` / `npm audit --omit=dev` | 0 / 0 |
+| Build no contexto Docker (sem `.env`) | sucesso após a correção (falhava antes) |
+| Testes, lint, TypeScript, Playwright, `e2e:rotas` | **não repetidos**: nenhum código mudou desde o P19 (232 testes, 0/0, 14 Playwright, 700/0 continuam válidos); `.dockerignore` não afeta essas verificações |
+
+## 5. Condições para executar o CI remoto
+1. Configurar o remoto do GitHub (`git remote add origin …`) — hoje inexistente.
+2. Autorização explícita para o push de `main` (7 commits locais desde `4c3471d`, mais o deste registro). O workflow roda em `push` e `pull_request`.
+3. Nenhum secret é necessário: o CI usa só valores literais de teste (`APP_SECRET: ci-only-secret`, Postgres de serviço); Asaas não é chamado (gateway simulado/fake).
+4. Acompanhar os dois jobs: `check` (lint, tipos, testes, `npm audit`, build, Playwright) e `docker` (primeira construção real das imagens).
+
+## 6. Riscos abertos antes do staging
+| Risco | Impacto | Mitigação / próxima ação |
+|---|---|---|
+| Imagens nunca construídas; Prisma no Alpine (detecção de OpenSSL do motor) não verificada | job `docker` pode falhar | primeira execução do CI; se falhar por OpenSSL, avaliar `apk add openssl` com evidência |
+| Aplicação responde 500 com banco incompatível | erros a usuários se o tráfego chegar antes da migração | readiness obrigatório em `/api/health` no orquestrador do staging; migração antes da promoção (runbook); melhoria futura: health comparar migrações aplicadas × esperadas |
+| Sem `HEALTHCHECK` na imagem | orquestrador sem sinal padrão | configurar readiness/liveness no staging (Compose já tem `healthcheck`) |
+| Sem remoto Git | CI não executável | configurar remoto (responsável pelo repositório) |
+| Estorno de R$ 75,10 | ver P20 §5 | leitura agendada 29/10 06:20; execução depende de decisão humana |
+| Pendências externas (split, 50/50, permissões, carregador, staging, produção) | ver P20 §6 | inalteradas |
+
+## 7. Decisão
+O repositório está **pronto para autorizar o push** que executará o CI remoto, **depois de configurado o remoto do GitHub**. A imagem Docker continua **NÃO TESTADA** até o job `docker` passar. Staging pode começar após o CI verde, com readiness em `/api/health`. Produção segue **não autorizada**.

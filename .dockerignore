@@ -2,7 +2,9 @@ node_modules
 .next
 .next-build
 .next-e2e
-e2e
+# e2e/ entra no contexto: o `next build` checa os tipos de scripts/e2e-browser.ts, que importa e2e/support.
+# Só o arquivo transitório com as senhas dos usuários de teste fica de fora.
+e2e/.fixtures.json
 # Nenhum arquivo de ambiente entra na imagem (o Next copia .env* para o build standalone).
 .env
 .env.*

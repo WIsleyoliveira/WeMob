@@ -1,8 +1,17 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-28 (P20) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**, **P18 (homologação final — apto para staging; não apto para produção)**, **P19 (migrações explícitas, Playwright, Vitest 4 — 0 vulnerabilidades)**, **P20 (gate de staging — apto a iniciar staging; produção não autorizada)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-28 (P21) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**, **P18 (homologação final — apto para staging; não apto para produção)**, **P19 (migrações explícitas, Playwright, Vitest 4 — 0 vulnerabilidades)**, **P20 (gate de staging — apto a iniciar staging; produção não autorizada)**, **P21 (preparação do CI remoto)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P21 — Preparação para CI remoto e staging (2026-10-28)
+
+Relatório: `docs/RELATORIO_FINAL_TECNICO.md` (seção P21). Sem push/deploy.
+
+- Defeito corrigido: o build da imagem falharia (`.dockerignore` excluía `e2e/`, importado por `scripts/e2e-browser.ts` na checagem de tipos do `next build`). Verificado em contexto idêntico ao Docker, sem `.env`: falhava, agora compila; layouts `run`/`migrate` testados com banco temporário (503 → migração idempotente → 200).
+- Achado: com banco incompatível, páginas que leem o banco respondem 500 — o tráfego só é barrado por readiness em `/api/health` (runbook atualizado). Sem `HEALTHCHECK` na imagem.
+- `npm audit` 0/0. Testes não repetidos (nenhum código mudou desde o P19). Imagem real **não testada** (sem daemon).
+- O repositório não tem remoto Git: CI remoto depende de configurar o remoto e autorizar o push. CI não exige secrets.
 
 ## P20 — Homologação em staging e gate de produção (2026-10-28)
 
