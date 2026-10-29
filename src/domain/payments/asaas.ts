@@ -27,7 +27,7 @@ export interface AsaasPaymentLike {
   value: number;
   netValue?: number | null;
   deleted?: boolean;
-  refunds?: { status: string; value: number; description?: string | null }[] | null;
+  refunds?: { status: string; value: number; description?: string | null; dateCreated?: string | null }[] | null;
 }
 
 /**

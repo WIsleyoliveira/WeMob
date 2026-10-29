@@ -6,7 +6,7 @@
 import type { FetchLike } from "@/server/payments/asaas/client";
 
 type Split = { id: string; walletId: string; fixedValue?: number; percentualValue?: number; totalValue?: number; status: string; externalReference?: string; cancellationReason?: string | null };
-type Refund = { status: string; value: number; description?: string; dateCreated: string };
+type Refund = { status: string; value: number; description?: string | null; dateCreated: string };
 type Pay = { id: string; customer: string; billingType: string; value: number; netValue: number; status: string; dueDate: string; externalReference?: string; deleted: boolean; refunds: Refund[]; split: Split[]; dateCreated: string; description?: string };
 
 export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWallets?: string[] }) {
@@ -117,7 +117,8 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
       const done = p.refunds.filter((r) => r.status !== "CANCELLED").reduce((a, r) => a + r.value, 0);
       const value = full ? p.value - done : body.value;
       if (value > p.value - done + 1e-9) return err(400, "Valor do estorno maior que o disponível.");
-      p.refunds.push({ status: control.refundStatus, value, description: body.description, dateCreated: new Date().toISOString() });
+      // Visto no sandbox real (29/10/2026): no estorno integral (sem `value`) o Asaas devolve description: null.
+      p.refunds.push({ status: control.refundStatus, value, description: full ? null : body.description, dateCreated: new Date().toISOString() });
       settleRefundStatus(p);
       if (control.timeoutAfterProcessingNextRefund) {
         control.timeoutAfterProcessingNextRefund = false;

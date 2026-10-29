@@ -8,6 +8,8 @@ export interface ProviderRefund {
   status: string;
   value: string;
   description?: string | null;
+  /** Data de criação no gateway (Asaas: "AAAA-MM-DD HH:mm:ss", horário de Brasília). */
+  dateCreated?: string | null;
 }
 
 export interface ProviderSplit {

@@ -116,9 +116,21 @@ export async function applyProviderState(payment: Payment, p: ProviderPayment, s
 /** Estornos locais em andamento ← estornos do gateway (casados pelo marcador na descrição). Concluído só com DONE. */
 async function syncRefunds(paymentId: string, remote: NonNullable<ProviderPayment["refunds"]>) {
   const pending = await db.refund.findMany({ where: { paymentId, status: { in: ["REQUESTED", "SCHEDULED"] } } });
+  // Estornos do gateway sem marcador de nenhum registro (o Asaas devolve description: null no estorno integral,
+  // visto no sandbox em 29/10/2026). Só são vinculados se houver UM único pendente local com o mesmo valor,
+  // pedido antes do estorno remoto; na dúvida nada é vinculado (fica pendente e a conciliação aponta).
+  const unmarked = remote.filter((x) => !x.description?.includes("[wemob:"));
+  const used = new Set<(typeof remote)[number]>();
+  const sameValue = (x: (typeof remote)[number], r: (typeof pending)[number]) => x.value !== undefined && new Decimal(x.value).eq(r.amount.toString());
   for (const r of pending) {
-    const m = remote.find((x) => x.description?.includes(refundMarker(r.id)));
+    let m = remote.find((x) => x.description?.includes(refundMarker(r.id)));
+    if (!m) {
+      const candidates = unmarked.filter((x) => !used.has(x) && sameValue(x, r) && (!x.dateCreated || new Date(x.dateCreated.replace(" ", "T") + (x.dateCreated.includes("T") ? "" : "-03:00")).getTime() >= r.createdAt.getTime() - 60_000));
+      const rivals = pending.filter((o) => o.id !== r.id && new Decimal(o.amount.toString()).eq(r.amount.toString()));
+      if (candidates.length === 1 && rivals.length === 0) m = candidates[0];
+    }
     if (!m) continue;
+    used.add(m);
     const status = m.status === "DONE" ? "SUCCEEDED" : m.status === "CANCELLED" ? "FAILED" : "REQUESTED";
     await db.refund.updateMany({
       where: { id: r.id, status: r.status },

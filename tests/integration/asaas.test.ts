@@ -17,6 +17,7 @@ import { runOperationsCycle } from "@/server/modules/automation/runner";
 import { ensureDefaultAlertRules } from "@/server/modules/alerts/rules";
 import { cancelScheduledRefund, getPayment, listPayments, processWebhook, reconcile, requestRefund, resolveReview, retryDueRefunds, retryPendingWebhookEvents, retryRefundNow } from "@/server/payments/service";
 import { createChargePayment, refreshFromProvider } from "@/server/payments/charges";
+import { getProvider } from "@/server/payments/registry";
 import { __setAsaasFetchForTests } from "@/server/payments/asaas/provider";
 import { readAsaasConfig } from "@/server/payments/asaas/config";
 import { activeProvider } from "@/server/payments/registry";
@@ -728,6 +729,20 @@ describe("estornos", () => {
     const sent = fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund")).at(-1)!;
     expect(JSON.parse(sent.body!)).not.toHaveProperty("value"); // integral = sem valor (docs do Asaas)
     expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("REFUNDED");
+  });
+
+  it("P23: estorno do gateway sem marcador (integral devolve description null) só é vinculado sem ambiguidade", async () => {
+    const { payment, fin } = await captured();
+    // Dois pedidos locais pendentes do MESMO valor e um estorno remoto sem marcador: não dá para saber qual é — nada é vinculado.
+    const a = await db.refund.create({ data: { paymentId: payment.id, amount: "5.00", reason: "A", requestedById: fin.ctx.userId, status: "REQUESTED" } });
+    const b = await db.refund.create({ data: { paymentId: payment.id, amount: "5.00", reason: "B", requestedById: fin.ctx.userId, status: "REQUESTED" } });
+    fake.payments.get(payment.providerRef)!.refunds.push({ status: "DONE", value: 5, description: null, dateCreated: new Date().toISOString() });
+    await refreshFromProvider(payment.id, getProvider("asaas"));
+    expect((await db.refund.findMany({ where: { id: { in: [a.id, b.id] } } })).map((r) => r.status)).toEqual(["REQUESTED", "REQUESTED"]);
+    // Sem rival, o único pendente com o valor é vinculado e concluído.
+    await db.refund.update({ where: { id: b.id }, data: { status: "FAILED" } });
+    await refreshFromProvider(payment.id, getProvider("asaas"));
+    expect(await db.refund.findUniqueOrThrow({ where: { id: a.id } })).toMatchObject({ status: "SUCCEEDED", remoteStatus: "DONE" });
   });
 
   it("P23: não cancela se o gateway já registra o estorno (marcador), nem com retentativa em andamento, nem sem permissão", async () => {

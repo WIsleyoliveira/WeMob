@@ -39,7 +39,7 @@ export function toProviderPayment(p: AsaasPayment): ProviderPayment {
     refundPending: m.refundPending,
     remoteStatus: p.deleted ? "DELETED" : p.status,
     netValue: money(p.netValue),
-    refunds: (p.refunds ?? []).map((r) => ({ status: r.status, value: new Decimal(r.value).toFixed(2), description: r.description ?? null })),
+    refunds: (p.refunds ?? []).map((r) => ({ status: r.status, value: new Decimal(r.value).toFixed(2), description: r.description ?? null, dateCreated: r.dateCreated ?? null })),
     splits: (p.split ?? []).map((x) => ({ remoteId: x.id ?? null, walletId: x.walletId, status: x.status, totalValue: money(x.totalValue), externalReference: x.externalReference ?? null, cancellationReason: x.cancellationReason ?? null })),
     externalReference: p.externalReference ?? null,
     invoiceUrl: p.invoiceUrl ?? null,
