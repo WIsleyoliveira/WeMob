@@ -31,7 +31,7 @@ import type { IdTagAuthorizer } from "@/server/ocpp/handler";
 import { requireDriver, type DriverContext } from "./auth";
 import { hit } from "@/server/rate-limit";
 import { limitMargin, limitState, sessionLimit } from "@/domain/charging/limit";
-import { readPurchaseRange, validatePurchaseAmount } from "@/domain/charging/purchase";
+import { parseAmount, readPurchaseRange, validatePurchaseAmount } from "@/domain/charging/purchase";
 
 export const START_TIMEOUT_MS = 3 * 60_000;
 /** Janela para pagar (Pix ou cartão) antes de a cobrança ser removida no gateway. */
@@ -79,10 +79,9 @@ function chargeAmountFor(requested: string | undefined) {
     return { amount: preauthAmount(), mode: "FIXED" as const };
   }
   if (!requested) throw new AppError("VALIDATION", "Informe quanto você quer gastar nesta recarga.");
-  const value = requested.replace(",", ".");
-  const errors = validatePurchaseAmount(value, range);
+  const errors = validatePurchaseAmount(requested, range);
   if (errors.length) throw new AppError("VALIDATION", errors[0]);
-  return { amount: new Decimal(value).toFixed(2), mode: "AMOUNT" as const };
+  return { amount: parseAmount(requested)!.toFixed(2), mode: "AMOUNT" as const };
 }
 
 export async function startCharge(driver: DriverContext | null, raw: unknown) {

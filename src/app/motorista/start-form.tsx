@@ -6,7 +6,7 @@ import { startChargeAction } from "@/app/actions/driver";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import type { ActionState } from "@/server/action-result";
-import { quoteByAmount } from "@/domain/charging/purchase";
+import { parseAmount, quoteByAmount } from "@/domain/charging/purchase";
 
 const METHOD = {
   PIX: { label: "Pix", hint: "QR Code ou copia e cola, confirmação na hora", Icon: QrCode },
@@ -21,14 +21,9 @@ const brl = (v: Decimal.Value) => new Decimal(v).toNumber().toLocaleString("pt-B
 
 /** Resumo antes de pagar, calculado com a MESMA regra do servidor; o valor final é validado e recalculado lá. */
 function PurchaseSummary({ value, p }: { value: string; p: PurchaseInput }) {
-  let v: Decimal | null = null;
-  try {
-    v = new Decimal(value.replace(",", "."));
-  } catch {
-    v = null;
-  }
+  const v = parseAmount(value.trim());
   if (!value.trim()) return <p className="text-xs text-navy-500">Valor entre {brl(p.min)} e {brl(p.max)}.</p>;
-  if (!v || !v.isFinite() || v.decimalPlaces() > 2) return <p className="text-sm text-red-700" role="alert">Use reais com até 2 casas decimais.</p>;
+  if (!v) return <p className="text-sm text-red-700" role="alert">Use reais com até 2 casas decimais.</p>;
   if (v.lt(p.min) || v.gt(p.max)) return <p className="text-sm text-red-700" role="alert">Escolha um valor entre {brl(p.min)} e {brl(p.max)}.</p>;
   const q = quoteByAmount(v, { pricePerKwh: p.pricePerKwh, pricePerMin: p.pricePerMin }, p.margin);
   return (
@@ -54,12 +49,8 @@ export function StartForm({ identity, connectorId, label, disabled, methods = []
   const amountId = `amount-${identity}-${connectorId}`;
   const invalidAmount = (() => {
     if (!purchase) return false;
-    try {
-      const v = new Decimal(amount.replace(",", "."));
-      return !v.isFinite() || v.decimalPlaces() > 2 || v.lt(purchase.min) || v.gt(purchase.max);
-    } catch {
-      return true;
-    }
+    const v = parseAmount(amount.trim()); // mesma leitura do servidor
+    return !v || v.lt(purchase.min) || v.gt(purchase.max);
   })();
   return (
     <form action={action} className="flex flex-col gap-3">
@@ -76,6 +67,7 @@ export function StartForm({ identity, connectorId, label, disabled, methods = []
             required
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
+            onBlur={(e) => setAmount(e.target.value.trim())}
             disabled={disabled || pending}
             aria-invalid={amount.trim() !== "" && invalidAmount}
             className="h-12 w-full rounded-lg border border-navy-200 bg-white px-3 text-base text-navy-900 focus:border-tiffany-500 focus:outline-none focus:ring-2 focus:ring-tiffany-500/20 aria-[invalid=true]:border-red-500"

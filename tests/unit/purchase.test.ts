@@ -1,6 +1,6 @@
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
-import { quoteByAmount, quoteByEnergy, readPurchaseRange, validatePurchaseAmount } from "@/domain/charging/purchase";
+import { parseAmount, quoteByAmount, quoteByEnergy, readPurchaseRange, validatePurchaseAmount } from "@/domain/charging/purchase";
 import { sessionLimit } from "@/domain/charging/limit";
 
 const kwhOnly = { pricePerKwh: "2.4000", pricePerMin: "0" };
@@ -30,6 +30,20 @@ describe("B3 — compra por valor ou kWh (regra preparatória, sem limites comer
     expect(validatePurchaseAmount("10", range)[0]).toMatch(/acima do máximo/);
     expect(validatePurchaseAmount("5.555", range)[0]).toMatch(/2 casas/);
     expect(validatePurchaseAmount("xyz", range)[0]).toMatch(/inválido/);
+  });
+
+  it("só aceita reais escritos como número decimal simples (sem hexadecimal, notação científica, sinal ou separador)", () => {
+    const range = readPurchaseRange({ CHARGE_AMOUNT_MIN: "1.00", CHARGE_AMOUNT_MAX: "200.00" });
+    for (const v of ["0x10", "0b11", "0o7", "1e2", "5e1", "+50", "1_000", "50 ", " 50", "1.234,5", "12,", ".5", "Infinity", "NaN", "-0", "٥٠", ""]) {
+      expect(parseAmount(v), v).toBeNull();
+      expect(validatePurchaseAmount(v, range), v).toEqual([expect.stringMatching(/inválido/)]);
+    }
+    expect(parseAmount("50")?.toFixed(2)).toBe("50.00");
+    expect(parseAmount("37,5")?.toFixed(2)).toBe("37.50");
+    expect(parseAmount("37.55")?.toFixed(2)).toBe("37.55");
+    expect(parseAmount("050")?.toFixed(2)).toBe("50.00");
+    expect(validatePurchaseAmount("0,50", range)).toEqual(["Valor abaixo do mínimo por recarga (R$ 1,00)."]); // mensagem em pt-BR
+    expect(validatePurchaseAmount("250", range)).toEqual(["Valor acima do máximo por recarga (R$ 200,00)."]);
   });
 
   it("por valor: energia estimada pelo LIMITE da sessão (valor − margem), arredondada para baixo", () => {

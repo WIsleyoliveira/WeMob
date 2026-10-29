@@ -639,7 +639,7 @@ describe("B3 — compra por valor (P23): desligada sem a faixa da WAPE", () => {
 
   it("com faixa: fora da faixa, mais de 2 casas, sem valor ou lixo são recusados sem criar pedido nem cobrança", withRange(async () => {
     const { driver, station } = await setup();
-    for (const [amount, msg] of [["9.99", /abaixo do mínimo/], ["80.01", /acima do máximo/], ["20.005", /2 casas/], ["abc", /inválido/], [undefined, /Informe quanto/]] as const) {
+    for (const [amount, msg] of [["9.99", /abaixo do mínimo/], ["80.01", /acima do máximo/], ["20.005", /2 casas/], ["abc", /inválido/], ["0x10", /inválido/], ["1e2", /inválido/], ["+50", /inválido/], [undefined, /Informe quanto/]] as const) {
       await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount })).rejects.toThrow(msg);
     }
     expect(await db.chargeRequest.count()).toBe(0);

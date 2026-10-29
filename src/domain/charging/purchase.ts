@@ -23,18 +23,25 @@ export function readPurchaseRange(env: Record<string, string | undefined>): Purc
   return { status: "DEFINED", min, max };
 }
 
+/**
+ * Valor em reais digitado pelo cliente: só dígitos e, opcionalmente, vírgula ou ponto com até 2 casas.
+ * `new Decimal` sozinho aceitaria "0x10" (16), "1e2" (100), "+50" e "1_000" — entradas ambíguas que poderiam
+ * cobrar um valor diferente do que alguém leria. Retorna null para qualquer outra forma.
+ */
+const AMOUNT_RE = /^\d{1,6}(?:[.,]\d{1,2})?$/;
+export function parseAmount(raw: string): Decimal | null {
+  return AMOUNT_RE.test(raw) ? new Decimal(raw.replace(",", ".")) : null;
+}
+
+const brl = (d: Decimal) => `R$ ${d.toFixed(2).replace(".", ",")}`;
+
 /** Valida o valor pedido pelo cliente contra a faixa. Sempre no servidor; o navegador só antecipa a mensagem. */
-export function validatePurchaseAmount(amount: Decimal.Value, range: PurchaseRange): string[] {
+export function validatePurchaseAmount(amount: string, range: PurchaseRange): string[] {
   if (range.status === "UNDEFINED") return [range.reason];
-  let v: Decimal;
-  try {
-    v = new Decimal(amount);
-  } catch {
-    return ["Valor inválido."];
-  }
-  if (!v.isFinite() || v.decimalPlaces() > 2) return ["Valor inválido (use reais com até 2 casas decimais)."];
-  if (v.lt(range.min)) return [`Valor abaixo do mínimo por recarga (R$ ${range.min.toFixed(2)}).`];
-  if (v.gt(range.max)) return [`Valor acima do máximo por recarga (R$ ${range.max.toFixed(2)}).`];
+  const v = parseAmount(amount);
+  if (!v) return [/^\d{1,6}[.,]\d{3,}$/.test(amount) ? "Valor inválido (use reais com até 2 casas decimais)." : "Valor inválido."];
+  if (v.lt(range.min)) return [`Valor abaixo do mínimo por recarga (${brl(range.min)}).`];
+  if (v.gt(range.max)) return [`Valor acima do máximo por recarga (${brl(range.max)}).`];
   return [];
 }
 
