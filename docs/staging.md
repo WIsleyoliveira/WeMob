@@ -49,7 +49,7 @@ Não usar túnel temporário em staging: o endereço gratuito do localhost.run t
 ### Observações do P21
 - O build da imagem falharia (`e2e/` fora do contexto Docker); corrigido no `.dockerignore` e verificado num contexto idêntico sem `.env`. Build Docker real continua pendente do CI.
 - Configurar readiness em `/api/health` (200) antes de expor o app: com o banco incompatível as páginas que leem o banco dão 500.
-- O repositório local não tem remoto Git: o CI só roda depois de configurado o remoto e autorizado o push.
+- O repositório local não tem remoto Git: o CI só roda depois de configurado o remoto e autorizado o push. **Atualizado**: remoto `origin` configurado em 28/10/2026 (`github.com/WIsleyoliveira/WeMob`); o CI roda a cada push em `main` (última execução verde verificada: 40948646848, `b4778c3`).
 
 ## 4. Backup e restauração
 - Backup automático diário + retenção de 7–30 dias (gerenciado) e `pg_dump` semanal fora do provedor.

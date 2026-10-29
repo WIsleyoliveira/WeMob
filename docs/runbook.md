@@ -55,6 +55,30 @@ Dados de estações `TEST`/`SIMULATED` nunca entram em fechamento financeiro nem
 - Nunca usar `migrate reset` fora do banco de teste.
 - Docker Compose e `.env`: o Compose lê o `.env` do projeto e expande `$`; a chave do Asaas (`\$aact_…`, escape do Next) é interpretada como variável e **aparece em texto puro nos avisos**. Use `docker compose --env-file <arquivo-do-compose>` com um arquivo sem as chaves do Asaas (ou escape `$$` próprio do Compose). Nenhum `.env*` entra na imagem (`.dockerignore`).
 
+## Verificação pós-deploy
+1. `GET /api/health` = 200 com `status: ok` e `db: ok`. `automation` só fica `ok` depois que o servidor OCPP rodar o primeiro ciclo (até 1 min). `stale` por mais de 5 min = **servidor OCPP parado**.
+2. `migrate status` (imagem `migrate`) = "Database schema is up to date!".
+3. Logs do app e do OCPP sem `*_cycle_failed`, `payment_webhook_rejected` em sequência ou `payment_settlement_failed`.
+4. Smoke: login da equipe, abrir Pagamentos, listar estações do motorista. Em staging, um pedido de recarga numa estação `TEST` com gateway **sandbox**.
+5. Conferir que `CHARGE_AMOUNT_MIN`/`CHARGE_AMOUNT_MAX` **não** estão definidos, salvo decisão formal da WAPE (`docs/P23_B3_DECISOES_WAPE.md`), e que `ASAAS_ENVIRONMENT=sandbox` fora de produção.
+
+## Diagnóstico rápido
+- **`automation: stale` no health**: o servidor OCPP (`npm run ocpp:server`) está parado. Sem ele: pedidos parados não expiram, estornos agendados não são retentados, limites não são varridos, alertas não rodam e a conciliação horária não acontece. Visto no ambiente local em 28–29/10/2026: um pedido ficou `START_REQUESTED` por um dia até o OCPP subir.
+- **Health 503 `migrations_pending`**: a migração explícita não rodou (ver "Deploy e migrações").
+- **Tela "Não foi possível carregar esta página" logo após uma ação**: o servidor da aplicação parou ou reiniciou; nada é gravado se a requisição não chegou (visto em 29/10).
+- **Postgres não sobe após reinício da máquina** (`lock file "postmaster.pid" already exists`): confirmar que nenhum `postgres` roda e que o PID do arquivo pertence a outro processo. Só então remover o `postmaster.pid` órfão; a recuperação automática do Postgres faz o resto.
+- **Estorno "aguardando gateway" com o Asaas em `DONE`**: rodar a conciliação ou consultar o pagamento. O vínculo sem marcador só ocorre sem ambiguidade (`docs/homologacao/estorno-75-10-2026-10-29.md`).
+
+## Critérios para interromper uma homologação
+Pare a homologação, sem promover a versão, e registre a evidência se ocorrer qualquer um destes:
+- cobrança duplicada para um mesmo pedido, ou pagamento sem pedido/sessão sem explicação na conciliação;
+- recarga iniciada sem pagamento confirmado (pré-pago) ou sem reserva (pré-autorização);
+- comando de parada aplicado à recarga errada, ou recarga que não para no limite financeiro;
+- estorno marcado como concluído sem `DONE` no gateway, ou devolvido em duplicidade;
+- health 503, ou `migrate status` diferente de "up to date" após a migração;
+- segredo, CPF completo ou token em log, tela ou URL;
+- qualquer chamada ao Asaas **de produção** ou habilitação de produção fora do processo de duas pessoas.
+
 ## Backup e restauração
 - Diário: `pg_dump -Fc "$DATABASE_URL" > sansol-$(date +%F).dump` com retenção de 30 dias em storage externo.
 - Teste mensal: `pg_restore -d sansol_restore_test sansol-AAAA-MM-DD.dump` e `npm run db:deploy` contra a cópia.
