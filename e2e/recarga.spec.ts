@@ -15,6 +15,7 @@ test("C. recarga: início, consumo, barra e alerta de limite, parada aceita ≠ 
   // 1) Motorista pede a recarga pelo navegador.
   await driverLogin(page, f.driverA);
   await page.goto(`/motorista/estacoes/${f.station.identity}`);
+  await page.getByLabel("Quanto você quer gastar (R$)").fill("50"); // B3 (faixa de teste no E2E)
   await page.getByRole("button", { name: "Iniciar recarga" }).click();
   await expect(page).toHaveURL(/\/motorista\/pedido\//);
   await expect(page.getByRole("heading", { name: "Aguardando o carregador iniciar" })).toBeVisible();
@@ -100,6 +101,7 @@ test("P23 B1: encerramento pedido pelo motorista continua visível ao recarregar
 
   await driverLogin(page, f.driverB);
   await page.goto(`/motorista/estacoes/${f.station.identity}`);
+  await page.getByLabel("Quanto você quer gastar (R$)").fill("50");
   await page.getByRole("button", { name: "Iniciar recarga" }).click();
   await expect(page).toHaveURL(/\/motorista\/pedido\//);
   const tag = await prisma<{ idTag: string }>("driverIdTag", "findFirstOrThrow", { where: { driverId: f.driverB.driverId } });

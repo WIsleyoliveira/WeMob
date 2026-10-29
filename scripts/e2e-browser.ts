@@ -50,6 +50,9 @@ async function main() {
     PAYMENT_PROVIDER: "sandbox",
     PAYMENT_SANDBOX_WEBHOOK_SECRET: sandboxSecret,
     PAYMENT_PREAUTH_AMOUNT: "50",
+    // B3: faixa de TESTE para exercitar a compra por valor no navegador — NÃO são limites comerciais (WAPE não definiu).
+    CHARGE_AMOUNT_MIN: "1.00",
+    CHARGE_AMOUNT_MAX: "200.00",
     // Asaas anulado: o servidor de teste não tem como chamar o gateway real.
     ASAAS_ENVIRONMENT: "",
     ASAAS_SANDBOX_API_KEY: "",

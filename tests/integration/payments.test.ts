@@ -270,6 +270,18 @@ describe("P23 B1 — estados de início e encerramento vistos pelo motorista", (
     expect(await getMyChargeRequest(driver, req.id)).toMatchObject({ status: "START_REQUESTED", startCommandStatus: "ACCEPTED", sessionId: null });
   });
 
+  it("B3: na demonstração (sem cobrança) a faixa de valores não se aplica — inicia sem valor", async () => {
+    Object.assign(process.env, { CHARGE_AMOUNT_MIN: "10.00", CHARGE_AMOUNT_MAX: "80.00" }); // faixa de teste, não comercial
+    try {
+      const { driver, station } = await setup("SIMULATED");
+      const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+      expect(req).toMatchObject({ status: "START_REQUESTED", paymentId: null });
+    } finally {
+      delete process.env.CHARGE_AMOUNT_MIN;
+      delete process.env.CHARGE_AMOUNT_MAX;
+    }
+  });
+
   it("encerramento fica registrado na sessão (sobrevive a recarregar a página) e segue o comando real", async () => {
     const { driver, station, call } = await setup("SIMULATED");
     const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });

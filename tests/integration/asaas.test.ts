@@ -598,6 +598,62 @@ describe("limite financeiro da sessão (P16)", () => {
   });
 });
 
+describe("B3 — compra por valor (P23): desligada sem a faixa da WAPE", () => {
+  // Faixa de TESTE (não comercial): a WAPE ainda não definiu mínimo e máximo por recarga.
+  const withRange = <T>(fn: () => Promise<T>) => async () => {
+    Object.assign(process.env, { CHARGE_AMOUNT_MIN: "10.00", CHARGE_AMOUNT_MAX: "80.00" });
+    try {
+      return await fn();
+    } finally {
+      delete process.env.CHARGE_AMOUNT_MIN;
+      delete process.env.CHARGE_AMOUNT_MAX;
+    }
+  };
+  const createdCharges = () => fake.control.requests.filter((x) => x.method === "POST" && x.path === "/payments");
+
+  it("sem faixa configurada: valor enviado pelo cliente é recusado; sem valor vale o valor único de antes", async () => {
+    const { driver, station } = await setup();
+    await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "30" })).rejects.toThrow(/ainda não está disponível/);
+    expect(await db.chargeRequest.count()).toBe(0);
+    expect(createdCharges()).toHaveLength(0);
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    expect((await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } })).amountAuthorized.toString()).toBe("50"); // PAYMENT_PREAUTH_AMOUNT
+  });
+
+  it("com faixa: o valor escolhido vai ao gateway e define cobertura e limite da sessão", withRange(async () => {
+    const { driver, station, call } = await setup();
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "37,50" });
+    expect(JSON.parse(createdCharges().at(-1)!.body!)).toMatchObject({ value: 37.5 });
+    const payment = await db.payment.findUniqueOrThrow({ where: { id: req.paymentId! } });
+    expect(payment.amountAuthorized.toString()).toBe("37.5");
+    const audit = await db.auditEvent.findFirstOrThrow({ where: { action: "charge.requested", entityId: req.id } });
+    expect(audit.data).toMatchObject({ purchase: { mode: "AMOUNT", amount: "37.50", pricePerKwh: "2", pricePerMin: "0" } });
+    fake.pay(payment.providerRef);
+    const h = hook("PAYMENT_RECEIVED", payment.providerRef);
+    await processWebhook("asaas", h.body, h.headers);
+    await call("b3-start", "StartTransaction", { connectorId: 1, idTag: req.idTag, meterStart: 0, timestamp: iso(new Date()) });
+    const session = await db.chargingSession.findFirstOrThrow({ where: { stationId: station.id } });
+    expect(session.fundedAmount?.toString()).toBe("37.5");
+    expect(session.limitAmount?.toString()).toBe("33.75"); // 37,50 × (1 − 10%)
+  }));
+
+  it("com faixa: fora da faixa, mais de 2 casas, sem valor ou lixo são recusados sem criar pedido nem cobrança", withRange(async () => {
+    const { driver, station } = await setup();
+    for (const [amount, msg] of [["9.99", /abaixo do mínimo/], ["80.01", /acima do máximo/], ["20.005", /2 casas/], ["abc", /inválido/], [undefined, /Informe quanto/]] as const) {
+      await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount })).rejects.toThrow(msg);
+    }
+    expect(await db.chargeRequest.count()).toBe(0);
+    expect(createdCharges()).toHaveLength(0);
+  }));
+
+  it("com faixa: pedido repetido não gera segunda cobrança (um pedido aberto por motorista)", withRange(async () => {
+    const { driver, station } = await setup();
+    await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "20" });
+    await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "25" })).rejects.toThrow(/em andamento/);
+    expect(createdCharges()).toHaveLength(1);
+  }));
+});
+
 describe("estornos", () => {
   async function captured() {
     const s = await setup();

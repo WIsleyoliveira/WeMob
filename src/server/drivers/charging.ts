@@ -31,6 +31,7 @@ import type { IdTagAuthorizer } from "@/server/ocpp/handler";
 import { requireDriver, type DriverContext } from "./auth";
 import { hit } from "@/server/rate-limit";
 import { limitMargin, limitState, sessionLimit } from "@/domain/charging/limit";
+import { readPurchaseRange, validatePurchaseAmount } from "@/domain/charging/purchase";
 
 export const START_TIMEOUT_MS = 3 * 60_000;
 /** Janela para pagar (Pix ou cartão) antes de a cobrança ser removida no gateway. */
@@ -50,11 +51,43 @@ export function sessionAmount(s: { meterStartWh: number; meterStopWh: number | n
   return { kwh, minutes, amount: v.toDecimalPlaces(2, Decimal.ROUND_HALF_UP) };
 }
 
-export const startSchema = z.object({ identity: z.string().min(1).max(48), connectorId: z.coerce.number().int().min(1).max(99), method: z.enum(PREPAID_METHODS).default("PIX") });
+export const startSchema = z.object({
+  identity: z.string().min(1).max(48),
+  connectorId: z.coerce.number().int().min(1).max(99),
+  method: z.enum(PREPAID_METHODS).default("PIX"),
+  /** B3: valor escolhido pelo cliente (R$). Só aceito quando a faixa da WAPE está configurada. */
+  amount: z.string().trim().max(16).optional(),
+});
+
+/**
+ * B3 — compra por VALOR (P23). Ligada só quando a faixa por recarga (decisão da WAPE) está configurada em
+ * CHARGE_AMOUNT_MIN/CHARGE_AMOUNT_MAX; sem ela vale o valor único de PAYMENT_PREAUTH_AMOUNT, como antes.
+ * A compra por kWh NÃO é oferecida: depende de decisões ainda abertas (docs/P23_B3_DECISOES_WAPE.md).
+ */
+export function purchaseOptions() {
+  const range = readPurchaseRange(process.env);
+  return range.status === "DEFINED"
+    ? { enabled: true as const, min: range.min.toFixed(2), max: range.max.toFixed(2), margin: limitMargin(process.env.SESSION_LIMIT_MARGIN) }
+    : { enabled: false as const, reason: range.reason };
+}
+
+/** Valor a cobrar: o escolhido (validado no servidor contra a faixa) ou o valor único legado. */
+function chargeAmountFor(requested: string | undefined) {
+  const range = readPurchaseRange(process.env);
+  if (range.status === "UNDEFINED") {
+    if (requested) throw new AppError("VALIDATION", "A escolha do valor da recarga ainda não está disponível.");
+    return { amount: preauthAmount(), mode: "FIXED" as const };
+  }
+  if (!requested) throw new AppError("VALIDATION", "Informe quanto você quer gastar nesta recarga.");
+  const value = requested.replace(",", ".");
+  const errors = validatePurchaseAmount(value, range);
+  if (errors.length) throw new AppError("VALIDATION", errors[0]);
+  return { amount: new Decimal(value).toFixed(2), mode: "AMOUNT" as const };
+}
 
 export async function startCharge(driver: DriverContext | null, raw: unknown) {
   requireDriver(driver);
-  const { identity, connectorId, method } = startSchema.parse(raw);
+  const { identity, connectorId, method, amount: requestedAmount } = startSchema.parse(raw);
   const station = await db.chargingStation.findUnique({ where: { ocppIdentity: identity }, include: { connectors: true, site: { include: { tariffs: true } } } });
   if (!station || station.deletedAt || (!station.site.isPublic && station.environment !== "SIMULATED")) throw notFound("Estação não encontrada.");
   const connector = station.connectors.find((c) => c.connectorId === connectorId);
@@ -73,6 +106,8 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
   }
   if (station.environment === "TEST" && !(provider.status === "configured" && provider.environment === "SANDBOX")) throw new AppError("VALIDATION", "Provedor de pagamento em ambiente de testes não configurado para a estação de teste.");
   if (!demo && provider.flow === "PREPAID" && !(await db.driver.findUnique({ where: { id: driver.driverId } }))?.documentEnc) throw new AppError("VALIDATION", "Informe seu CPF em Minha conta para pagar a recarga.");
+  // Valor validado ANTES de criar pedido ou cobrança: entrada inválida não deixa rastro nem chama o gateway.
+  const purchase = demo ? null : chargeAmountFor(requestedAmount);
 
   // Cada pedido cria cliente/cobrança no gateway: limita ciclos de pedir-e-cancelar (protege a cota da conta).
   if (!demo && !(await hit(`charge-start:${driver.driverId}`, 10, 3600_000))) throw new AppError("RATE_LIMITED", "Muitos pedidos de recarga em pouco tempo. Aguarde alguns minutos.");
@@ -92,7 +127,7 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new AppError("CONFLICT", "Já existe um pedido de recarga em andamento para você ou para este conector.");
       throw e;
     });
-  await audit({ action: "charge.requested", entityType: "ChargeRequest", entityId: request.id, data: { station: identity, connectorId, demo, method } });
+  await audit({ action: "charge.requested", entityType: "ChargeRequest", entityId: request.id, data: { station: identity, connectorId, demo, method, ...(purchase ? { purchase: { mode: purchase.mode, amount: purchase.amount, pricePerKwh: tariff.pricePerKwh.toString(), pricePerMin: tariff.pricePerMin.toString(), tariffValidFrom: tariff.validFrom.toISOString() } } : {}) } });
 
   // Demonstração: o pedido já nasce START_REQUESTED (sem pagamento). Sem o `from`, a transição condicional
   // não acontecia e nenhum RemoteStart era emitido (regressão do P13, achada no P23 B1).
@@ -103,7 +138,7 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
   try {
     const payment = await createChargePayment({
       provider, operatorId: station.operatorId, siteId: station.siteId, stationEnvironment: station.environment, driverId: driver.driverId, chargeRequestId: request.id,
-      amount: preauthAmount(), description: `Recarga ${identity} conector ${connectorId}`, method,
+      amount: purchase!.amount, description: `Recarga ${identity} conector ${connectorId}`, method,
     });
     request = await db.chargeRequest.update({ where: { id: request.id }, data: { paymentId: payment.id } });
     await continueAfterPayment(payment.id); // reservado/pago → inicia; recusado → pedido falha (sem exceção)
@@ -342,5 +377,5 @@ export async function stopCharge(driver: DriverContext | null, sessionId: string
 export function paymentOptions() {
   const provider = activeProvider();
   const prepaid = provider.flow === "PREPAID";
-  return { prepaid, methods: prepaid ? [...PREPAID_METHODS] : [], amount: preauthAmount().toString(), windowMinutes: pixPaymentWindowMs() / 60_000 };
+  return { prepaid, methods: prepaid ? [...PREPAID_METHODS] : [], amount: preauthAmount().toString(), windowMinutes: pixPaymentWindowMs() / 60_000, purchase: purchaseOptions() };
 }

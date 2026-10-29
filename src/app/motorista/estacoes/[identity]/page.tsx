@@ -34,7 +34,7 @@ export default async function DriverStationPage({ params }: { params: Promise<{ 
         {s.tariff ? (
           <p className="mt-1 text-sm">{brl(s.tariff.pricePerKwh.toString())} por kWh{Number(s.tariff.pricePerMin) > 0 ? ` + ${brl(s.tariff.pricePerMin.toString())} por minuto` : ""}. <span className="text-navy-500">Vigente desde {dateTime(s.tariff.validFrom)}.</span></p>
         ) : <p className="mt-1 text-sm text-navy-500">Sem tarifa vigente: recarga indisponível.</p>}
-        <p className="mt-2 text-xs text-navy-500">{demo ? "Na demonstração nada é cobrado." : pay.prepaid ? `Antes do início cobramos ${brl(pay.amount)} (valor máximo da recarga). Ao final você paga só o que consumiu: a diferença volta por estorno — no cartão, pode levar até 10 dias úteis para aparecer na fatura.` : "Antes do início é feita uma reserva (pré-autorização) no meio de pagamento; ao final é cobrado só o valor apurado e o restante é liberado."}</p>
+        <p className="mt-2 text-xs text-navy-500">{demo ? "Na demonstração nada é cobrado." : pay.purchase.enabled ? (pay.prepaid ? `Você escolhe quanto quer gastar (entre ${brl(pay.purchase.min)} e ${brl(pay.purchase.max)}). O valor é cobrado antes do início; ao final você paga só o que consumiu e a diferença volta por estorno — no cartão, pode levar até 10 dias úteis para aparecer na fatura.` : `Você escolhe quanto quer reservar (entre ${brl(pay.purchase.min)} e ${brl(pay.purchase.max)}). Ao final é cobrado só o valor apurado e o restante da reserva é liberado.`) : pay.prepaid ? `Antes do início cobramos ${brl(pay.amount)} (valor máximo da recarga). Ao final você paga só o que consumiu: a diferença volta por estorno — no cartão, pode levar até 10 dias úteis para aparecer na fatura.` : "Antes do início é feita uma reserva (pré-autorização) no meio de pagamento; ao final é cobrado só o valor apurado e o restante é liberado."}</p>
       </section>
 
       <section className="mt-4 rounded-xl border border-navy-100 bg-white p-4" aria-labelledby="como-funciona">
@@ -68,7 +68,7 @@ export default async function DriverStationPage({ params }: { params: Promise<{ 
                 );
               })()}
               <div className="mt-3">
-                {driver ? <StartForm identity={s.identity} connectorId={c.connectorId} label={can ? (demo ? "Iniciar recarga (demonstração)" : "Iniciar recarga") : "Indisponível"} disabled={!can} methods={demo ? [] : pay.methods} /> : <ButtonLink href={`/motorista/entrar?voltar=${encodeURIComponent(`/motorista/estacoes/${s.identity}`)}`} className="w-full" size="lg">Entrar para carregar</ButtonLink>}
+                {driver ? <StartForm identity={s.identity} connectorId={c.connectorId} label={can ? (demo ? "Iniciar recarga (demonstração)" : "Iniciar recarga") : "Indisponível"} disabled={!can} methods={demo ? [] : pay.methods} purchase={!demo && pay.purchase.enabled && s.tariff ? { min: pay.purchase.min, max: pay.purchase.max, margin: pay.purchase.margin, pricePerKwh: s.tariff.pricePerKwh.toString(), pricePerMin: s.tariff.pricePerMin.toString(), prepaid: pay.prepaid } : undefined} /> : <ButtonLink href={`/motorista/entrar?voltar=${encodeURIComponent(`/motorista/estacoes/${s.identity}`)}`} className="w-full" size="lg">Entrar para carregar</ButtonLink>}
               </div>
             </div>
           );
