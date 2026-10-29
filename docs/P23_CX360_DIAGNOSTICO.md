@@ -203,7 +203,7 @@ Commits locais (sem push): `77d9b51` (B1), `d965410` (B2). Nenhuma migração, n
 | `npm run e2e:build && npm run e2e:browser` | **18 passed** (eram 14): teste C ampliado (ordem enviada/aceita, encerramento solicitado/aceito, última comunicação), novo teste de encerramento pelo botão com recarga da página e recusa, 3 testes B2 (filtros, compatibilidade, localização emulada e negada — a posição não aparece em nenhuma requisição) |
 | Visual 375 px (servidor de dev, só leitura) | sem rolagem horizontal; filtros e botão de distância legíveis |
 | `npm run e2e:rotas` | **não repetido** nesta fase |
-| CI remoto | **não executado** (sem push) |
+| CI remoto ([40814257774](https://github.com/WIsleyoliveira/WeMob/actions/runs/40814257774), `3d53154`, push autorizado) | **verde**: `check` (ubuntu-24.04) 23 arquivos / **244 testes**, `npm audit` 0, build, Playwright **18 passed**; `docker` imagens reais 503 → migração → 200 |
 
 ### Classificação
 | Requisito | Estado |

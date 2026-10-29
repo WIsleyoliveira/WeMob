@@ -11,7 +11,7 @@ Diagnóstico e plano: `docs/P23_CX360_DIAGNOSTICO.md` (matriz de funcionalidades
 - B1: pedido distingue ordem de início enviada/aceita/recusada; recarga mostra "Solicitação de encerramento enviada" lida do comando (sobrevive a recarregar), botão só sem pedido em curso, última medição/comunicação com horário.
 - B2: filtros na URL (conector, potência, preço, disponível agora, compatível), distância em linha reta só no navegador (localização não enviada nem gravada), compatibilidade pelo tipo de conector.
 - Defeitos corrigidos com teste: parada reaproveitava comando de outra transação da mesma estação; demonstração não emitia RemoteStart (regressão do P13).
-- Verificação: `npm test` → 23 arquivos, **244 testes**; lint 0; typecheck 0; Playwright **18 passed**. Não repetido: `e2e:rotas`; CI remoto não executado (sem push).
+- Verificação: `npm test` → 23 arquivos, **244 testes**; lint 0; typecheck 0; Playwright **18 passed**. Não repetido: `e2e:rotas`. CI remoto 40814257774 (`3d53154`): `check` e `docker` verdes (244 testes, 18 Playwright).
 - Pendente: B3 (valor/kWh) aguarda faixa de valores da WAPE; mapa/rotas dependem de provedor; fases C–F dependem de decisões comerciais/jurídicas.
 
 ## P21 — Preparação para CI remoto e staging (2026-10-28)
