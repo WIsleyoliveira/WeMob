@@ -1,6 +1,6 @@
 # P23 · B3 — Compra da recarga por valor ou por kWh: especificação técnica (2026-10-29)
 
-**Status: PREPARADO, NÃO IMPLEMENTADO NO FLUXO.** Bloqueado pela definição da WAPE (§8). Nenhuma regra comercial foi inventada; o fluxo de pagamento em vigor não foi alterado. Produção continua **NÃO AUTORIZADA**.
+**Status (atualizado em 2026-10-29): compra por VALOR integrada e DESLIGADA por padrão** — liga só com `CHARGE_AMOUNT_MIN`/`CHARGE_AMOUNT_MAX` (decisão 1 da WAPE, `docs/P23_B3_DECISOES_WAPE.md`); sem elas o comportamento é idêntico ao anterior (`PAYMENT_PREAUTH_AMOUNT`). Compra por **kWh** só na regra pura (decisões 4 e 6). Nenhuma regra comercial inventada. Produção **NÃO AUTORIZADA**. Matriz de auditoria em §10.
 
 Legenda: **[EM VIGOR]** já implementado e testado · **[PREPARADO]** código puro existente, não conectado · **[PROPOSTA]** desenho técnico ainda não aprovado · **[DECISÃO]** depende da WAPE/Asaas.
 
@@ -75,5 +75,23 @@ Legenda: **[EM VIGOR]** já implementado e testado · **[PREPARADO]** código pu
 1. Valor mínimo de cobrança por Pix e por cartão.
 2. Regra e prazo do estorno **parcial** de cartão (sandbox × produção) — condiciona a devolução da sobra no cartão.
 
-## 9. Fora do escopo desta preparação
-Nenhuma tela, ação, migração ou mudança de contrato foi feita; o valor cobrado continua sendo `PAYMENT_PREAUTH_AMOUNT`. As variáveis `CHARGE_AMOUNT_MIN`/`CHARGE_AMOUNT_MAX` são **propostas** e não estão no `.env.example` nem são lidas por nenhum fluxo.
+## 9. Escopo
+- **Primeira preparação (`9667972`)**: só a regra pura e esta especificação.
+- **Integração por valor (atualização de 29/10)**: `startCharge`, a ação, o `StartForm` e as duas telas de início leem `CHARGE_AMOUNT_MIN`/`CHARGE_AMOUNT_MAX` (comentadas no `.env.example`, **sem valor**). Sem migração e sem mudança no contrato do pagamento. Os marcadores [PROPOSTA] das seções 1, 2 e 4 que tratam da compra **por valor** estão implementados (ver §10). Os de **kWh** e de tarifa cotada continuam como proposta.
+
+## 10. Matriz de auditoria (2026-10-29, após a integração por valor)
+| Requisito | Estado | Evidência no código | Testes | Decisão externa | Critério de aceite |
+|---|---|---|---|---|---|
+| Escolher por valor (R$) | **Implementado, desligado** | `startSchema.amount`, `purchaseOptions`, `chargeAmountFor` (`src/server/drivers/charging.ts`); `StartForm` com campo e resumo (`src/app/motorista/start-form.tsx`) | `asaas.test.ts` "B3 — compra por valor" (4); Playwright `compra-valor.spec.ts` | WAPE 1 (faixa), 2, 3 | faixa oficial configurada em homologação; checklist §1 verde em sandbox |
+| Escolher por kWh | **Só preparação** (regra pura) | `quoteByEnergy` (`src/domain/charging/purchase.ts`); não exposto | `purchase.test.ts` | WAPE 2, 4, 6 | decisões registradas; integração + Playwright; tarifa cotada gravada (migração aditiva) |
+| Validação no navegador | **Implementado** | `StartForm` desabilita envio fora da faixa / >2 casas | Playwright `compra-valor.spec.ts` | — | — |
+| Validação no servidor (obrigatória) | **Implementado** | `chargeAmountFor` + `validatePurchaseAmount` antes de criar pedido/cobrança; sem faixa, valor do cliente é recusado | `asaas.test.ts` B3 (recusas sem criar nada) | — | — |
+| Cálculo valor × energia × tarifa × margem | **Implementado** (por valor) | `quoteByAmount` usa `sessionLimit`; tarifa vigente da estação; sem impostos/taxas extras (não existem no `Tariff`) | `purchase.test.ts` | WAPE 5 (exibição); taxas extras (diagnóstico §4-10) | resumo = limite real da sessão (verificado: R$ 37,50 → limite R$ 33,75) |
+| Precisão decimal e arredondamento | **Implementado** | Decimal; valor 2 casas; limite ROUND_DOWN; energia ROUND_DOWN 3 casas | `purchase.test.ts` | WAPE 5 | — |
+| Confirmação antes do pagamento | **Implementado** (resumo) | `PurchaseSummary` (cobra/reserva agora, para em, energia estimada, tarifa confirmada no início, devolução) | Playwright | WAPE 7 (texto oficial) | texto aprovado |
+| Integração com pagamento | **Implementado** | valor calculado no servidor → `createChargePayment` (idempotente por `charge:<pedido>`) | `asaas.test.ts` B3 (corpo do POST com `value` escolhido) | Asaas A1 (mínimo de cobrança) | — |
+| Associação cliente/sessão/pedido/estação/conector/comando | **Em vigor** | `ChargeRequest` (driver, estação, conector, idTag, commandId, payment, session); paradas por transação | `payments.test.ts`, `asaas.test.ts` | — | — |
+| Indisponível / recusado / falha / cancelamento / interrupção | **Em vigor** (inalterado) | `expireStaleChargeRequests`, `cancelChargeRequest`, `continueAfterPayment`, limite, alertas | suíte existente | — | checklist §3–§7 |
+| Reconciliação pago × consumido × devolvido | **Em vigor** (inalterado) | `onSessionStopped` → `settleSessionPayment`; `reconcile` | suíte existente | Asaas B (parcial no cartão) | ciclo completo em sandbox com recarga real simulada |
+| Idempotência (pedido, comando, webhook, pagamento) | **Em vigor** | índices parciais (1 pedido aberto por motorista/conector), `PaymentOperation`, `OcppMessage`, `PaymentEvent` | `asaas.test.ts` B3 "pedido repetido não gera segunda cobrança" + existentes | — | — |
+| Registro do valor escolhido | **Implementado** (auditoria) | `charge.requested` com `purchase {mode, amount, pricePerKwh, pricePerMin, tariffValidFrom}`; valor cobrado em `Payment.amountAuthorized` | `asaas.test.ts` B3 | WAPE 6 (se a cotação precisar ser honrada → coluna própria) | — |
