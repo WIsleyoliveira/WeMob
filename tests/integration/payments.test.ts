@@ -6,7 +6,7 @@ import { createSite, createStation, upsertConnector, addTariff } from "@/server/
 import { signupDriver, resolveDriver, loginDriver, logoutDriver } from "@/server/drivers/auth";
 import { resolveSession } from "@/server/auth/session";
 import { cancelChargeRequest, driverAwareAuthorizer, expireStaleChargeRequests, onSessionStarted, onSessionStopped, startCharge, stopCharge } from "@/server/drivers/charging";
-import { deleteMyAccount, exportMyData, getMySession } from "@/server/drivers/service";
+import { deleteMyAccount, exportMyData, getMyChargeRequest, getMySession } from "@/server/drivers/service";
 import { getPayment, listPayments, processWebhook, reconcile, requestRefund, retryPendingWebhookEvents, applyProviderState } from "@/server/payments/service";
 import { sandboxControl, sandboxSettle, signSandbox, SANDBOX_SIGNATURE_HEADER } from "@/server/payments/sandbox";
 import { bootstrapOperator, createOrg, createUser, resetDb } from "./fixtures";
@@ -247,6 +247,58 @@ describe("motoristas: autenticação e isolamento", () => {
     await expect(stopCharge(other, session.id)).rejects.toThrow(/não encontrada/);
     const cmd = await stopCharge(driver, session.id);
     expect(cmd.type).toBe("REMOTE_STOP");
+  });
+});
+
+describe("P23 B1 — estados de início e encerramento vistos pelo motorista", () => {
+  async function twoConnectors() {
+    const ctx = await setup("SIMULATED");
+    await upsertConnector(ctx.admin.ctx, { stationId: ctx.station.id, connectorId: 2, type: "CCS2", maxPowerKw: 60 });
+    await ctx.call(`st2-${++seq}`, "StatusNotification", { connectorId: 2, errorCode: "NoError", status: "Available", timestamp: iso(new Date()) });
+    const { token } = await signupDriver({ name: "Bruno", email: `bruno${seq}@ex.com`, password: "senha-bruno-123", consent: true });
+    return { ...ctx, other: (await resolveDriver(token))! };
+  }
+  const startOn = (call: (id: string, a: string, p: unknown) => Promise<unknown>, connectorId: number, idTag: string) =>
+    call(`start-${++seq}`, "StartTransaction", { connectorId, idTag, meterStart: 0, timestamp: iso(new Date()) }) as Promise<{ result: { transactionId: number } }>;
+
+  it("início: pedido mostra ordem enviada e depois aceita pelo carregador; só a StartTransaction cria a sessão", async () => {
+    const { driver, station } = await setup("SIMULATED");
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    expect(await db.remoteCommand.count({ where: { type: "REMOTE_START", stationId: station.id } })).toBe(1); // demonstração também envia o RemoteStart
+    expect(await getMyChargeRequest(driver, req.id)).toMatchObject({ status: "START_REQUESTED", startCommandStatus: "PENDING" });
+    await db.remoteCommand.update({ where: { id: req.commandId! }, data: { status: "ACCEPTED" } });
+    expect(await getMyChargeRequest(driver, req.id)).toMatchObject({ status: "START_REQUESTED", startCommandStatus: "ACCEPTED", sessionId: null });
+  });
+
+  it("encerramento fica registrado na sessão (sobrevive a recarregar a página) e segue o comando real", async () => {
+    const { driver, station, call } = await setup("SIMULATED");
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    const { result } = await startOn(call, 1, req.idTag);
+    const session = await db.chargingSession.findFirstOrThrow();
+    expect((await getMySession(driver, session.id)).stopCommand).toBeNull();
+    const cmd = await stopCharge(driver, session.id);
+    expect((await getMySession(driver, session.id)).stopCommand).toMatchObject({ id: cmd.id, status: "PENDING" });
+    await db.remoteCommand.update({ where: { id: cmd.id }, data: { status: "ACCEPTED" } });
+    expect((await getMySession(driver, session.id)).stopCommand).toMatchObject({ status: "ACCEPTED" });
+    await call(`stop-${++seq}`, "StopTransaction", { transactionId: result.transactionId, meterStop: 5000, timestamp: iso(new Date()) });
+    expect((await getMySession(driver, session.id)).session.status).toBe("COMPLETED");
+  });
+
+  it("dois conectores na mesma estação: o encerramento de um motorista não reaproveita o comando do outro", async () => {
+    const { driver, other, station, call } = await twoConnectors();
+    const a = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    const b = await startCharge(other, { identity: station.ocppIdentity, connectorId: 2 });
+    const ta = (await startOn(call, 1, a.idTag)).result.transactionId;
+    const tb = (await startOn(call, 2, b.idTag)).result.transactionId;
+    const sa = await db.chargingSession.findFirstOrThrow({ where: { transactionId: ta } });
+    const sb = await db.chargingSession.findFirstOrThrow({ where: { transactionId: tb } });
+    const ca = await stopCharge(driver, sa.id);
+    const cb = await stopCharge(other, sb.id);
+    expect(cb.id).not.toBe(ca.id);
+    expect(cb.payload).toEqual({ transactionId: tb });
+    expect(await stopCharge(other, sb.id)).toMatchObject({ id: cb.id }); // repetir o clique não cria outro comando
+    expect((await getMySession(driver, sa.id)).stopCommand).toMatchObject({ id: ca.id });
+    expect((await getMySession(other, sb.id)).stopCommand).toMatchObject({ id: cb.id });
   });
 });
 

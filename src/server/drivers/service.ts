@@ -120,6 +120,12 @@ export async function getMySession(driver: DriverContext | null, sessionId: stri
   if (!s) throw notFound("Sessão não encontrada.");
   const live = s.status !== "COMPLETED";
   const calc = sessionAmount(s, new Date(), s.lastMeterWh);
+  // Último pedido de parada DESTA transação (motorista, limite financeiro ou equipe): o estado sobrevive a recarregar a página.
+  const stop = await db.remoteCommand.findFirst({
+    where: { stationId: s.stationId, type: "REMOTE_STOP", payload: { equals: { transactionId: s.transactionId } }, createdAt: { gte: s.startedAt } },
+    orderBy: { createdAt: "desc" },
+    select: { id: true, status: true, requestedById: true, createdAt: true },
+  });
   return {
     session: s,
     energyKwh: sessionEnergyWh(s) / 1000,
@@ -129,6 +135,11 @@ export async function getMySession(driver: DriverContext | null, sessionId: stri
     payment: s.payments[0] ?? null,
     demo: s.environment === "SIMULATED",
     lastPowerW: s.measurements[0]?.powerW ?? null,
+    /** Horário (relógio do carregador) da última medição recebida. */
+    lastMeasurementAt: s.measurements[0]?.timestamp ?? null,
+    /** Última comunicação do carregador (relógio do servidor). */
+    lastSeenAt: s.station.lastSeenAt,
+    stopCommand: stop ? { id: stop.id, status: stop.status, byLimit: stop.requestedById === "system:limit", createdAt: stop.createdAt } : null,
   };
 }
 
@@ -155,7 +166,11 @@ export async function listMySupport(driver: DriverContext | null) {
 
 export async function getMyChargeRequest(driver: DriverContext | null, id: string) {
   requireDriver(driver);
-  return db.chargeRequest.findFirst({ where: { id, driverId: driver.driverId }, include: { payment: true } });
+  const r = await db.chargeRequest.findFirst({ where: { id, driverId: driver.driverId }, include: { payment: true } });
+  if (!r) return null;
+  // Estado real da ordem de início no carregador: enviada ≠ aceita ≠ recarga iniciada.
+  const cmd = r.commandId ? await db.remoteCommand.findUnique({ where: { id: r.commandId }, select: { status: true } }) : null;
+  return { ...r, startCommandStatus: cmd?.status ?? null };
 }
 
 // ── LGPD: acesso/portabilidade e eliminação a pedido do titular ──

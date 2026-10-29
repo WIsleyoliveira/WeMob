@@ -94,7 +94,9 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
     });
   await audit({ action: "charge.requested", entityType: "ChargeRequest", entityId: request.id, data: { station: identity, connectorId, demo, method } });
 
-  if (demo) return issueStart(request.id);
+  // Demonstração: o pedido já nasce START_REQUESTED (sem pagamento). Sem o `from`, a transição condicional
+  // não acontecia e nenhum RemoteStart era emitido (regressão do P13, achada no P23 B1).
+  if (demo) return issueStart(request.id, "START_REQUESTED");
 
   // PREAUTH: valor reservado, NÃO cobrado. PREPAID: Pix ou cartão a pagar (valor máximo da recarga; a sobra é devolvida).
   // O pagamento é vinculado ao pedido ANTES de aplicar o estado, para o ouvinte encontrar o pedido.
@@ -208,7 +210,7 @@ export async function checkSessionLimit(sessionId: string, now = new Date()) {
   // Reserva atômica: só um processo pede a parada.
   const claimed = await db.chargingSession.updateMany({ where: { id: s.id, limitStopRequestedAt: null }, data: { limitStopRequestedAt: now, limitWarnedAt: s.limitWarnedAt ?? now } });
   if (claimed.count !== 1) return state;
-  const pending = await db.remoteCommand.findFirst({ where: { stationId: s.stationId, type: "REMOTE_STOP", status: { in: ["PENDING", "SENT"] } } });
+  const pending = await db.remoteCommand.findFirst({ where: pendingStopWhere(s) });
   const cmd = pending ?? (await db.remoteCommand.create({ data: { stationId: s.stationId, type: "REMOTE_STOP", payload: { transactionId: s.transactionId }, requestedById: "system:limit" } }));
   await db.chargingSession.update({ where: { id: s.id }, data: { limitStopCommandId: cmd.id } });
   await audit({ action: "session.limit_stop_requested", entityType: "ChargingSession", entityId: s.id, data: { estimate: estimate.toFixed(2), limit: s.limitAmount.toString(), funded: s.fundedAmount?.toString() ?? null, commandId: cmd.id } });
@@ -316,12 +318,20 @@ export async function cancelChargeRequest(driver: DriverContext | null, requestI
 }
 
 /** Encerramento pelo motorista: somente a própria sessão ativa. */
+/**
+ * Parada ainda em curso DESTA transação. Antes o reaproveitamento olhava só a estação: com dois conectores,
+ * o pedido de um motorista devolvia o comando do outro e a sua recarga não era encerrada (P23 B1).
+ */
+function pendingStopWhere(s: { stationId: string; transactionId: number }): Prisma.RemoteCommandWhereInput {
+  return { stationId: s.stationId, type: "REMOTE_STOP", status: { in: ["PENDING", "SENT"] }, payload: { equals: { transactionId: s.transactionId } } };
+}
+
 export async function stopCharge(driver: DriverContext | null, sessionId: string) {
   requireDriver(driver);
   const s = await db.chargingSession.findFirst({ where: { id: sessionId, driverId: driver.driverId } });
   if (!s) throw notFound("Sessão não encontrada.");
   if (s.status !== "ACTIVE") throw new AppError("CONFLICT", s.status === "COMMUNICATION_LOST" ? "Carregador sem comunicação: o encerramento será registrado quando ele reconectar." : "Sessão já encerrada.");
-  const pending = await db.remoteCommand.findFirst({ where: { stationId: s.stationId, type: "REMOTE_STOP", status: { in: ["PENDING", "SENT"] } } });
+  const pending = await db.remoteCommand.findFirst({ where: pendingStopWhere(s) });
   if (pending) return pending;
   const cmd = await db.remoteCommand.create({ data: { stationId: s.stationId, type: "REMOTE_STOP", payload: { transactionId: s.transactionId }, requestedById: `driver:${driver.driverId}` } });
   await audit({ action: "charge.stop_requested", entityType: "ChargingSession", entityId: s.id });

@@ -13,6 +13,7 @@ import { CardPanel } from "../card-panel";
 import { OrderProgress } from "../progress";
 import { pixPaymentWindowMs } from "@/server/drivers/charging";
 import { safeInvoiceUrl } from "@/domain/payments/invoice-url";
+import { START_STAGE_TEXT, startStage } from "@/domain/charging/driver-state";
 
 export const dynamic = "force-dynamic";
 
@@ -24,6 +25,13 @@ const payBy = (createdAt: Date, gatewayExpiry: Date | null) => {
 
 const STEP = { AWAITING_PAYMENT: "Falta só o pagamento", START_REQUESTED: "Aguardando o carregador iniciar", STARTED: "Recarga iniciada", FAILED: "Não foi possível iniciar", CANCELLED: "Pedido cancelado", EXPIRED: "Pagamento expirado" } as const;
 
+/** Demonstração: mesmas etapas, sem menção a pagamento (nada é cobrado). */
+const DEMO_START_TEXT = {
+  START_SENDING: "Estamos enviando a ordem de início ao carregador simulado.",
+  START_ACCEPTED: "O carregador simulado aceitou a ordem de início. Aguardando o início da recarga.",
+  START_REFUSED: "O carregador simulado não aceitou a ordem de início. Se não iniciar dentro do prazo, o pedido é encerrado.",
+} as const;
+
 export default async function PedidoPage({ params }: { params: Promise<{ id: string }> }) {
   const driver = await requireDriverPage();
   const { id } = await params;
@@ -33,6 +41,7 @@ export default async function PedidoPage({ params }: { params: Promise<{ id: str
   if (r.sessionId) redirect(`/motorista/recarga/${r.sessionId}`);
   const waiting = ["AWAITING_PAYMENT", "START_REQUESTED"].includes(r.status);
   const cardUrl = safeInvoiceUrl(r.payment?.invoiceUrl ?? null);
+  const stage = startStage(r.status, r.startCommandStatus);
   return (
     <>
       {waiting && <AutoRefresh ms={3000} />}
@@ -41,7 +50,9 @@ export default async function PedidoPage({ params }: { params: Promise<{ id: str
       {r.demo && <Alert tone="warning" className="mt-4">Demonstração: sem cobrança.</Alert>}
       {waiting && (
         <p className="mt-4 rounded-lg bg-navy-50 px-3 py-2 text-sm text-navy-700" role="status">
-          {r.status === "START_REQUESTED" ? "Pagamento confirmado. Estamos pedindo ao carregador para iniciar — mantenha o cabo conectado." : "Esta tela confere o pagamento sozinha. Mantenha o cabo conectado ao veículo."}
+          {stage === "START_SENDING" || stage === "START_ACCEPTED" || stage === "START_REFUSED"
+            ? r.demo ? DEMO_START_TEXT[stage] : START_STAGE_TEXT[stage]
+            : "Esta tela confere o pagamento sozinha. Mantenha o cabo conectado ao veículo."}
         </p>
       )}
       {r.failure && <Alert tone="danger" className="mt-4">{r.failure}</Alert>}
