@@ -216,3 +216,31 @@ Commits locais (sem push): `77d9b51` (B1), `d965410` (B2). Nenhuma migração, n
 | Mapa, busca por endereço, rotas | BLOQUEADO EXTERNAMENTE (decisão 3) |
 | Escolha por valor/kWh (B3) | PENDENTE — aguarda decisão 2 (faixa de valores) |
 | Comportamento em carregador físico | BLOQUEADO EXTERNAMENTE (sem hardware) |
+
+## 9. Fase B — entrega B4 (2026-10-29)
+
+Commit local `1ce8b5b`. Nenhuma migração, nenhuma dependência nova.
+
+| Tela | Mudança |
+|---|---|
+| `/motorista/historico` | filtros por período (7/30/90 dias), situação (em andamento, sem comunicação, encerradas) e estação onde o motorista já carregou; transação, conector, link do recibo e "Problema com esta recarga?" por item |
+| `/motorista/ajuda` | contexto vindo do link (`?sessao=` / `?pedido=`), conferido como do próprio motorista; tipos de problema (pagou e não começou, cobrança duplicada, valor divergente, não encerra, carregador sem resposta, estorno pendente, outro) com orientação; instrução de segurança para risco físico; o tipo vira o assunto do chamado |
+| `/motorista/recarga/[id]`, `/recibo/[id]`, `/pedido/[id]` | atalhos para a ajuda com a recarga/pedido e o tipo sugerido (sem comunicação → sem resposta; encerramento recusado → não encerra; recibo → valor divergente; pedido falho → pagou e não começou) |
+
+Reaproveitado: `listMySessions` (agora com filtros), `createSupportRequest` (tipo e referência do pedido), `getMySession`, `getMyChargeRequest`, `SupportRequest.sessionId`. Novo: `src/domain/charging/history.ts`, `src/domain/support/driver-help.ts`, `listMySessionStations`.
+
+| Verificação | Resultado |
+|---|---|
+| `npm test` | 24 arquivos, **250 testes** |
+| lint / typecheck | 0 / 0 |
+| Playwright | **19 passed** (+1: histórico, recibo, ajuda com contexto, chamado gravado com tipo, recarga alheia ignorada) |
+| CI remoto | não executado (sem push) |
+
+| Requisito | Estado |
+|---|---|
+| Histórico com filtros por período, estação e estado | CONCLUÍDO COM EVIDÊNCIA |
+| Recibo acessível pelo histórico | CONCLUÍDO COM EVIDÊNCIA |
+| Ajuda contextual e chamado associado à recarga sem redigitar dados | CONCLUÍDO COM EVIDÊNCIA |
+| Fluxos para problemas críticos | PARCIAL — orientação e triagem; não há categoria própria no banco nem fluxo automatizado de resolução |
+| Retorno ao cliente pelo canal escolhido | BLOQUEADO EXTERNAMENTE — nenhum canal de notificação configurado; a mensagem "responderá pelo seu e-mail" depende de resposta manual da equipe |
+| QR do recibo para o celular (totem) | PENDENTE — Fase F |

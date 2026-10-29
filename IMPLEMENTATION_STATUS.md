@@ -12,6 +12,8 @@ Diagnóstico e plano: `docs/P23_CX360_DIAGNOSTICO.md` (matriz de funcionalidades
 - B2: filtros na URL (conector, potência, preço, disponível agora, compatível), distância em linha reta só no navegador (localização não enviada nem gravada), compatibilidade pelo tipo de conector.
 - Defeitos corrigidos com teste: parada reaproveitava comando de outra transação da mesma estação; demonstração não emitia RemoteStart (regressão do P13).
 - Verificação: `npm test` → 23 arquivos, **244 testes**; lint 0; typecheck 0; Playwright **18 passed**. Não repetido: `e2e:rotas`. CI remoto 40814257774 (`3d53154`): `check` e `docker` verdes (244 testes, 18 Playwright).
+- B4 (`1ce8b5b`): histórico com filtros (período, situação, estação), recibo e "Problema com esta recarga?"; ajuda contextual com recarga/pedido conferidos e tipo de problema (vira o assunto); 250 testes, 19 Playwright (local; CI não executado).
+- Ambiente (29/10): o Postgres local não subia após reinício do Mac (`postmaster.pid` órfão); restaurado com autorização. A leitura agendada do estorno de R$ 75,10 rodou às 11:49: gateway sem estorno; complemento local depois da restauração: `SCHEDULED` vencido, nada executado (`docs/homologacao/estorno-75-10-2026-10-29.md`).
 - Pendente: B3 (valor/kWh) aguarda faixa de valores da WAPE; mapa/rotas dependem de provedor; fases C–F dependem de decisões comerciais/jurídicas.
 
 ## P21 — Preparação para CI remoto e staging (2026-10-28)
