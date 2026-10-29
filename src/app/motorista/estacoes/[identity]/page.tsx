@@ -1,7 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getDriver } from "@/server/drivers/current";
-import { getDriverStation } from "@/server/drivers/service";
+import { getDriverStation, listMyVehicles } from "@/server/drivers/service";
+import { CONNECTOR_LABEL, compatibleVehicles } from "@/domain/stations/discovery";
 import { Alert } from "@/components/ui/alert";
 import { ButtonLink } from "@/components/ui/button";
 import { ConnectorStatusBadge } from "@/components/app/station-badges";
@@ -15,6 +16,7 @@ export default async function DriverStationPage({ params }: { params: Promise<{ 
   const identity = decodeURIComponent((await params).identity);
   const s = await getDriverStation(identity).catch(() => notFound());
   const driver = await getDriver();
+  const vehicles = await listMyVehicles(driver);
   const demo = s.environment === "SIMULATED";
   const pay = paymentOptions();
   const maps = s.site.latitude && s.site.longitude ? `https://www.google.com/maps/search/?api=1&query=${s.site.latitude},${s.site.longitude}` : null;
@@ -52,10 +54,19 @@ export default async function DriverStationPage({ params }: { params: Promise<{ 
           return (
             <div key={c.connectorId} className="rounded-xl border border-navy-100 bg-white p-4">
               <div className="flex items-center justify-between gap-2">
-                <p className="font-medium">Conector {c.connectorId} · {c.type}{Number(c.maxPowerKw) > 0 ? ` · ${c.maxPowerKw} kW` : ""}</p>
+                <p className="font-medium">Conector {c.connectorId} · {CONNECTOR_LABEL[c.type]}{Number(c.maxPowerKw) > 0 ? ` · ${c.maxPowerKw} kW` : ""}</p>
                 <ConnectorStatusBadge status={c.status} />
               </div>
               <p className="mt-1 text-xs text-navy-500">{c.statusReceivedAt ? `Status recebido ${dateTime(c.statusReceivedAt)}` : "Sem status recebido"}</p>
+              {vehicles.length > 0 && (() => {
+                const ok = compatibleVehicles(c, vehicles);
+                return (
+                  <p className="mt-1 text-xs text-navy-700">
+                    {ok.length > 0 ? `Compatível com ${ok.map((v) => v.label).join(", ")} pelo tipo de conector.` : `Nenhum veículo seu cadastrado com conector ${CONNECTOR_LABEL[c.type]}.`}
+                    <span className="text-navy-500"> A potência aceita pelo veículo não é verificada.</span>
+                  </p>
+                );
+              })()}
               <div className="mt-3">
                 {driver ? <StartForm identity={s.identity} connectorId={c.connectorId} label={can ? (demo ? "Iniciar recarga (demonstração)" : "Iniciar recarga") : "Indisponível"} disabled={!can} methods={demo ? [] : pay.methods} /> : <ButtonLink href={`/motorista/entrar?voltar=${encodeURIComponent(`/motorista/estacoes/${s.identity}`)}`} className="w-full" size="lg">Entrar para carregar</ButtonLink>}
               </div>

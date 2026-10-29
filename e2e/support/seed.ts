@@ -49,6 +49,23 @@ export async function seedE2E() {
   await db.chargingStation.update({ where: { id: station.id }, data: { connectionState: "CONNECTED", lastSeenAt: new Date() } });
   await db.connector.updateMany({ where: { stationId: station.id }, data: { status: "AVAILABLE", statusAt: new Date(), statusReceivedAt: new Date() } });
 
+  // P23 B2: estações SIMULADAS (aba Demonstração) para a descoberta — coordenadas, conectores e preços distintos.
+  async function demoStation(name: string, city: string, lat: number, lon: number, connector: { type: "CCS2" | "TYPE2"; maxPowerKw: number }, pricePerKwh: number, fresh: boolean) {
+    const site = await createSite(ctx, { name, city, state: city === "São Paulo" ? "SP" : "RJ", isPublic: false, latitude: lat, longitude: lon });
+    const { station: st } = await createStation(ctx, { siteId: site.id, ocppIdentity: `SIM-E2E-${randomBytes(2).toString("hex").toUpperCase()}`, environment: "SIMULATED", heartbeatInterval: 3600 });
+    await upsertConnector(ctx, { stationId: st.id, connectorId: 1, ...connector });
+    await addTariff(ctx, { siteId: site.id, pricePerKwh, pricePerMin: 0, validFrom: new Date(Date.now() - 86400000) });
+    const seen = fresh ? new Date() : new Date(Date.now() - 3 * 86400000);
+    await db.chargingStation.update({ where: { id: st.id }, data: { connectionState: fresh ? "CONNECTED" : "DISCONNECTED", lastSeenAt: seen } });
+    await db.connector.updateMany({ where: { stationId: st.id }, data: { status: "AVAILABLE", statusAt: seen, statusReceivedAt: seen } });
+    return { name, identity: st.ocppIdentity };
+  }
+  const demo = {
+    spFast: await demoStation("Demo SP Rápido (E2E)", "São Paulo", -23.5505, -46.6333, { type: "CCS2", maxPowerKw: 60 }, 2, true),
+    rjType2: await demoStation("Demo RJ Tipo 2 (E2E)", "Rio de Janeiro", -22.9068, -43.1729, { type: "TYPE2", maxPowerKw: 22 }, 1.5, true),
+    spOffline: await demoStation("Demo SP Sem Sinal (E2E)", "São Paulo", -23.56, -46.65, { type: "CCS2", maxPowerKw: 150 }, 2.5, false),
+  };
+
   async function driver(name: string) {
     const pw = password();
     const email = `e2e.motorista.${randomBytes(3).toString("hex")}@teste.local`;
@@ -98,6 +115,7 @@ export async function seedE2E() {
     siteA: siteA.id,
     siteB: siteB.id,
     station: { id: station.id, identity: station.ocppIdentity },
+    demo,
     driverA,
     driverB,
     payments: { refund: payRefund.id, states: payStates.id, scheduledFuture: payScheduledFuture.id, scheduledDue: payScheduledDue.id, split: paySplit.id },

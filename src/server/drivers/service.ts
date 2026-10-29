@@ -42,6 +42,12 @@ export async function addVehicle(driver: DriverContext | null, raw: unknown) {
   return db.vehicle.create({ data: { ...d, driverId: driver.driverId } });
 }
 
+/** Conectores dos veículos do motorista, para indicar compatibilidade (só pelo tipo de conector). */
+export async function listMyVehicles(driver: DriverContext | null) {
+  if (!driver) return [];
+  return db.vehicle.findMany({ where: { driverId: driver.driverId }, select: { label: true, connectorTypes: true }, orderBy: { createdAt: "asc" } });
+}
+
 export async function removeVehicle(driver: DriverContext | null, vehicleId: string) {
   requireDriver(driver);
   const r = await db.vehicle.deleteMany({ where: { id: vehicleId, driverId: driver.driverId } });
