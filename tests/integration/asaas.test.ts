@@ -519,6 +519,18 @@ describe("limite financeiro da sessão (P16)", () => {
     expect(after.reviewOpenedAt).toBeNull();
   });
 
+  it("P23: a parada por limite não reaproveita a parada pendente de OUTRA transação da mesma estação", async () => {
+    const { meter, session, tx, station } = await charging();
+    // Outra recarga na mesma estação (outro conector) com encerramento ainda pendente.
+    const other = await db.remoteCommand.create({ data: { stationId: station.id, type: "REMOTE_STOP", payload: { transactionId: tx + 1000 }, requestedById: "driver:outro" } });
+    await meter("m-lim", 22_600); // R$ 45,20 → limite desta sessão
+    const s1 = await session();
+    expect(s1.limitStopCommandId).not.toBeNull();
+    expect(s1.limitStopCommandId).not.toBe(other.id);
+    expect((await db.remoteCommand.findUniqueOrThrow({ where: { id: s1.limitStopCommandId! } })).payload).toEqual({ transactionId: tx });
+    expect((await db.remoteCommand.findUniqueOrThrow({ where: { id: other.id } })).payload).toEqual({ transactionId: tx + 1000 }); // intacta
+  });
+
   it("sem leituras do medidor: a varredura periódica aplica o limite pelo tempo (tarifa por minuto)", async () => {
     const { session, site, admin } = await charging();
     await db.chargingSession.update({ where: { id: (await session()).id }, data: { tariffPricePerKwh: 0, tariffPricePerMin: 1 } }); // R$ 1/min
@@ -743,6 +755,57 @@ describe("estornos", () => {
     await db.refund.update({ where: { id: b.id }, data: { status: "FAILED" } });
     await refreshFromProvider(payment.id, getProvider("asaas"));
     expect(await db.refund.findUniqueOrThrow({ where: { id: a.id } })).toMatchObject({ status: "SUCCEEDED", remoteStatus: "DONE" });
+  });
+
+  it("P23: gateway inacessível no cancelamento → nada muda (agendamento restaurado como estava)", async () => {
+    const { payment, fin } = await captured();
+    fake.control.rejectRefund = NEXT_DAY;
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "diferença parcial" });
+    fake.control.rejectRefund = null;
+    fake.control.failGetPayment = true;
+    await expect(cancelScheduledRefund(fin.ctx, { refundId: r.id, reason: "gateway fora do ar agora" })).rejects.toThrow(/Não foi possível consultar o gateway/);
+    fake.control.failGetPayment = false;
+    const after = await db.refund.findUniqueOrThrow({ where: { id: r.id } });
+    expect(after).toMatchObject({ status: "SCHEDULED", remoteStatus: r.remoteStatus, attempts: r.attempts });
+    expect(after.nextAttemptAt?.getTime()).toBe(r.nextAttemptAt?.getTime());
+    expect(await db.auditEvent.count({ where: { action: "payment.refund_cancelled" } })).toBe(0);
+  });
+
+  it("P23: estorno sem marcador criado ANTES do pedido local não é vinculado a ele", async () => {
+    const { payment, fin } = await captured();
+    const old = new Date(Date.now() - 2 * 3600_000).toISOString(); // feito por fora (ex.: painel do Asaas), antes do pedido
+    fake.payments.get(payment.providerRef)!.refunds.push({ status: "DONE", value: 7, description: null, dateCreated: old });
+    const local = await db.refund.create({ data: { paymentId: payment.id, amount: "7.00", reason: "pedido depois", requestedById: fin.ctx.userId, status: "REQUESTED" } });
+    await refreshFromProvider(payment.id, getProvider("asaas"));
+    expect((await db.refund.findUniqueOrThrow({ where: { id: local.id } })).status).toBe("REQUESTED");
+  });
+
+  it("P23: integral sem marcador — sincronizações e webhooks repetidos não duplicam nem alteram o resultado", async () => {
+    const { payment, fin } = await captured();
+    const total = (await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).amountCaptured.toString();
+    const full = await requestRefund(fin.ctx, { paymentId: payment.id, amount: total, reason: "integral" });
+    expect(full.status).toBe("SUCCEEDED");
+    for (let i = 0; i < 3; i++) await refreshFromProvider(payment.id, getProvider("asaas"));
+    const h = hook("PAYMENT_REFUNDED", payment.providerRef);
+    await processWebhook("asaas", h.body, h.headers);
+    await processWebhook("asaas", h.body, h.headers); // reentrega
+    const p = await db.payment.findUniqueOrThrow({ where: { id: payment.id }, include: { refunds: true } });
+    expect(p.status).toBe("REFUNDED");
+    expect(p.amountRefunded.toString()).toBe(total);
+    expect(p.refunds).toHaveLength(1);
+    expect(p.refunds[0]).toMatchObject({ status: "SUCCEEDED", remoteStatus: "DONE" });
+    expect(fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund"))).toHaveLength(1);
+  });
+
+  it("P23: o restante depois de um parcial já devolvido vai COM valor (não é tratado como integral)", async () => {
+    const { payment, fin } = await captured();
+    const total = new Decimal((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).amountCaptured.toString());
+    expect((await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "parcial" })).status).toBe("SUCCEEDED");
+    const rest = total.minus(10).toFixed(2);
+    expect((await requestRefund(fin.ctx, { paymentId: payment.id, amount: rest, reason: "restante" })).status).toBe("SUCCEEDED");
+    const bodies = fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund")).map((x) => JSON.parse(x.body!));
+    expect(bodies.map((b) => b.value)).toEqual([10, Number(rest)]);
+    expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("REFUNDED");
   });
 
   it("P23: não cancela se o gateway já registra o estorno (marcador), nem com retentativa em andamento, nem sem permissão", async () => {

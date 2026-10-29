@@ -244,3 +244,31 @@ Reaproveitado: `listMySessions` (agora com filtros), `createSupportRequest` (tip
 | Fluxos para problemas críticos | PARCIAL — orientação e triagem; não há categoria própria no banco nem fluxo automatizado de resolução |
 | Retorno ao cliente pelo canal escolhido | BLOQUEADO EXTERNAMENTE — nenhum canal de notificação configurado; a mensagem "responderá pelo seu e-mail" depende de resposta manual da equipe |
 | QR do recibo para o celular (totem) | PENDENTE — Fase F |
+
+## 10. Pendências externas — registro atualizado (2026-10-29)
+
+Nada abaixo deve ser implementado ou habilitado antes da decisão/acesso indicado. Valores provisórios **não** entram no código como definitivos.
+
+### A. WAPE — regra comercial do B3 (escolha por valor ou kWh)
+| O que falta | Quem decide | Como validar | Critério de conclusão |
+|---|---|---|---|
+| valor mínimo e máximo por recarga; se o motorista escolhe por R$, por kWh ou ambos; arredondamento do kWh → R$; se o valor atual (`PAYMENT_PREAUTH_AMOUNT`) continua como padrão | comercial + financeiro WAPE | decisão escrita; B3 implementado com faixa configurável validada no servidor; testes de manipulação do valor pelo cliente; Playwright do resumo antes de pagar | faixa aprovada por escrito, B3 em `main` com CI verde e homologado no sandbox |
+
+### B. Asaas — estorno parcial no cartão
+| O que falta | Quem fornece | Como validar | Critério de conclusão |
+|---|---|---|---|
+| regra e prazo do estorno **parcial** de cartão (sandbox × produção; dependência de adquirente/bandeira); confirmar que o integral sem `value` e o `description: null` se comportam igual em produção | dono da conta Asaas → suporte Asaas | resposta oficial registrada (canal, data, texto) em `docs/homologacao/`; teste no sandbox seguindo a regra informada | regra documentada pelo Asaas; enquanto isso o parcial de cartão **não** é considerado confiável para produção (o integral foi aceito no sandbox — evidência em `docs/homologacao/estorno-75-10-2026-10-29.md`) |
+
+### C. Decisões e integrações (preservadas do §4)
+| Item | O que falta | Quem decide / fornece | Como validar | Critério de conclusão |
+|---|---|---|---|---|
+| Mapa | provedor de mapas/geocodificação (custo, termos, privacidade, CSP) | produto + jurídico | prova de conceito com o provedor escolhido; CSP ajustada; Playwright | mapa real com dados verificados, sem dado fictício, aprovado |
+| Carteira | parecer regulatório (Banco Central), contábil e fiscal sobre saldo pré-pago em reais | jurídico + contabilidade | parecer escrito | parecer favorável com o modelo permitido; só então desenho técnico |
+| Pontos | regra de pontuação, catálogo, custo máximo, validade, níveis | comercial + financeiro | regra versionada aprovada (quatro olhos) | regra publicada + razão idempotente testada |
+| Planos | definição de "100% de recargas no mês", preços, limites, cancelamento, reajuste; recorrência Asaas no sandbox | comercial + jurídico; conta Asaas | assinatura sandbox: contratar, renovar, falhar, cancelar | plano aprovado por escrito + recorrência validada no sandbox |
+| Totem | hardware, navegador, local; compra como visitante (CPF exigido pelo Asaas) | operações + jurídico | teste no equipamento real | totem homologado no hardware escolhido |
+| Notificações | provedor de e-mail/SMS/push; textos de consentimento (também bloqueia a recuperação de senha do motorista e o retorno dos chamados) | produto + jurídico | envio real em staging com opt-in | canal configurado, consentimento revisado, envio auditado |
+| Split real | 2ª carteira sandbox; métodos elegíveis; base 50% bruto × líquido | dono da conta Asaas; comercial + jurídico | split `DONE` num pagamento sandbox | split validado no sandbox + regra assinada |
+| Carregador físico | equipamento de bancada como estação `TEST` | operações WAPE / fabricante | sessão real: Boot, Start, MeterValues, RemoteStop no limite, Stop | log de sessão real arquivado e limite financeiro comprovado no hardware |
+| Staging | domínio, TLS, cofre, backup, monitoramento, readiness em `/api/health` | gestão WAPE + infraestrutura | runbook "Deploy e migrações" ensaiado | staging no ar com CI verde e migração explícita executada |
+| Produção | habilitação por duas pessoas (`GatewayActivation`), credenciais, permissões de estorno da conta de produção | diretoria WAPE (dois aprovadores) | checklist do relatório técnico (P18 §8) | **NÃO AUTORIZADA** até todos os itens acima aplicáveis estarem concluídos com evidência |
