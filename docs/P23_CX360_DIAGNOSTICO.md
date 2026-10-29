@@ -107,7 +107,7 @@ Legenda: **V** já implementada e validada · **P** parcial · **S** só em simu
 | Item | Estado | Observação |
 |---|---|---|
 | Verde (energia/ação), azul muito escuro (base) | **V** | tokens `brand-*` e `navy-*` |
-| Tiffany como destaque | **D** | token inexistente |
+| Tiffany como destaque | **V** | tokens `tiffany-*` existem (foco dos campos); uso como destaque pontual a definir no redesenho |
 | Nome da marca na interface | **C** | a UI diz **"Sansol Mob"** (layout, metadados, recibo); o P23 fala em **WeMob/WAPE**. Decidir o nome exibido ao cliente antes de redesenhar telas |
 
 ## 3. Jornada do cliente: hoje × alvo
@@ -173,3 +173,46 @@ Critérios de aceite da Fase B: Playwright de ponta a ponta (encontrar estação
 
 ## 7. Proposta para começar
 Iniciar por **B1 + B2** (nenhuma migração, nenhuma dependência externa, reaproveitam serviços validados), cada um em commit local separado, com testes e Playwright novos, sem push sem autorização. **B3** começa assim que a decisão 2 (faixa de valores) for tomada.
+
+---
+
+## 8. Fase B — entregas B1 e B2 (2026-10-29)
+
+Commits locais (sem push): `77d9b51` (B1), `d965410` (B2). Nenhuma migração, nenhuma dependência nova, nenhuma integração externa.
+
+### Telas alteradas
+| Tela | Mudança |
+|---|---|
+| `/motorista/pedido/[id]` | etapa real do início: ordem **enviada** → **aceita pelo carregador** → recarga iniciada; recusa explicada (prazo, sem nova cobrança, análise de estorno). Textos próprios na demonstração |
+| `/motorista/recarga/[id]` | **"Solicitação de encerramento enviada"** lida do comando gravado (sobrevive a recarregar a página); "aceito" ≠ "encerrado"; botão some com pedido em curso e volta como "Pedir o encerramento de novo" se o carregador recusar; última medição e última comunicação com horário |
+| `/motorista` | filtros (conector, potência mínima, preço máximo, disponível agora, compatível com meu veículo), contagem, estado vazio; ordenação opcional por distância em linha reta |
+| `/motorista/estacoes/[identity]` | compatibilidade por conector com os veículos cadastrados (só pelo tipo; potência do veículo não verificada); rótulos de conector legíveis |
+
+### Reaproveitado
+`stopCharge`, `RemoteCommand` (estados existentes), `getMySession`/`getMyChargeRequest`, `listDriverStations`/`getDriverStation`, `effectiveStatus`/`isStationFresh`, `Vehicle.connectorTypes`, `ActionForm`, `Alert`, `StateMessage`, `Select`/`Input`. Novo: `src/domain/charging/driver-state.ts`, `src/domain/stations/discovery.ts`, `listMyVehicles`, `src/app/motorista/nearby-list.tsx`.
+
+### Defeitos encontrados e corrigidos (com teste que falhava antes)
+1. **Encerramento atendia o comando de outra recarga**: `stopCharge` e a parada por limite reaproveitavam qualquer `REMOTE_STOP` pendente da **estação**; com dois conectores, o pedido do motorista B devolvia o comando do motorista A e a recarga de B não parava. Agora o reaproveitamento é por transação.
+2. **Demonstração não enviava RemoteStart** (regressão do P13, `a252e71`): `issueStart` era chamado sem `from: "START_REQUESTED"` para pedidos de demonstração, então a transição condicional não ocorria.
+
+### Testes (saída real)
+| Verificação | Resultado |
+|---|---|
+| `npm test` | 23 arquivos, **244 testes**, 0 falhas (eram 232: +3 `driver-state`, +6 `discovery`, +3 integração B1) |
+| `npm run lint` / `npm run typecheck` | 0 / 0 |
+| `npm run e2e:build && npm run e2e:browser` | **18 passed** (eram 14): teste C ampliado (ordem enviada/aceita, encerramento solicitado/aceito, última comunicação), novo teste de encerramento pelo botão com recarga da página e recusa, 3 testes B2 (filtros, compatibilidade, localização emulada e negada — a posição não aparece em nenhuma requisição) |
+| Visual 375 px (servidor de dev, só leitura) | sem rolagem horizontal; filtros e botão de distância legíveis |
+| `npm run e2e:rotas` | **não repetido** nesta fase |
+| CI remoto | **não executado** (sem push) |
+
+### Classificação
+| Requisito | Estado |
+|---|---|
+| Estados enviada/aceita/iniciada e solicitada/aceita/encerrada | CONCLUÍDO COM EVIDÊNCIA (simulador) |
+| Última informação confiável com horário durante falha | CONCLUÍDO COM EVIDÊNCIA (simulador) |
+| Filtros por conector, potência, preço e disponibilidade | CONCLUÍDO COM EVIDÊNCIA |
+| Distância/mais próxima sem armazenar localização | CONCLUÍDO COM EVIDÊNCIA (geolocalização emulada no navegador) |
+| Compatibilidade pelo veículo | PARCIAL — só tipo de conector; potência AC/DC do veículo não é cadastrada |
+| Mapa, busca por endereço, rotas | BLOQUEADO EXTERNAMENTE (decisão 3) |
+| Escolha por valor/kWh (B3) | PENDENTE — aguarda decisão 2 (faixa de valores) |
+| Comportamento em carregador físico | BLOQUEADO EXTERNAMENTE (sem hardware) |

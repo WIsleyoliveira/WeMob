@@ -1,8 +1,18 @@
 # IMPLEMENTATION_STATUS — Sansol Mob Platform
 
-Atualizado em 2026-10-28 (P21) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**, **P18 (homologação final — apto para staging; não apto para produção)**, **P19 (migrações explícitas, Playwright, Vitest 4 — 0 vulnerabilidades)**, **P20 (gate de staging — apto a iniciar staging; produção não autorizada)**, **P21 (preparação do CI remoto)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
+Atualizado em 2026-10-29 (P23 B1–B2) · Etapas concluídas: **P01**, **P02 (auditoria)**, **P03 (design system)**, **P04 (CRM)**, **P05 (motor financeiro)**, **P06 (estações e OCPP)**, **P07 (motorista e pagamentos)**, **P08 (financeiro, contratos e repasses)**, **P09 (suporte, manutenção e alertas)**, **P10 (auditoria final)**, **P13 (integração Asaas — implementada)**, **P14 (homologação Asaas — sandbox: Pix, QR, pagamento e pedido de estorno confirmados; webhook e split pendentes; segurança revisada)**, **Pagamentos 2 (cartão, confirmação automática, telas do motorista)**, **P15 (cartão e webhook reais no sandbox, vulnerabilidades, build, revisão do ciclo)**, **P16 (estornos com retentativa, limite financeiro por sessão, webhooks com espera, conciliação automática)**, **P17 (auditoria final de aceitação)**, **P18 (homologação final — apto para staging; não apto para produção)**, **P19 (migrações explícitas, Playwright, Vitest 4 — 0 vulnerabilidades)**, **P20 (gate de staging — apto a iniciar staging; produção não autorizada)**, **P21 (preparação do CI remoto)**, **P23 Fase A (diagnóstico CX 360) e Fase B1–B2 (estados da recarga, descoberta)**. Relatório final: `docs/RELATORIO_FINAL.md`. **Não pronto para produção** (ver checklist).
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
+
+## P23 — Customer Experience 360: Fase A e B1–B2 (2026-10-29)
+
+Diagnóstico e plano: `docs/P23_CX360_DIAGNOSTICO.md` (matriz de funcionalidades, 11 decisões externas, riscos, fases B–G). Commits locais `dc0d1db` (Fase A), `77d9b51` (B1), `d965410` (B2); sem push.
+
+- B1: pedido distingue ordem de início enviada/aceita/recusada; recarga mostra "Solicitação de encerramento enviada" lida do comando (sobrevive a recarregar), botão só sem pedido em curso, última medição/comunicação com horário.
+- B2: filtros na URL (conector, potência, preço, disponível agora, compatível), distância em linha reta só no navegador (localização não enviada nem gravada), compatibilidade pelo tipo de conector.
+- Defeitos corrigidos com teste: parada reaproveitava comando de outra transação da mesma estação; demonstração não emitia RemoteStart (regressão do P13).
+- Verificação: `npm test` → 23 arquivos, **244 testes**; lint 0; typecheck 0; Playwright **18 passed**. Não repetido: `e2e:rotas`; CI remoto não executado (sem push).
+- Pendente: B3 (valor/kWh) aguarda faixa de valores da WAPE; mapa/rotas dependem de provedor; fases C–F dependem de decisões comerciais/jurídicas.
 
 ## P21 — Preparação para CI remoto e staging (2026-10-28)
 
