@@ -6,7 +6,7 @@ import { createSite, createStation, upsertConnector, addTariff } from "@/server/
 import { signupDriver, resolveDriver, loginDriver, logoutDriver } from "@/server/drivers/auth";
 import { resolveSession } from "@/server/auth/session";
 import { cancelChargeRequest, driverAwareAuthorizer, expireStaleChargeRequests, onSessionStarted, onSessionStopped, startCharge, stopCharge } from "@/server/drivers/charging";
-import { deleteMyAccount, exportMyData, getMyChargeRequest, getMySession } from "@/server/drivers/service";
+import { createSupportRequest, deleteMyAccount, exportMyData, getMyChargeRequest, getMySession, listMySessions } from "@/server/drivers/service";
 import { getPayment, listPayments, processWebhook, reconcile, requestRefund, retryPendingWebhookEvents, applyProviderState } from "@/server/payments/service";
 import { sandboxControl, sandboxSettle, signSandbox, SANDBOX_SIGNATURE_HEADER } from "@/server/payments/sandbox";
 import { bootstrapOperator, createOrg, createUser, resetDb } from "./fixtures";
@@ -299,6 +299,46 @@ describe("P23 B1 — estados de início e encerramento vistos pelo motorista", (
     expect(await stopCharge(other, sb.id)).toMatchObject({ id: cb.id }); // repetir o clique não cria outro comando
     expect((await getMySession(driver, sa.id)).stopCommand).toMatchObject({ id: ca.id });
     expect((await getMySession(other, sb.id)).stopCommand).toMatchObject({ id: cb.id });
+  });
+});
+
+describe("P23 B4 — histórico filtrado e chamado com contexto", () => {
+  it("filtros do histórico só restringem: nunca mostram recargas de outro motorista", async () => {
+    const { driver, station, call } = await setup("SIMULATED");
+    const { token } = await signupDriver({ name: "Bruno", email: `bruno-b4-${++seq}@ex.com`, password: "senha-bruno-123", consent: true });
+    const other = (await resolveDriver(token))!;
+    const mine = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    const t1 = (await chargerStarts(call, mine.idTag)).result.transactionId;
+    await call(`stop-${++seq}`, "StopTransaction", { transactionId: t1, meterStop: 3000, timestamp: iso(new Date()) });
+    const theirs = await startCharge(other, { identity: station.ocppIdentity, connectorId: 1 });
+    await chargerStarts(call, theirs.idTag);
+
+    expect((await listMySessions(other, {})).map((s) => s.driverId)).toEqual([other.driverId]);
+    expect(await listMySessions(other, { estacao: station.ocppIdentity, estado: "encerrada" })).toHaveLength(0); // a encerrada é do outro
+    expect(await listMySessions(driver, { estacao: station.ocppIdentity, estado: "encerrada" })).toHaveLength(1);
+    expect(await listMySessions(driver, { estado: "andamento" })).toHaveLength(0);
+    await db.chargingSession.updateMany({ where: { driverId: driver.driverId }, data: { startedAt: new Date(Date.now() - 40 * 86_400_000) } });
+    expect(await listMySessions(driver, { periodo: "30" })).toHaveLength(0);
+    expect(await listMySessions(driver, { periodo: "90" })).toHaveLength(1);
+    expect(await listMySessions(driver, { estacao: "OUTRA-ESTACAO" })).toHaveLength(0);
+  });
+
+  it("chamado: tipo vira o assunto; pedido e recarga de outro motorista são recusados", async () => {
+    const { driver, station, call } = await setup("SIMULATED");
+    const { token } = await signupDriver({ name: "Bruno", email: `bruno-b4c-${++seq}@ex.com`, password: "senha-bruno-123", consent: true });
+    const other = (await resolveDriver(token))!;
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    await chargerStarts(call, req.idTag);
+    const session = await db.chargingSession.findFirstOrThrow();
+
+    const t = await createSupportRequest(driver, { topic: "DUPLICADA", message: "Apareceram duas cobranças no extrato.", sessionId: session.id });
+    expect(t).toMatchObject({ subject: "Cobrança aparentemente duplicada", sessionId: session.id });
+    const p = await createSupportRequest(driver, { topic: "SEM_INICIO", message: "Paguei e não começou nada.", requestId: req.id });
+    expect(p.message).toBe(`[Pedido ${req.id}] Paguei e não começou nada.`);
+    await expect(createSupportRequest(other, { topic: "SEM_INICIO", message: "tentando usar pedido alheio", requestId: req.id })).rejects.toThrow(/Pedido não encontrado/);
+    await expect(createSupportRequest(other, { topic: "OUTRO", subject: "abc", message: "tentando usar recarga alheia", sessionId: session.id })).rejects.toThrow(/Sessão não encontrada/);
+    await expect(createSupportRequest(driver, { message: "sem assunto e sem tipo de problema" })).rejects.toThrow();
+    expect(await db.supportRequest.count({ where: { driverId: other.driverId } })).toBe(0);
   });
 });
 

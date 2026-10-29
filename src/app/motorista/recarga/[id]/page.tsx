@@ -84,6 +84,12 @@ export default async function RecargaPage({ params }: { params: Promise<{ id: st
           </ActionForm>
         )}
         {!live && <Link className="text-center text-sm font-medium text-brand-700 underline" href={`/motorista/recibo/${s.id}`}>Ver recibo</Link>}
+        <Link
+          className="text-center text-sm font-medium text-navy-600 underline"
+          href={`/motorista/ajuda?sessao=${s.id}${s.status === "COMMUNICATION_LOST" ? "&tipo=SEM_RESPOSTA" : stop === "STOP_REFUSED" ? "&tipo=NAO_ENCERRA" : ""}#chamado`}
+        >
+          Problema com esta recarga?
+        </Link>
         {!live && (
           <section className="rounded-xl border border-navy-100 bg-white p-4">
             <h2 className="font-display font-semibold text-navy-900">Avalie esta recarga</h2>

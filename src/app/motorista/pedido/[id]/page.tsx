@@ -80,6 +80,9 @@ export default async function PedidoPage({ params }: { params: Promise<{ id: str
       <div className="mt-6 flex flex-col gap-3">
         {waiting && <ActionForm action={cancelChargeAction} submitLabel="Cancelar pedido" variant="secondary"><input type="hidden" name="requestId" value={r.id} /></ActionForm>}
         {!waiting && <ButtonLink href="/motorista" variant="secondary">Voltar às estações</ButtonLink>}
+        {!r.demo && (r.status === "FAILED" || stage === "START_REFUSED") && (
+          <a href={`/motorista/ajuda?pedido=${r.id}&tipo=SEM_INICIO#chamado`} className="text-center text-sm font-medium text-navy-600 underline">Paguei e a recarga não começou</a>
+        )}
       </div>
     </>
   );

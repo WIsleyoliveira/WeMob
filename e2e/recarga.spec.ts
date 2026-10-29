@@ -132,3 +132,40 @@ test("P23 B1: encerramento pedido pelo motorista continua visível ao recarregar
   await expect(page.getByRole("heading", { name: "Recarga encerrada" })).toBeVisible();
   await expect(page.getByText("Solicitação de encerramento enviada")).toHaveCount(0);
 });
+
+test("P23 B4: histórico com filtros e recibo; ajuda já sabe qual é a recarga e não aceita a de outro motorista", async ({ page }) => {
+  const f = fx();
+  const sessionOf = (driverId: string) => prisma<{ id: string; transactionId: number }>("chargingSession", "findFirstOrThrow", { where: { driverId }, orderBy: { startedAt: "desc" } });
+  const mine = await sessionOf(f.driverB.driverId);
+  const foreign = await sessionOf(f.driverA.driverId);
+  await driverLogin(page, f.driverB);
+
+  await page.goto("/motorista/historico");
+  const list = page.getByRole("list", { name: "Recargas" });
+  await expect(list.getByText(`Transação ${mine.transactionId}`)).toBeVisible();
+  await expect(list.getByText(`Transação ${foreign.transactionId}`)).toHaveCount(0);
+  await page.getByLabel("Situação").selectOption("andamento");
+  await page.getByRole("button", { name: "Filtrar" }).click();
+  await expect(page).toHaveURL(/estado=andamento/);
+  await expect(page.getByText("Nenhuma recarga com esses filtros")).toBeVisible();
+  await page.goto(`/motorista/historico?estado=encerrada&estacao=${f.station.identity}&periodo=7`);
+  await expect(page.getByText("1 recarga encontrada")).toBeVisible();
+  await list.getByRole("link", { name: "Recibo" }).click();
+  await expect(page.getByRole("heading", { name: "Comprovante de recarga" })).toBeVisible();
+
+  // Do recibo para a ajuda: contexto e tipo já preenchidos; o motorista só conta o que aconteceu.
+  await page.getByRole("link", { name: "Algo errado neste recibo?" }).click();
+  await expect(page.getByText(`transação ${mine.transactionId}`)).toBeVisible();
+  await expect(page.getByRole("link", { name: "Valor final diferente do esperado" })).toHaveAttribute("aria-current", "true");
+  await expect(page.locator("#chamado").getByText("O valor final usa a leitura do medidor")).toBeVisible();
+  await page.getByLabel("Mensagem").fill("O valor do recibo não bate com o que eu esperava.");
+  await page.getByRole("button", { name: "Enviar" }).click();
+  await expect(page.getByText("Solicitação registrada.")).toBeVisible();
+  const t = await prisma<{ subject: string; sessionId: string }>("supportRequest", "findFirstOrThrow", { where: { driverId: f.driverB.driverId }, orderBy: { createdAt: "desc" } });
+  expect(t).toMatchObject({ subject: "Valor final diferente do esperado", sessionId: mine.id });
+
+  // Recarga de outro motorista no endereço: ignorada (sem contexto, sem vínculo).
+  await page.goto(`/motorista/ajuda?sessao=${foreign.id}&tipo=SEM_RESPOSTA`);
+  await expect(page.getByText(`transação ${foreign.transactionId}`)).toHaveCount(0);
+  await expect(page.getByText("afaste-se, não toque no carregador")).toBeVisible(); // orientação de segurança
+});

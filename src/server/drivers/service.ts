@@ -14,6 +14,8 @@ import { getProvider } from "@/server/payments/registry";
 import { refreshFromProvider } from "@/server/payments/charges";
 import { requireDriver, type DriverContext } from "./auth";
 import { sessionAmount } from "./charging";
+import { HISTORY_STATE_TO_SESSION, periodStart, type HistoryFilters } from "@/domain/charging/history";
+import { supportSubject, type HelpTopic } from "@/domain/support/driver-help";
 
 export async function getProfile(driver: DriverContext | null) {
   requireDriver(driver);
@@ -97,14 +99,32 @@ export async function getDriverStation(identity: string) {
   return toDriverStation(s, new Date());
 }
 
-export async function listMySessions(driver: DriverContext | null) {
+export async function listMySessions(driver: DriverContext | null, filters: HistoryFilters = {}) {
   requireDriver(driver);
+  // O escopo é SEMPRE o próprio motorista; os filtros só restringem.
+  const since = periodStart(filters.periodo);
   return db.chargingSession.findMany({
-    where: { driverId: driver.driverId },
+    where: {
+      driverId: driver.driverId,
+      ...(since ? { startedAt: { gte: since } } : {}),
+      ...(filters.estacao ? { station: { ocppIdentity: filters.estacao } } : {}),
+      ...(filters.estado ? { status: HISTORY_STATE_TO_SESSION[filters.estado] } : {}),
+    },
     include: { station: { select: { ocppIdentity: true, site: { select: { name: true } } } }, payments: { select: { status: true, amountCaptured: true, amountRefunded: true, environment: true } } },
     orderBy: { startedAt: "desc" },
     take: 100,
   });
+}
+
+/** Estações onde o motorista já carregou (opções do filtro do histórico). */
+export async function listMySessionStations(driver: DriverContext | null) {
+  requireDriver(driver);
+  const rows = await db.chargingStation.findMany({
+    where: { sessions: { some: { driverId: driver.driverId } } },
+    select: { ocppIdentity: true, site: { select: { name: true } } },
+    orderBy: { ocppIdentity: "asc" },
+  });
+  return rows.map((r) => ({ identity: r.ocppIdentity, name: r.site.name }));
 }
 
 export async function getActiveRequest(driver: DriverContext | null) {
@@ -159,10 +179,23 @@ export async function rateSession(driver: DriverContext | null, raw: unknown) {
 
 export async function createSupportRequest(driver: DriverContext | null, raw: unknown) {
   requireDriver(driver);
-  const d = z.object({ subject: z.string().trim().min(3).max(120), message: z.string().trim().min(10, "Descreva o problema.").max(3000), sessionId: z.string().optional() }).parse(raw);
+  const d = z
+    .object({
+      topic: z.enum(["SEM_INICIO", "DUPLICADA", "VALOR_DIVERGENTE", "NAO_ENCERRA", "SEM_RESPOSTA", "ESTORNO", "OUTRO"] satisfies HelpTopic[]).optional(),
+      subject: z.string().trim().max(120).default(""),
+      message: z.string().trim().min(10, "Descreva o problema.").max(3000),
+      sessionId: z.string().optional(),
+      requestId: z.string().optional(),
+    })
+    .transform(({ topic, subject, ...rest }) => ({ ...rest, subject: supportSubject(topic, subject) }))
+    .refine((v) => v.subject.length >= 3, { message: "Informe o assunto ou escolha o tipo de problema.", path: ["subject"] })
+    .parse(raw);
+  // Pedido sem recarga iniciada (ex.: pagou e não começou): a referência vai na mensagem, conferida antes.
+  if (d.requestId && !(await db.chargeRequest.findFirst({ where: { id: d.requestId, driverId: driver.driverId } }))) throw notFound("Pedido não encontrado.");
   if (d.sessionId && !(await db.chargingSession.findFirst({ where: { id: d.sessionId, driverId: driver.driverId } }))) throw notFound("Sessão não encontrada.");
   if (!(await hit(`driver-support:${driver.driverId}`, 10, 3600_000))) throw new AppError("RATE_LIMITED", "Muitos chamados em pouco tempo. Aguarde e, se for urgente, responda ao chamado já aberto.");
-  return db.supportRequest.create({ data: { ...d, driverId: driver.driverId } });
+  const { requestId, ...data } = d;
+  return db.supportRequest.create({ data: { ...data, message: requestId ? `[Pedido ${requestId}] ${data.message}`.slice(0, 3000) : data.message, driverId: driver.driverId } });
 }
 
 export async function listMySupport(driver: DriverContext | null) {

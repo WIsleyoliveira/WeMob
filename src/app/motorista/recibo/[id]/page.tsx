@@ -33,6 +33,7 @@ export default async function ReciboPage({ params }: { params: Promise<{ id: str
         {rows.map(([k, val]) => <div key={k} className="flex justify-between gap-4 py-2"><dt className="text-navy-500">{k}</dt><dd className="text-right font-medium">{val}</dd></div>)}
       </dl>
       <p className="mt-4 text-xs text-navy-500">Este comprovante não é documento fiscal. A emissão de nota fiscal depende de integração ainda não configurada.</p>
+      <p className="mt-3 text-sm print:hidden"><a href={`/motorista/ajuda?sessao=${s.id}&tipo=VALOR_DIVERGENTE#chamado`} className="font-medium text-navy-600 underline">Algo errado neste recibo?</a></p>
     </article>
   );
 }

@@ -94,7 +94,7 @@ export async function rateSessionAction(_p: ActionState, f: FormData): Promise<A
 
 export async function supportAction(_p: ActionState, f: FormData): Promise<ActionState> {
   const driver = await getDriver();
-  const r = await toActionState(async () => void (await createSupportRequest(driver, { subject: s(f, "subject"), message: s(f, "message"), sessionId: s(f, "sessionId") })), "Solicitação registrada. A equipe de suporte responderá pelo seu e-mail.");
+  const r = await toActionState(async () => void (await createSupportRequest(driver, { topic: s(f, "topic"), subject: s(f, "subject"), message: s(f, "message"), sessionId: s(f, "sessionId"), requestId: s(f, "requestId") })), "Solicitação registrada. A equipe de suporte responderá pelo seu e-mail.");
   revalidatePath("/motorista/ajuda");
   return r;
 }
