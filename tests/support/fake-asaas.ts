@@ -32,7 +32,7 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
     /** Atraso (ms) na resposta de GET /payments/{id}. */
     getDelayMs: 0,
     rejectRefund: null as null | string,
-    requests: [] as { method: string; path: string; userAgent?: string }[],
+    requests: [] as { method: string; path: string; userAgent?: string; body?: string }[],
   };
   const wallets = new Set(opts.knownWallets ?? []);
 
@@ -48,7 +48,7 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
   const fetch: FetchLike = async (url, init) => {
     const u = new URL(url);
     const path = u.pathname.replace(/^\/v3/, "");
-    control.requests.push({ method: init.method, path, userAgent: init.headers["User-Agent"] });
+    control.requests.push({ method: init.method, path, userAgent: init.headers["User-Agent"], body: init.body });
     if (control.failAllRequests) throw new TypeError("fetch failed");
     if (init.headers.access_token !== opts.apiKey) return err(401, "A chave de API fornecida é inválida");
     const body = init.body ? JSON.parse(init.body) : {};
@@ -106,15 +106,18 @@ export function createFakeAsaas(opts: { apiKey: string; fee?: number; knownWalle
       const p = payments.get(m[1]);
       if (!p) return err(404, "Não encontrado");
       if (control.refundDelayMs) await new Promise((r) => setTimeout(r, control.refundDelayMs));
-      if (control.rejectRefund) return err(400, control.rejectRefund);
+      // Como no Asaas: sem `value` o estorno é integral; a recusa de parcial no mesmo dia não se aplica a ele.
+      const full = body.value === undefined;
+      if (control.rejectRefund && !(full && control.rejectRefund.includes("parcialmente"))) return err(400, control.rejectRefund);
       if (control.unavailableBeforeNextRefund) {
         control.unavailableBeforeNextRefund = false;
         return json(503, { errors: [] });
       }
       if (!["RECEIVED", "CONFIRMED"].includes(p.status) && !p.refunds.length) return err(400, "Só é possível estornar cobranças recebidas.");
       const done = p.refunds.filter((r) => r.status !== "CANCELLED").reduce((a, r) => a + r.value, 0);
-      if (body.value > p.value - done + 1e-9) return err(400, "Valor do estorno maior que o disponível.");
-      p.refunds.push({ status: control.refundStatus, value: body.value, description: body.description, dateCreated: new Date().toISOString() });
+      const value = full ? p.value - done : body.value;
+      if (value > p.value - done + 1e-9) return err(400, "Valor do estorno maior que o disponível.");
+      p.refunds.push({ status: control.refundStatus, value, description: body.description, dateCreated: new Date().toISOString() });
       settleRefundStatus(p);
       if (control.timeoutAfterProcessingNextRefund) {
         control.timeoutAfterProcessingNextRefund = false;

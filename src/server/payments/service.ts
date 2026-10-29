@@ -325,7 +325,9 @@ async function dispatchRefund(refundId: string) {
   const provider = getProvider(payment.provider);
   const now = new Date();
   try {
-    const truth = await provider.refund(payment.providerRef, refund.amount.toString(), { description: `${refund.reason} ${refundMarker(refund.id)}` });
+    // Integral só quando nada foi devolvido antes e o valor é todo o capturado (critério conservador).
+    const full = new Decimal(payment.amountRefunded.toString()).isZero() && new Decimal(refund.amount.toString()).eq(payment.amountCaptured.toString());
+    const truth = await provider.refund(payment.providerRef, refund.amount.toString(), { description: `${refund.reason} ${refundMarker(refund.id)}`, full });
     if (!truth.refunds) await db.refund.update({ where: { id: refund.id }, data: { status: "SUCCEEDED", completedAt: now, providerRef: truth.providerRef, remoteStatus: "DONE", confirmedAmount: refund.amount, lastError: null, nextAttemptAt: null } });
     await applyProviderState(payment, truth, "refund");
   } catch (e) {
@@ -436,6 +438,47 @@ export async function retryRefundNow(ctx: AuthContext | null, raw: unknown) {
   await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "payment.refund_retry_requested", entityType: "Payment", entityId: r.paymentId, data: { refundId: r.id } });
   const [res] = await retryDueRefunds(now, r.id);
   return { status: res?.status ?? r.status };
+}
+
+/**
+ * Cancelamento de estorno AGENDADO pela equipe (payment:refund), com motivo e auditoria. Uso típico: o
+ * gateway recusa o parcial e a decisão é substituí-lo (ex.: estorno integral quando a recarga nunca começou).
+ * Nada é enviado ao gateway: reserva o estorno (o ciclo automático não o pega), CONSULTA o gateway e só fecha
+ * se ele não registra estorno com o marcador deste registro. Fechado = FAILED + remoteStatus CANCELLED_BY_STAFF,
+ * o que libera o saldo reservado (estornos em andamento só contam REQUESTED/SCHEDULED).
+ */
+export async function cancelScheduledRefund(ctx: AuthContext | null, raw: unknown) {
+  requirePermission(ctx, "payment:refund");
+  requireOperator(ctx);
+  const { refundId, reason } = z.object({ refundId: z.string().min(1).max(40), reason: z.string().trim().min(10, "Descreva o motivo do cancelamento.").max(300) }).parse(raw);
+  const r = await db.refund.findFirst({ where: { id: refundId, payment: await operatorPaymentScope(ctx.organizationId) }, include: { payment: true } });
+  if (!r) throw notFound("Estorno não encontrado.");
+  if (r.status !== "SCHEDULED") throw new AppError("CONFLICT", "Só é possível cancelar estorno agendado.");
+  const now = new Date();
+  if (r.remoteStatus === "RETRYING" && r.nextAttemptAt && r.nextAttemptAt > now) throw new AppError("CONFLICT", "Este estorno está em processamento pela retentativa automática; tente em alguns minutos.");
+  // Reserva: mesma forma da retentativa, com valor único — o ciclo automático não envia enquanto ela vale.
+  const lease = new Date(now.getTime() + 10 * 60_000 + randomInt(1, 60_000));
+  const claimed = await db.refund.updateMany({ where: { id: r.id, status: "SCHEDULED", nextAttemptAt: r.nextAttemptAt, remoteStatus: r.remoteStatus }, data: { remoteStatus: "RETRYING", nextAttemptAt: lease } });
+  if (claimed.count !== 1) throw new AppError("CONFLICT", "Este estorno acabou de mudar; atualize a página.");
+  try {
+    await applyProviderState(r.payment, await getProvider(r.payment.provider).fetch(r.payment.providerRef), "refund-cancel-check");
+  } catch (e) {
+    // Sem confirmação do gateway não cancela: devolve o agendamento como estava.
+    await db.refund.updateMany({ where: { id: r.id, nextAttemptAt: lease, remoteStatus: "RETRYING" }, data: { remoteStatus: r.remoteStatus, nextAttemptAt: r.nextAttemptAt } });
+    throw new AppError("CONFLICT", `Não foi possível consultar o gateway; nada foi alterado. ${e instanceof Error ? e.message : ""}`.trim());
+  }
+  const closed = await db.refund.updateMany({
+    where: { id: r.id, status: "SCHEDULED", nextAttemptAt: lease, remoteStatus: "RETRYING" },
+    data: { status: "FAILED", remoteStatus: "CANCELLED_BY_STAFF", completedAt: now, nextAttemptAt: null, lastError: `Cancelado pela equipe: ${reason}`.slice(0, 300) },
+  });
+  if (closed.count !== 1) {
+    const cur = await db.refund.findUniqueOrThrow({ where: { id: r.id } });
+    if (cur.nextAttemptAt?.getTime() === lease.getTime() && cur.remoteStatus === "RETRYING") await db.refund.updateMany({ where: { id: r.id, nextAttemptAt: lease }, data: { remoteStatus: r.remoteStatus, nextAttemptAt: r.nextAttemptAt } });
+    throw new AppError("CONFLICT", `O gateway já registra este estorno (situação ${cur.remoteStatus ?? cur.status}); ele não foi cancelado.`);
+  }
+  await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "payment.refund_cancelled", entityType: "Payment", entityId: r.paymentId, data: { refundId: r.id, amount: r.amount.toString(), attempts: r.attempts, previousError: r.lastError, reason } });
+  log.warn("payment_refund_cancelled", { refundId: r.id, paymentId: r.paymentId });
+  return db.refund.findUniqueOrThrow({ where: { id: r.id } });
 }
 
 /** Reembolso solicitado pela equipe (payment:refund), com motivo, valor e auditoria. */

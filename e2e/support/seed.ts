@@ -119,6 +119,6 @@ export async function seedE2E() {
     driverA,
     driverB,
     payments: { refund: payRefund.id, states: payStates.id, scheduledFuture: payScheduledFuture.id, scheduledDue: payScheduledDue.id, split: paySplit.id },
-    sandboxRefs: { refund: payRefund.providerRef, scheduledDue: payScheduledDue.providerRef },
+    sandboxRefs: { refund: payRefund.providerRef, scheduledDue: payScheduledDue.providerRef, scheduledFuture: payScheduledFuture.providerRef },
   };
 }

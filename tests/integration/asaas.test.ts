@@ -15,7 +15,7 @@ import { cancelChargeRequest, checkSessionLimit, driverAwareAuthorizer, enforceS
 import { evaluateAlerts } from "@/server/modules/alerts/engine";
 import { runOperationsCycle } from "@/server/modules/automation/runner";
 import { ensureDefaultAlertRules } from "@/server/modules/alerts/rules";
-import { getPayment, listPayments, processWebhook, reconcile, requestRefund, resolveReview, retryDueRefunds, retryPendingWebhookEvents, retryRefundNow } from "@/server/payments/service";
+import { cancelScheduledRefund, getPayment, listPayments, processWebhook, reconcile, requestRefund, resolveReview, retryDueRefunds, retryPendingWebhookEvents, retryRefundNow } from "@/server/payments/service";
 import { createChargePayment, refreshFromProvider } from "@/server/payments/charges";
 import { __setAsaasFetchForTests } from "@/server/payments/asaas/provider";
 import { readAsaasConfig } from "@/server/payments/asaas/config";
@@ -603,6 +603,7 @@ describe("estornos", () => {
     fake.control.rejectRefund = NEXT_DAY;
     const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "diferença" });
     expect(r).toMatchObject({ status: "SCHEDULED", remoteStatus: "RETRY_LATER", attempts: 1, lastError: NEXT_DAY });
+    expect(JSON.parse(fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund")).at(-1)!.body!)).toMatchObject({ value: 10 }); // parcial leva o valor
     expect(r.nextAttemptAt!.getTime()).toBeGreaterThan(Date.now());
     let p = await db.payment.findUniqueOrThrow({ where: { id: payment.id } });
     expect(p.status).toBe("CAPTURED");
@@ -699,6 +700,52 @@ describe("estornos", () => {
     expect(fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund"))).toHaveLength(1);
     await expect(retryRefundNow(fin.ctx, { refundId: r.id })).rejects.toThrow(/agendad/);
     fake.control.rejectRefund = null;
+  });
+
+  it("P23: cancelar estorno agendado libera o saldo para o estorno integral; não envia nada ao gateway e fica auditado", async () => {
+    const { payment, fin } = await captured();
+    const total = (await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).amountCaptured.toString();
+    expect(Number(total)).toBeGreaterThan(10);
+    fake.control.rejectRefund = NEXT_DAY;
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "diferença parcial" });
+    expect(r.status).toBe("SCHEDULED");
+    fake.control.rejectRefund = null;
+    await expect(requestRefund(fin.ctx, { paymentId: payment.id, amount: total, reason: "integral" })).rejects.toThrow(/disponível/); // o agendado reserva o saldo
+    await expect(cancelScheduledRefund(fin.ctx, { refundId: r.id, reason: "x" })).rejects.toThrow(); // motivo obrigatório
+    const posts = () => fake.control.requests.filter((x) => x.method === "POST").length;
+    const before = posts();
+    const c = await cancelScheduledRefund(fin.ctx, { refundId: r.id, reason: "Recarga nunca iniciou: substituir por estorno integral" });
+    expect(c).toMatchObject({ status: "FAILED", remoteStatus: "CANCELLED_BY_STAFF", nextAttemptAt: null });
+    expect(c.lastError).toMatch(/Cancelado pela equipe: Recarga nunca iniciou/);
+    expect(posts()).toBe(before); // só consulta (GET) ao gateway
+    expect(await db.auditEvent.count({ where: { action: "payment.refund_cancelled", entityId: payment.id } })).toBe(1);
+    expect(await retryDueRefunds(new Date(Date.now() + 3 * 86400_000))).toEqual([]); // o ciclo não o pega mais
+    await expect(cancelScheduledRefund(fin.ctx, { refundId: r.id, reason: "de novo, segunda vez" })).rejects.toThrow(/agendado/);
+    fake.control.rejectRefund = NEXT_DAY; // o gateway ainda recusaria um PARCIAL hoje
+    const full = await requestRefund(fin.ctx, { paymentId: payment.id, amount: total, reason: "Estorno integral: recarga não iniciou" });
+    fake.control.rejectRefund = null;
+    expect(full.status).toBe("SUCCEEDED");
+    const sent = fake.control.requests.filter((x) => x.method === "POST" && x.path.endsWith("/refund")).at(-1)!;
+    expect(JSON.parse(sent.body!)).not.toHaveProperty("value"); // integral = sem valor (docs do Asaas)
+    expect((await db.payment.findUniqueOrThrow({ where: { id: payment.id } })).status).toBe("REFUNDED");
+  });
+
+  it("P23: não cancela se o gateway já registra o estorno (marcador), nem com retentativa em andamento, nem sem permissão", async () => {
+    const { payment, fin, op } = await captured();
+    fake.control.rejectRefund = NEXT_DAY;
+    const r = await requestRefund(fin.ctx, { paymentId: payment.id, amount: "10", reason: "diferença parcial" });
+    fake.control.rejectRefund = null;
+    // Sem permissão de estorno (perfil comercial).
+    const sales = await createUser(op.id, "commercial");
+    await expect(cancelScheduledRefund(sales.ctx, { refundId: r.id, reason: "tentativa sem permissão" })).rejects.toThrow();
+    // Retentativa em andamento (reserva ativa do ciclo): recusado.
+    await db.refund.update({ where: { id: r.id }, data: { remoteStatus: "RETRYING", nextAttemptAt: new Date(Date.now() + 10 * 60_000) } });
+    await expect(cancelScheduledRefund(fin.ctx, { refundId: r.id, reason: "durante a retentativa" })).rejects.toThrow(/processamento/);
+    await db.refund.update({ where: { id: r.id }, data: { remoteStatus: "RETRY_LATER", nextAttemptAt: new Date(Date.now() + 3600_000) } });
+    // O gateway já tem um estorno com o marcador deste registro: sincroniza e recusa o cancelamento.
+    fake.payments.get(payment.providerRef)!.refunds.push({ status: "PENDING", value: 10, description: `diferença parcial [wemob:${r.id}]`, dateCreated: new Date().toISOString() });
+    await expect(cancelScheduledRefund(fin.ctx, { refundId: r.id, reason: "gateway já tem o estorno" })).rejects.toThrow(/gateway já registra/);
+    expect(await db.refund.findUniqueOrThrow({ where: { id: r.id } })).toMatchObject({ status: "REQUESTED", remoteStatus: "PENDING" });
   });
 
   it("P17: estorno parado em 'autorização de ação crítica' (status real do sandbox) não conta como devolvido e gera alerta", async () => {

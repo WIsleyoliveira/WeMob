@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { fx, op, prisma, staffLogin } from "./support/helpers";
+import { fx, op, prisma, staffLogin, submitConfirmed } from "./support/helpers";
 
 /** Gateway: provedor local SIMULADO (sandbox) no banco temporário — nenhum valor real. */
 test.describe("B. fluxo financeiro (gateway simulado)", () => {
@@ -86,6 +86,24 @@ test.describe("D. regressões P16–P18", () => {
     await page.goto("/app/pagamentos");
     await page.getByRole("button", { name: "Conciliar período" }).click();
     await expect(page.getByText(/recusado pelo gateway: repasse não realizado/)).toBeVisible({ timeout: 45_000 }); // a conciliação consulta o gateway pagamento a pagamento
+  });
+
+  test("P23: cancelar estorno agendado pela tela — motivo obrigatório, nada enviado ao gateway, saldo liberado", async ({ page }) => {
+    const f = fx();
+    await staffLogin(page, f.finance);
+    await page.goto(`/app/pagamentos/${f.payments.scheduledFuture}`);
+    const row = page.getByRole("row").filter({ hasText: "E2E agendado futuro" });
+    const charge = () => prisma<{ refunded: string }>("sandboxGatewayCharge", "findUniqueOrThrow", { where: { id: f.sandboxRefs.scheduledFuture } });
+    const before = Number((await charge()).refunded);
+    await row.locator("summary", { hasText: "Cancelar estorno agendado" }).click();
+    await row.getByLabel("Motivo do cancelamento").fill("Recarga não iniciou: será feito o estorno integral");
+    await submitConfirmed(page, "Cancelar estorno agendado");
+    // O formulário some (o estorno deixou de ser agendado): vale o estado gravado.
+    await expect(page.getByRole("row").filter({ hasText: "E2E agendado futuro" })).toContainText("cancelado pela equipe");
+    await expect(page.getByRole("row").filter({ hasText: "E2E agendado futuro" })).toContainText("Cancelado pela equipe: Recarga não iniciou");
+    const refund = await prisma<{ status: string; remoteStatus: string; nextAttemptAt: string | null }>("refund", "findFirstOrThrow", { where: { paymentId: f.payments.scheduledFuture } });
+    expect(refund).toMatchObject({ status: "FAILED", remoteStatus: "CANCELLED_BY_STAFF", nextAttemptAt: null });
+    expect(Number((await charge()).refunded)).toBe(before); // o gateway não recebeu nenhum estorno
   });
 
   test("perfil financeiro não administra usuários (sem permissão)", async ({ page }) => {

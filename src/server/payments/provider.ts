@@ -88,7 +88,8 @@ export interface PaymentProvider {
   authorize(amount: string, metadata: Record<string, string>, options?: ChargeOptions): Promise<ProviderPayment>;
   capture(providerRef: string, amount: string): Promise<ProviderPayment>;
   cancel(providerRef: string): Promise<ProviderPayment>;
-  refund(providerRef: string, amount: string, options?: { description?: string }): Promise<ProviderPayment>;
+  /** `full`: estorno do pagamento inteiro — no Asaas vai SEM `value` (integral pela documentação), não como parcial. */
+  refund(providerRef: string, amount: string, options?: { description?: string; full?: boolean }): Promise<ProviderPayment>;
   /** Recuperação após timeout: encontra a cobrança criada com a chave idempotente. */
   findByExternalReference?(externalReference: string): Promise<ProviderPayment[]>;
   /** Conciliação: cobranças remotas criadas no intervalo. */

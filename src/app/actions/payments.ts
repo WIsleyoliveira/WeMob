@@ -2,7 +2,7 @@
 import { revalidatePath } from "next/cache";
 import { getCurrentContext } from "@/server/auth/current";
 import { toActionState, type ActionState } from "@/server/action-result";
-import { reconcile, requestRefund, retryRefundNow, resolveReview } from "@/server/payments/service";
+import { cancelScheduledRefund, reconcile, requestRefund, retryRefundNow, resolveReview } from "@/server/payments/service";
 import { createRecipient, createSplitPolicy, decideSplitPolicy, disableRecipient, validateRecipient } from "@/server/payments/split";
 import { decideActivation, requestActivation, revokeActivation, ACTIVATION_ITEMS } from "@/server/payments/activation";
 
@@ -24,6 +24,13 @@ export async function refundAction(_p: ActionState, f: FormData): Promise<Action
       : d.remoteStatus === "UNKNOWN" ? `Resultado incerto (sem resposta do provedor). Nada é reenviado antes de consultar o provedor; verificação automática em ${when}.`
       : "Estorno solicitado. Ainda NÃO está concluído: será confirmado quando o provedor informar (webhook ou consulta).",
   };
+}
+
+export async function cancelScheduledRefundAction(_p: ActionState, f: FormData): Promise<ActionState> {
+  const ctx = await getCurrentContext();
+  const r = await toActionState(async () => void (await cancelScheduledRefund(ctx, { refundId: f.get("refundId"), reason: f.get("reason") })), "Estorno agendado cancelado (nada foi enviado ao provedor). O valor reservado voltou a ficar disponível.");
+  revalidatePath(`/app/pagamentos/${f.get("paymentId")}`);
+  return r;
 }
 
 export async function retryRefundAction(_p: ActionState, f: FormData): Promise<ActionState> {

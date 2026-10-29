@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { requirePage } from "@/server/auth/current";
 import { getPayment, PAYMENT_STATUS_LABEL, REFUND_STATUS_LABEL } from "@/server/payments/service";
 import { PAYMENT_METHOD_LABEL, isPrepaidMethod } from "@/server/payments/provider";
-import { refundAction, resolveReviewAction, retryRefundAction } from "@/app/actions/payments";
+import { cancelScheduledRefundAction, refundAction, resolveReviewAction, retryRefundAction } from "@/app/actions/payments";
 import { Alert } from "@/components/ui/alert";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -95,7 +95,7 @@ export default async function PagamentoPage({ params }: { params: Promise<{ id: 
                       <td>{dateTime(r.createdAt)}</td>
                       <td className="tabular text-right">{brl(r.amount.toString())}{r.confirmedAmount ? <span className="block text-xs text-navy-500">confirmado {brl(r.confirmedAmount.toString())}</span> : null}</td>
                       <td>
-                        <Badge tone={r.status === "SUCCEEDED" ? "green" : r.status === "FAILED" ? "red" : "amber"}>{REFUND_STATUS_LABEL[r.status]}{r.status === "REQUESTED" && r.remoteStatus === "UNKNOWN" ? " · resultado incerto" : r.remoteStatus === "RETRYING" ? " · em processamento" : r.remoteStatus === "AWAITING_CRITICAL_ACTION_AUTHORIZATION" ? " · autorizar no painel do Asaas" : ""}</Badge>
+                        <Badge tone={r.status === "SUCCEEDED" ? "green" : r.status === "FAILED" ? "red" : "amber"}>{r.remoteStatus === "CANCELLED_BY_STAFF" ? "cancelado pela equipe" : REFUND_STATUS_LABEL[r.status]}{r.status === "REQUESTED" && r.remoteStatus === "UNKNOWN" ? " · resultado incerto" : r.remoteStatus === "RETRYING" ? " · em processamento" : r.remoteStatus === "AWAITING_CRITICAL_ACTION_AUTHORIZATION" ? " · autorizar no painel do Asaas" : ""}</Badge>
                         <span className="mt-1 block text-xs text-navy-500">
                           {r.remoteStatus ? `gateway: ${r.remoteStatus} · ` : ""}tentativa {r.attempts}
                           {r.nextAttemptAt && waiting ? ` · próxima ${dateTime(r.nextAttemptAt)}` : ""}
@@ -106,6 +106,16 @@ export default async function PagamentoPage({ params }: { params: Promise<{ id: 
                             <input type="hidden" name="refundId" value={r.id} />
                             <input type="hidden" name="paymentId" value={p.id} />
                           </ActionForm>
+                        )}
+                        {r.status === "SCHEDULED" && r.remoteStatus !== "RETRYING" && canRetry && (
+                          <details className="mt-2">
+                            <summary className="cursor-pointer text-xs font-medium text-navy-700 underline">Cancelar estorno agendado</summary>
+                            <ActionForm action={cancelScheduledRefundAction} submitLabel="Cancelar estorno agendado" variant="danger" size="sm" className="mt-2" confirm="O gateway será consultado e, se ele não registrar este estorno, o agendamento é cancelado e o valor reservado volta a ficar disponível. Nada é enviado ao provedor.">
+                              <input type="hidden" name="refundId" value={r.id} />
+                              <input type="hidden" name="paymentId" value={p.id} />
+                              <Field label="Motivo do cancelamento" htmlFor={`cancel-${r.id}`}><Textarea id={`cancel-${r.id}`} name="reason" required minLength={10} maxLength={300} /></Field>
+                            </ActionForm>
+                          </details>
                         )}
                       </td>
                       <td>{r.reason}</td>

@@ -100,7 +100,9 @@ export function createAsaasProvider(cfg: AsaasConfig, fetchImpl?: FetchLike): Pa
 
     async refund(ref, amount, options) {
       const r = await client
-        .request<AsaasPayment>("POST", `/payments/${encodeURIComponent(ref)}/refund`, { value: Number(new Decimal(amount).toFixed(2)), description: options?.description?.slice(0, 500) })
+        // Sem `value` o Asaas faz o estorno integral (docs "Estornar cobrança"); com valor é tratado como parcial,
+        // que no cartão pode ser recusado ("só pode ser estornada parcialmente no próximo dia").
+        .request<AsaasPayment>("POST", `/payments/${encodeURIComponent(ref)}/refund`, { ...(options?.full ? {} : { value: Number(new Decimal(amount).toFixed(2)) }), description: options?.description?.slice(0, 500) })
         .catch((e) => (e instanceof AsaasError && e.kind === "TIMEOUT" ? Promise.reject(e) : wrap(e)));
       return toProviderPayment(r);
     },
