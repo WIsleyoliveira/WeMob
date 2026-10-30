@@ -16,6 +16,8 @@ import { requireDriver, type DriverContext } from "./auth";
 import { sessionAmount } from "./charging";
 import { HISTORY_STATE_TO_SESSION, periodStart, type HistoryFilters } from "@/domain/charging/history";
 import { supportSubject, type HelpTopic } from "@/domain/support/driver-help";
+import Decimal from "decimal.js";
+import { granularityFor, periodRange, usageSeries, usageTotals, type UsagePeriod, type UsageSession } from "@/domain/usage/series";
 
 export async function getProfile(driver: DriverContext | null) {
   requireDriver(driver);
@@ -114,6 +116,34 @@ export async function listMySessions(driver: DriverContext | null, filters: Hist
     orderBy: { startedAt: "desc" },
     take: 100,
   });
+}
+
+/**
+ * Consumo do próprio motorista no período (recargas CONCLUÍDAS). Por padrão só estações reais (PRODUCTION):
+ * teste/demonstração entram apenas com `includeTest`, e a tela identifica. Dinheiro = somente o confirmado pelo
+ * gateway (capturado − estornado); sessão sem pagamento confirmado conta como "não confirmado", nunca como zero pago.
+ */
+export async function myUsage(driver: DriverContext | null, opts: { period: UsagePeriod; includeTest?: boolean }, now = new Date()) {
+  requireDriver(driver);
+  const { from, to } = periodRange(opts.period, now);
+  const envs = opts.includeTest ? (["PRODUCTION", "TEST", "SIMULATED"] as const) : (["PRODUCTION"] as const);
+  const rows = await db.chargingSession.findMany({
+    where: { driverId: driver.driverId, status: "COMPLETED", startedAt: { gte: from, lte: to }, environment: { in: [...envs] } },
+    include: { payments: { select: { status: true, amountCaptured: true, amountRefunded: true } } },
+    orderBy: { startedAt: "asc" },
+  });
+  const sessions: UsageSession[] = rows.map((r) => {
+    const confirmed = r.payments.filter((p) => ["CAPTURED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(p.status));
+    return {
+      startedAt: r.startedAt,
+      stoppedAt: r.stoppedAt,
+      energyWh: sessionEnergyWh(r),
+      paidConfirmed: confirmed.length ? confirmed.reduce((a, p) => a.plus(p.amountCaptured.toString()).minus(p.amountRefunded.toString()), new Decimal(0)).toFixed(2) : null,
+    };
+  });
+  const otherEnvSessions = opts.includeTest ? 0 : await db.chargingSession.count({ where: { driverId: driver.driverId, status: "COMPLETED", startedAt: { gte: from, lte: to }, environment: { in: ["TEST", "SIMULATED"] } } });
+  const granularity = granularityFor(from, to);
+  return { from, to, granularity, includeTest: !!opts.includeTest, totals: usageTotals(sessions), series: usageSeries(sessions, from, to, granularity), otherEnvSessions, computedAt: now };
 }
 
 /** Estações onde o motorista já carregou (opções do filtro do histórico). */

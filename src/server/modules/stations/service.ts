@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { Prisma, StationEnvironment } from "@prisma/client";
 import { db } from "@/server/db";
+import { dateTime } from "@/lib/format";
 import { audit } from "@/server/audit";
 import { newToken } from "@/server/crypto";
 import { hashPassword } from "@/server/auth/password";
@@ -12,7 +13,7 @@ const UFS = ["AC","AL","AP","AM","BA","CE","DF","ES","GO","MA","MT","MS","MG","P
 const opt = (max: number) => z.string().trim().max(max).optional().transform((v) => v || undefined);
 
 /** Escopo: operadora vê as suas; investidor/parceiro vê apenas estações das unidades vinculadas. */
-function stationScope(ctx: AuthContext): Prisma.ChargingStationWhereInput {
+export function stationScope(ctx: AuthContext): Prisma.ChargingStationWhereInput {
   return ctx.orgKind === "OPERATOR" ? { operatorId: ctx.organizationId, deletedAt: null } : { site: { partnerOrganizationId: ctx.organizationId }, deletedAt: null };
 }
 function siteScope(ctx: AuthContext): Prisma.SiteWhereInput {
@@ -249,7 +250,7 @@ export async function operationalOverview(ctx: AuthContext | null, raw: { from: 
     },
     perConnector,
     alerts: [
-      ...stations.filter((s) => s.connectionState !== "NEVER_CONNECTED" && !isStationFresh(s, now)).map((s) => ({ level: "critical" as const, text: `${s.ocppIdentity}: sem comunicação desde ${s.lastSeenAt?.toISOString() ?? "—"}` })),
+      ...stations.filter((s) => s.connectionState !== "NEVER_CONNECTED" && !isStationFresh(s, now)).map((s) => ({ level: "critical" as const, text: `${s.ocppIdentity}: sem comunicação desde ${s.lastSeenAt ? dateTime(s.lastSeenAt) : "—"}` })),
       ...stations.flatMap((s) => s.connectors.filter((c) => c.status === "FAULTED").map((c) => ({ level: "critical" as const, text: `${s.ocppIdentity} conector ${c.connectorId}: falha ${c.errorCode ?? ""}` }))),
       ...stations.filter((s) => s.clockSkewMs && s.clockSkewMs > 60_000).map((s) => ({ level: "warning" as const, text: `${s.ocppIdentity}: relógio adiantado ~${Math.round(s.clockSkewMs! / 1000)} s` })),
       ...sessions.filter((x) => x.status === "COMMUNICATION_LOST").map((x) => ({ level: "warning" as const, text: `Sessão ${x.transactionId} sem comunicação: aguardando StopTransaction.` })),

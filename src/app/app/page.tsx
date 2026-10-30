@@ -7,18 +7,42 @@ import { PageHeader } from "@/components/ui/page-header";
 import { Stat } from "@/components/ui/stat";
 import { Alert } from "@/components/ui/alert";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
-import { dateTime, num, pct } from "@/lib/format";
+import { brl, dateTime, num, pct } from "@/lib/format";
+import { operationalOverview } from "@/server/modules/stations/service";
+import { networkUsage } from "@/server/modules/usage/service";
+import { paymentsOverview } from "@/server/payments/service";
+import { BarChart } from "@/components/ui/bar-chart";
+import { STATUS_LABEL, type ConnectorStatus } from "@/domain/stations/status";
+import { periodRange, type UsagePeriod } from "@/domain/usage/series";
+import { cn } from "@/lib/cn";
+
+const PERIODS: Record<string, string> = { "7": "Últimos 7 dias", "30": "Últimos 30 dias", "90": "Últimos 90 dias" };
+const kwhFmt = (v: number) => `${num(v, v < 10 ? 2 : 1)} kWh`;
 
 export const dynamic = "force-dynamic";
 
-export default async function Dashboard() {
+export default async function Dashboard({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const ctx = await requirePage();
-  const [funnel, sites, sims] = await Promise.all([
+  const params = await searchParams;
+  const periodKey = typeof params.periodo === "string" && params.periodo in PERIODS ? params.periodo : "30";
+  const includeTest = params.dados === "teste";
+  const { from, to } = periodRange(periodKey as UsagePeriod);
+  const canOps = ctx.permissions.has("site:read");
+  const canPay = ctx.permissions.has("payment:read") && ctx.orgKind === "OPERATOR";
+  const [funnel, sites, sims, ops, usage, pay] = await Promise.all([
     ctx.permissions.has("lead:read") ? pipelineSummary(ctx) : null,
-    ctx.permissions.has("site:read") ? listSites(ctx) : null,
+    canOps ? listSites(ctx) : null,
     ctx.permissions.has("simulation:read") ? listSimulations(ctx) : null,
+    canOps ? operationalOverview(ctx, { from, to, includeNonProduction: includeTest }) : null,
+    canOps ? networkUsage(ctx, { from, to, includeNonProduction: includeTest }) : null,
+    canPay ? paymentsOverview(ctx) : null,
   ]);
   const now = new Date();
+  const periodLabel = PERIODS[periodKey].toLowerCase();
+  const envLabel = includeTest ? "produção + teste/simulação" : "somente produção";
+  const href = (p: string, t = includeTest) => `/app?periodo=${p}${t ? "&dados=teste" : ""}`;
+  const pendingNow = pay ? pay.byStatus.filter((b) => ["PENDING", "AUTHORIZED"].includes(b.status) && (includeTest || b.environment === "PRODUCTION")).reduce((a, b) => a + b._count, 0) : 0;
+  const bucket = usage?.granularity === "day" ? "por dia" : usage?.granularity === "week" ? "por semana" : "por mês";
 
   return (
     <>
@@ -65,17 +89,71 @@ export default async function Dashboard() {
         </section>
       )}
 
+      {ops && usage && (
+        <section className="mb-8" aria-labelledby="op-titulo">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 id="op-titulo" className="font-display text-sm font-semibold uppercase tracking-wide text-navy-400">Operação da rede · {periodLabel} · {envLabel}</h2>
+            <div className="flex flex-wrap gap-2 text-sm">
+              {Object.entries(PERIODS).map(([k, l]) => (
+                <Link key={k} href={href(k)} aria-current={periodKey === k ? "page" : undefined} className={cn("rounded-full border px-3 py-1.5 font-medium", periodKey === k ? "border-navy-900 bg-navy-900 text-white" : "border-navy-200 bg-white text-navy-700 hover:border-navy-300")}>{l}</Link>
+              ))}
+              <Link href={href(periodKey, !includeTest)} className="rounded-full border border-dashed border-navy-300 px-3 py-1.5 font-medium text-navy-700">{includeTest ? "Só produção" : "Incluir teste/simulação"}</Link>
+            </div>
+          </div>
+          {includeTest && <Alert tone="warning" className="mb-3" title="Dados de teste e simulação incluídos">Esses números misturam estações de produção com estações de teste/simuladas e não representam receita real.</Alert>}
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="Estações com comunicação" value={`${num(ops.stations.communicating)} de ${num(ops.stations.total)}`} definition="Estações que se comunicaram recentemente. Sem comunicação, a disponibilidade é desconhecida." source="OCPP (último contato)" updatedAt={ops.computedAt} />
+            <Stat label="Sessões em andamento" value={num(ops.sessions.active)} definition={`Sessões ativas iniciadas no período. Sem comunicação: ${ops.sessions.communicationLost}.`} source="OCPP (ChargingSession)" updatedAt={ops.computedAt} />
+            <Stat label="Recargas concluídas" value={num(usage.totals.sessions)} definition={`Concluídas no período. Iniciadas: ${ops.sessions.started}; recusadas na autorização: ${ops.sessions.rejected}.`} source="OCPP (ChargingSession)" updatedAt={now} />
+            <Stat label="Taxa de conclusão" value={ops.sessions.started ? pct(usage.totals.sessions / ops.sessions.started) : "—"} definition="Concluídas ÷ iniciadas no período. Sem sessões, não é calculada." source="OCPP" updatedAt={now} />
+            <Stat label="Energia entregue" value={kwhFmt(usage.totals.kwh)} definition="Soma da energia medida nas recargas concluídas do período." source="Medidor do carregador" updatedAt={now} />
+            {canPay && <Stat label="Valor recebido" value={brl(usage.totals.paid)} definition="Capturado − estornado, confirmado pelo gateway, nas recargas concluídas do período. Não inclui pagamentos pendentes nem é receita contábil." source="Gateway de pagamento" updatedAt={now} />}
+            {canPay && <Stat label="Pagamentos aguardando" value={num(pendingNow)} definition="Pagamentos pendentes ou só reservados agora (todos os períodos). Não contam como recebidos." source="Gateway de pagamento" updatedAt={now} />}
+            {pay && <Stat label="Em análise financeira" value={num(pay.review)} definition={`Pagamentos com análise aberta. Estornos aguardando o gateway: ${pay.refundsPending}.`} source="Pagamentos" updatedAt={now} />}
+          </div>
+          <div className="mt-4 grid gap-3 lg:grid-cols-2">
+            <BarChart title="Energia entregue" unit={`kWh ${bucket}`} period={`${periodLabel} · ${envLabel}`} data={usage.series.map((p) => ({ key: p.key, label: p.label, value: p.kwh }))} format={kwhFmt} emptyText="Nenhuma recarga concluída no período. Quando houver, a energia de cada dia aparece aqui." />
+            <BarChart title="Recargas concluídas" unit={`quantidade ${bucket}`} period={`${periodLabel} · ${envLabel}`} tone="tiffany" data={usage.series.map((p) => ({ key: p.key, label: p.label, value: p.sessions }))} format={(v) => num(v)} emptyText="Nenhuma recarga concluída no período." />
+            {canPay && <BarChart title="Valor recebido (confirmado)" unit={`R$ ${bucket}`} period={`${periodLabel} · ${envLabel}`} tone="navy" data={usage.series.map((p) => ({ key: p.key, label: p.label, value: Number(p.paid) }))} format={(v) => brl(v)} emptyText="Nenhum pagamento confirmado no período." />}
+            <Card>
+              <CardHeader title="Situação dos conectores agora" description={`Estado efetivo (sem comunicação = desconhecido) · ${dateTime(ops.computedAt)}`} actions={<Link href="/app/operacao" className="text-sm font-medium text-brand-700 hover:underline">Abrir operação →</Link>} />
+              <CardBody>
+                {Object.keys(ops.statusCounts).length === 0 ? (
+                  <p className="text-sm text-navy-500">Nenhum conector cadastrado neste escopo.</p>
+                ) : (
+                  <ul className="grid grid-cols-2 gap-2 text-sm">
+                    {Object.entries(ops.statusCounts).map(([st, n]) => (
+                      <li key={st} className="flex justify-between rounded-lg bg-navy-50 px-3 py-2"><span className="text-navy-700">{STATUS_LABEL[st as ConnectorStatus] ?? st}</span><b className="tabular">{n}</b></li>
+                    ))}
+                  </ul>
+                )}
+                {usage.bySite.length > 0 && (
+                  <>
+                    <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-navy-400">Energia por unidade ({periodLabel})</p>
+                    <ul className="mt-2 space-y-1 text-sm">
+                      {usage.bySite.map((b) => <li key={b.site} className="flex justify-between gap-2"><span className="truncate text-navy-700">{b.site}</span><span className="tabular text-navy-900">{kwhFmt(b.kwh)} · {b.sessions} rec.</span></li>)}
+                    </ul>
+                  </>
+                )}
+              </CardBody>
+            </Card>
+          </div>
+          {ops.alerts.length > 0 && (
+            <Alert tone="warning" className="mt-4" title={`${ops.alerts.length} ${ops.alerts.length === 1 ? "ponto de atenção" : "pontos de atenção"} na operação`}>
+              <ul className="list-disc pl-4">{ops.alerts.slice(0, 5).map((a, i) => <li key={i}>{a.text}</li>)}</ul>
+            </Alert>
+          )}
+        </section>
+      )}
+
       <section className="mb-8">
-        <h2 className="mb-3 font-display text-sm font-semibold uppercase tracking-wide text-navy-400">Operação e financeiro</h2>
+        <h2 className="mb-3 font-display text-sm font-semibold uppercase tracking-wide text-navy-400">Cadastro e projeções</h2>
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
           {sites && (
             <Stat label="Unidades em operação" value={num(sites.filter((s) => s.status === "OPERATING" && !s.isDemo).length)} definition="Unidades com status 'em operação', excluindo demonstrações." source="Cadastro de unidades" updatedAt={now} />
           )}
           {sims && <Stat label="Simulações salvas" value={num(sims.length)} definition="Simulações de viabilidade registradas pela organização (projeções)." source="Simulador" updatedAt={now} />}
         </div>
-        <Alert tone="info" className="mt-4" title="Receita de recarga, energia vendida, sessões e pagamentos ainda não são exibidos">
-          Esses indicadores dependem da integração com os carregadores (OCPP) e com o gateway de pagamento, previstas nas próximas fases. Nenhum número é mostrado até existirem dados reais.
-        </Alert>
       </section>
     </>
   );

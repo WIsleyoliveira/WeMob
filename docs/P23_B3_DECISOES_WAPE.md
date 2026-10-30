@@ -3,7 +3,20 @@
 **Para**: comercial + financeiro WAPE · **Preparado em**: 2026-10-29 · **Status de todas as decisões: PENDENTE** (nenhuma aprovada).
 Contexto técnico: `docs/P23_B3_ESPECIFICACAO.md`. Este documento não é uma proposta comercial nem um compromisso da empresa; serve para registrar as decisões oficiais.
 
-**Situação do sistema hoje**: a compra por **valor** está implementada e **desligada**. Ela só liga quando os limites da decisão 1 forem configurados. Sem eles, toda recarga cobra o valor único configurado hoje (`PAYMENT_PREAUTH_AMOUNT`). A compra por **kWh** não é oferecida ao cliente até as decisões 4 e 6.
+**Situação do sistema hoje**: a compra por **valor** está implementada e **desligada por padrão** (`CHARGE_AMOUNT_MODE=off`). A compra por **kWh** não é oferecida ao cliente até as decisões 4 e 6.
+
+### Parâmetros de EXEMPLO × decisões pendentes (atualizado em 2026-10-29)
+| Parâmetro | Valor no sistema | Natureza | Onde vale |
+|---|---|---|---|
+| Mínimo por recarga | R$ 5,00 | **EXEMPLO — NÃO COMERCIAL** (`B3_EXAMPLE` em `src/domain/charging/purchase.ts`) | só com `CHARGE_AMOUNT_MODE=example`, sem gateway de produção e fora de estações reais |
+| Máximo por recarga | R$ 500,00 | **EXEMPLO — NÃO COMERCIAL** | idem |
+| Valor sugerido / atalhos | R$ 50,00 / R$ 20, 50 e 100 | **EXEMPLO — NÃO COMERCIAL** | idem; a tela mostra o selo "Exemplo — não comercial" |
+| Preço por kWh | o da tarifa cadastrada da estação (no E2E: R$ 2,00/kWh) | dado da estação, não do B3 | — |
+| Energia estimada | calculada pelo limite da sessão (ex.: R$ 50 a R$ 2,00/kWh equivale a 25 kWh; a recarga para em R$ 45 → até 22,5 kWh) | regra técnica em vigor (margem de segurança de 10%) | — |
+| Mínimo e máximo **oficiais** | — | **PENDENTE — decisão 1** | `CHARGE_AMOUNT_MODE=configured` + `CHARGE_AMOUNT_MIN/MAX`; produção exige `CHARGE_AMOUNT_APPROVAL_REF` |
+| Valor sugerido oficial | — | **PENDENTE — decisão 3** | `CHARGE_AMOUNT_SUGGESTED` (opcional) |
+
+O perfil de exemplo **nunca** é usado como valor de reserva em produção: com gateway de produção ou em estação real ele fica desligado.
 
 Como funciona o limite (regra já em vigor): a recarga para quando o consumo atinge o valor pago **menos uma margem de segurança** (hoje 10%), para a parada chegar a tempo. O que não for consumido é devolvido.
 
@@ -59,4 +72,4 @@ Como funciona o limite (regra já em vigor): a recarga para quando o consumo ati
 - **Decisão oficial**: ______________________ · **Responsável**: __________ · **Data**: ___/___/______
 
 ---
-Depois de decidido, a equipe técnica configura `CHARGE_AMOUNT_MIN`/`CHARGE_AMOUNT_MAX` no ambiente de **homologação** primeiro, executa o checklist `docs/P23_CHECKLIST_HOMOLOGACAO.md` e só então avalia produção, que **não está autorizada**.
+Depois de decidido, a equipe técnica configura `CHARGE_AMOUNT_MODE=configured` com `CHARGE_AMOUNT_MIN`/`CHARGE_AMOUNT_MAX` (e, em produção, `CHARGE_AMOUNT_APPROVAL_REF` com a referência desta decisão) no ambiente de **homologação** primeiro, executa o checklist `docs/P23_CHECKLIST_HOMOLOGACAO.md` e só então avalia produção, que **não está autorizada**.

@@ -16,6 +16,8 @@ Marcação: ✅ feito com evidência · ⏳ a fazer · ⛔ bloqueado (dependênc
 | Fora da faixa / >2 casas / sem valor: nada criado | ✅ servidor + ✅ Playwright `compra-valor.spec.ts` (tela) | ⛔ | ⛔ | — |
 | Resumo antes de pagar coerente com tarifa e margem | ✅ unit `purchase.test.ts` + Playwright | ⛔ | ⛔ | — |
 | Demonstração ignora a faixa | ✅ `payments.test.ts` "B3: na demonstração…" | — | ⏳ | — |
+| Perfil EXEMPLO (R$ 5–500): funciona sem gateway de produção; recusado com gateway de produção; nunca em estação real | ✅ `purchase.test.ts`, `asaas.test.ts` "perfil de EXEMPLO…" + Playwright `compra-valor.spec.ts` | ⏳ | ⏳ | — |
+| Faixa sem `CHARGE_AMOUNT_MODE` não liga o B3; produção exige `CHARGE_AMOUNT_APPROVAL_REF` | ✅ `purchase.test.ts`, `asaas.test.ts` | — | ⛔ decisão 1 | — |
 | Compra por kWh | ⏳ (só regra pura) | ⛔ decisões 4 e 6 da WAPE | ⛔ | ⛔ |
 | Energia real × estimada no veículo | — | — | — | ⛔ carregador físico |
 
@@ -94,6 +96,12 @@ Marcação: ✅ feito com evidência · ⏳ a fazer · ⛔ bloqueado (dependênc
 | Item | Auto | Sandbox | Staging | Físico |
 |---|---|---|---|---|
 | Boot, StatusNotification, StartTransaction, MeterValues, RemoteStop no limite, StopTransaction | ✅ (handler) | — | ⏳ | ⛔ equipamento de bancada |
+
+## 11-B. Painéis de consumo e operação (P23 redesign)
+| Item | Auto | Sandbox | Staging | Físico |
+|---|---|---|---|---|
+| Consumo do motorista: só produção por padrão, teste sob pedido, valor confirmado, isolamento | ✅ `usage-series.test.ts`, `payments.test.ts` "consumo do motorista…", Playwright "redesign…" | — | ⏳ | — |
+| Painel da equipe: uso por período, escopo da organização, dinheiro só com `payment:read` | ✅ `payments.test.ts`, Playwright "redesign…" | — | ⏳ | — |
 
 ## 12. Staging, configuração segura e rollback
 | Item | Auto | Sandbox | Staging | Físico |

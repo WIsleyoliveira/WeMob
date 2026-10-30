@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { History, LifeBuoy, MapPin, User } from "lucide-react";
+import { BarChart3, History, LifeBuoy, MapPin, User } from "lucide-react";
 import { getDriver } from "@/server/drivers/current";
 import { Logo } from "@/components/ui/logo";
 import { BottomNavLink } from "./bottom-nav-link";
@@ -17,9 +17,10 @@ export default async function DriverLayout({ children }: { children: React.React
         {driver ? <span className="max-w-[45%] truncate text-sm text-navy-200">{driver.name.split(" ")[0]}</span> : <Link href="/motorista/entrar" className="text-sm font-medium text-white">Entrar</Link>}
       </header>
       <main id="conteudo" className="flex-1 px-4 pb-24 pt-4">{children}</main>
-      <nav aria-label="Navegação do motorista" className="fixed inset-x-0 bottom-0 z-30 mx-auto grid max-w-lg grid-cols-4 border-t border-navy-100 bg-white pb-[env(safe-area-inset-bottom)]">
+      <nav aria-label="Navegação do motorista" className="fixed inset-x-0 bottom-0 z-30 mx-auto grid max-w-lg grid-cols-5 border-t border-navy-100 bg-white pb-[env(safe-area-inset-bottom)]">
         <BottomNavLink href="/motorista" label="Estações"><MapPin className="size-5" aria-hidden /></BottomNavLink>
         <BottomNavLink href="/motorista/historico" label="Recargas"><History className="size-5" aria-hidden /></BottomNavLink>
+        <BottomNavLink href="/motorista/consumo" label="Consumo"><BarChart3 className="size-5" aria-hidden /></BottomNavLink>
         <BottomNavLink href="/motorista/ajuda" label="Ajuda"><LifeBuoy className="size-5" aria-hidden /></BottomNavLink>
         <BottomNavLink href="/motorista/conta" label="Conta"><User className="size-5" aria-hidden /></BottomNavLink>
       </nav>

@@ -6,7 +6,8 @@ import { createSite, createStation, upsertConnector, addTariff } from "@/server/
 import { signupDriver, resolveDriver, loginDriver, logoutDriver } from "@/server/drivers/auth";
 import { resolveSession } from "@/server/auth/session";
 import { cancelChargeRequest, driverAwareAuthorizer, expireStaleChargeRequests, onSessionStarted, onSessionStopped, startCharge, stopCharge } from "@/server/drivers/charging";
-import { createSupportRequest, deleteMyAccount, exportMyData, getMyChargeRequest, getMySession, listMySessions } from "@/server/drivers/service";
+import { createSupportRequest, deleteMyAccount, exportMyData, getMyChargeRequest, getMySession, listMySessions, myUsage } from "@/server/drivers/service";
+import { networkUsage } from "@/server/modules/usage/service";
 import { getPayment, listPayments, processWebhook, reconcile, requestRefund, retryPendingWebhookEvents, applyProviderState } from "@/server/payments/service";
 import { sandboxControl, sandboxSettle, signSandbox, SANDBOX_SIGNATURE_HEADER } from "@/server/payments/sandbox";
 import { bootstrapOperator, createOrg, createUser, resetDb } from "./fixtures";
@@ -271,14 +272,13 @@ describe("P23 B1 — estados de início e encerramento vistos pelo motorista", (
   });
 
   it("B3: na demonstração (sem cobrança) a faixa de valores não se aplica — inicia sem valor", async () => {
-    Object.assign(process.env, { CHARGE_AMOUNT_MIN: "10.00", CHARGE_AMOUNT_MAX: "80.00" }); // faixa de teste, não comercial
+    Object.assign(process.env, { CHARGE_AMOUNT_MODE: "configured", CHARGE_AMOUNT_MIN: "10.00", CHARGE_AMOUNT_MAX: "80.00" }); // faixa de teste, não comercial
     try {
       const { driver, station } = await setup("SIMULATED");
       const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
       expect(req).toMatchObject({ status: "START_REQUESTED", paymentId: null });
     } finally {
-      delete process.env.CHARGE_AMOUNT_MIN;
-      delete process.env.CHARGE_AMOUNT_MAX;
+      for (const k of ["CHARGE_AMOUNT_MODE", "CHARGE_AMOUNT_MIN", "CHARGE_AMOUNT_MAX"]) delete process.env[k];
     }
   });
 
@@ -351,6 +351,45 @@ describe("P23 B4 — histórico filtrado e chamado com contexto", () => {
     await expect(createSupportRequest(other, { topic: "OUTRO", subject: "abc", message: "tentando usar recarga alheia", sessionId: session.id })).rejects.toThrow(/Sessão não encontrada/);
     await expect(createSupportRequest(driver, { message: "sem assunto e sem tipo de problema" })).rejects.toThrow();
     expect(await db.supportRequest.count({ where: { driverId: other.driverId } })).toBe(0);
+  });
+});
+
+describe("P23 redesign — consumo do motorista e uso da rede (dados reais)", () => {
+  it("motorista: só produção por padrão, teste só quando pedido; valor só o confirmado; outro motorista não vê", async () => {
+    const { driver, station, call, admin, op } = await setup("TEST");
+    const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
+    const tx = (await chargerStarts(call, req.idTag)).result.transactionId;
+    await call(`stop-${++seq}`, "StopTransaction", { transactionId: tx, meterStop: 12_500, timestamp: iso(new Date()) });
+    const payment = await db.payment.findFirstOrThrow({ where: { driverId: driver.driverId } });
+    const confirmed = payment.amountCaptured.minus(payment.amountRefunded).toFixed(2);
+
+    const real = await myUsage(driver, { period: "30" });
+    expect(real.totals.sessions).toBe(0); // estação de TESTE não entra nos números reais
+    expect(real.otherEnvSessions).toBe(1);
+    const all = await myUsage(driver, { period: "30", includeTest: true });
+    expect(all.totals).toMatchObject({ sessions: 1, kwh: 12.5, paid: confirmed });
+    expect(all.series.reduce((a, p) => a + p.sessions, 0)).toBe(1);
+
+    const { token } = await signupDriver({ name: "Bruno", email: `bruno-uso-${++seq}@ex.com`, password: "senha-bruno-123", consent: true });
+    const other = (await resolveDriver(token))!;
+    expect((await myUsage(other, { period: "30", includeTest: true })).totals.sessions).toBe(0);
+
+    // Rede: a operadora vê; outra operadora não; produção por padrão.
+    expect((await networkUsage(admin.ctx, { from: new Date(Date.now() - 86_400_000), to: new Date() })).totals.sessions).toBe(0);
+    const net = await networkUsage(admin.ctx, { from: new Date(Date.now() - 86_400_000), to: new Date(), includeNonProduction: true });
+    expect(net.totals).toMatchObject({ sessions: 1, kwh: 12.5, paid: confirmed });
+    const otherOp = await createOrg("Outra operadora", "OPERATOR");
+    const stranger = await createUser(otherOp.id, "admin");
+    expect((await networkUsage(stranger.ctx, { from: new Date(Date.now() - 86_400_000), to: new Date(), includeNonProduction: true })).totals.sessions).toBe(0);
+    void op;
+  });
+
+  it("rede: sem payment:read não há valores em dinheiro", async () => {
+    const { op } = await setup("SIMULATED");
+    const ops = await createUser(op.id, "operations");
+    const net = await networkUsage(ops.ctx, { from: new Date(Date.now() - 86_400_000), to: new Date(), includeNonProduction: true });
+    expect(net.canSeeMoney).toBe(ops.ctx.permissions.has("payment:read"));
+    if (!net.canSeeMoney) expect(net.totals.paid).toBe("0.00");
   });
 });
 

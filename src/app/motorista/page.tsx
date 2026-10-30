@@ -8,7 +8,7 @@ import { Input, Select } from "@/components/ui/field";
 import { ConnectorStatusBadge } from "@/components/app/station-badges";
 import { brl, dateTime } from "@/lib/format";
 import { cn } from "@/lib/cn";
-import { CONNECTOR_LABEL, CONNECTOR_TYPES, compatibleVehicles, hasActiveFilters, matchesFilters, parseDiscoveryFilters } from "@/domain/stations/discovery";
+import { CONNECTOR_LABEL, CONNECTOR_TYPES, compatibleVehicles, hasActiveFilters, isAvailableNow, matchesFilters, parseDiscoveryFilters } from "@/domain/stations/discovery";
 import { NearbyList } from "./nearby-list";
 
 export const dynamic = "force-dynamic";
@@ -30,7 +30,8 @@ export default async function DriverHome({ searchParams }: { searchParams: Promi
           <p className="font-display text-lg font-semibold">Acompanhar →</p>
         </Link>
       )}
-      <h1 className="font-display text-xl font-semibold text-navy-900">Estações</h1>
+      <h1 className="font-display text-2xl font-semibold text-navy-900">Encontrar carregador</h1>
+      <p className="mt-1 text-sm text-navy-600">Veja o preço e a situação de cada conector antes de ir. Disponível só aparece com informação recente do carregador.</p>
       <div className="mt-3 grid grid-cols-2 rounded-lg border border-navy-200 bg-white p-0.5 text-sm" role="tablist">
         {([["real", "Rede"], ["demo", "Demonstração"]] as const).map(([k, l]) => (
           <Link key={k} href={k === "real" ? "/motorista" : "/motorista?modo=demo"} role="tab" aria-selected={mode === k} className={cn("rounded-md py-2 text-center", mode === k ? "bg-navy-900 font-medium text-white" : "text-navy-600")}>{l}</Link>
@@ -93,14 +94,25 @@ export default async function DriverHome({ searchParams }: { searchParams: Promi
               lat: s.site.latitude !== null ? Number(s.site.latitude) : null,
               lon: s.site.longitude !== null ? Number(s.site.longitude) : null,
               card: (
-                <Link href={`/motorista/estacoes/${encodeURIComponent(s.identity)}`} className="block rounded-xl border border-navy-100 bg-white p-4 shadow-[var(--shadow-card)]">
-                  <div className="flex items-start justify-between gap-2">
+                <Link href={`/motorista/estacoes/${encodeURIComponent(s.identity)}`} className="block rounded-2xl border border-navy-100 bg-white p-4 shadow-[var(--shadow-card)] transition-colors hover:border-navy-200 focus-visible:ring-2 focus-visible:ring-brand-500">
+                  <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <p className="truncate font-display font-semibold text-navy-900">{s.site.name}</p>
+                      <p className="truncate font-display text-base font-semibold text-navy-900">{s.site.name}</p>
                       <p className="truncate text-sm text-navy-500">{[s.site.address, s.site.city && `${s.site.city}/${s.site.state ?? ""}`].filter(Boolean).join(" · ") || s.identity}</p>
                     </div>
-                    <p className="shrink-0 text-right text-sm font-semibold text-navy-900">{s.tariff ? `${brl(s.tariff.pricePerKwh.toString())}/kWh` : "sem tarifa"}</p>
+                    <p className="shrink-0 text-right">
+                      <span className="tabular block font-display text-lg font-semibold text-navy-900">{s.tariff ? brl(s.tariff.pricePerKwh.toString()) : "—"}</span>
+                      <span className="block text-xs text-navy-500">{s.tariff ? "por kWh" : "sem tarifa"}</span>
+                    </p>
                   </div>
+                  {(() => {
+                    const free = s.connectors.filter((c) => isAvailableNow(s, c)).length;
+                    return (
+                      <p className={cn("mt-2 inline-flex rounded-full px-2.5 py-1 text-xs font-semibold", !s.fresh ? "bg-navy-100 text-navy-700" : free > 0 ? "bg-brand-50 text-brand-800" : "bg-amber-50 text-amber-800")}>
+                        {!s.fresh ? "Situação desconhecida" : free > 0 ? `${free} de ${s.connectors.length} ${s.connectors.length === 1 ? "conector disponível" : "conectores disponíveis"}` : "Nenhum conector livre agora"}
+                      </p>
+                    );
+                  })()}
                   <div className="mt-3 flex flex-wrap gap-2">
                     {s.connectors.map((c) => <span key={c.connectorId} className="inline-flex items-center gap-1 text-xs text-navy-600">{CONNECTOR_LABEL[c.type]} {Number(c.maxPowerKw) > 0 ? `${c.maxPowerKw} kW` : ""} <ConnectorStatusBadge status={c.status} /></span>)}
                   </div>

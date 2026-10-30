@@ -171,3 +171,39 @@ test("P23 B4: histórico com filtros e recibo; ajuda já sabe qual é a recarga 
   await expect(page.getByText(`transação ${foreign.transactionId}`)).toHaveCount(0);
   await expect(page.getByText("afaste-se, não toque no carregador")).toBeVisible(); // orientação de segurança
 });
+
+test("redesign: consumo do motorista e painel da equipe mostram dados reais e separam teste de produção", async ({ page, browser }) => {
+  const f = fx();
+  await driverLogin(page, f.driverA);
+  await page.goto("/motorista/consumo");
+  await expect(page.getByRole("heading", { name: "Meu consumo" })).toBeVisible();
+  // A recarga do teste C foi numa estação de TESTE: não entra nos números reais.
+  await expect(page.getByText("Nenhuma recarga concluída neste período. Quando você carregar")).toBeVisible();
+  await page.getByRole("link", { name: "Incluir" }).click();
+  await expect(page).toHaveURL(/dados=teste/);
+  await expect(page.getByText("Incluindo recargas de teste e demonstração")).toBeVisible();
+  // Esperado calculado do banco (todas as recargas concluídas do motorista A, todas em estação de TESTE).
+  const done = await prisma<{ meterStartWh: number; meterStopWh: number | null }[]>("chargingSession", "findMany", { where: { driverId: f.driverA.driverId, status: "COMPLETED" }, select: { meterStartWh: true, meterStopWh: true } });
+  const kwh = done.reduce((a, x) => a + ((x.meterStopWh ?? x.meterStartWh) - x.meterStartWh), 0) / 1000;
+  const shown = `${kwh.toLocaleString("pt-BR", { minimumFractionDigits: 1, maximumFractionDigits: 1 })} kWh`;
+  expect(done.length).toBeGreaterThan(0);
+  const resumo = page.getByRole("region", { name: /Resumo/ });
+  await expect(resumo).toContainText(shown);
+  await expect(resumo).toContainText(String(done.length));
+  await expect(page.getByRole("img", { name: new RegExp(`Energia recebida: total ${shown.replace(".", "\\.")}`) })).toBeVisible();
+  await page.getByRole("link", { name: "Últimos 90 dias" }).click();
+  await expect(page).toHaveURL(/periodo=90/);
+  await expect(page.getByRole("link", { name: "Últimos 90 dias" })).toHaveAttribute("aria-current", "page");
+
+  const staffCtx = await browser.newContext();
+  const staff = await staffCtx.newPage();
+  await staffLogin(staff, f.admin);
+  await staff.goto("/app");
+  await expect(staff.getByText(/Operação da rede · últimos 30 dias · somente produção/)).toBeVisible();
+  await expect(staff.getByText("Nenhuma recarga concluída no período. Quando houver")).toBeVisible();
+  await staff.getByRole("link", { name: "Incluir teste/simulação" }).click();
+  await expect(staff.getByText("Dados de teste e simulação incluídos")).toBeVisible();
+  await expect(staff.getByRole("img", { name: /Energia entregue: total/ })).toBeVisible();
+  await expect(staff.getByText("Situação dos conectores agora")).toBeVisible();
+  await staffCtx.close();
+});

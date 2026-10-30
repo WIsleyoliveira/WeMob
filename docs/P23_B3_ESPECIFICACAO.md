@@ -1,6 +1,6 @@
 # P23 · B3 — Compra da recarga por valor ou por kWh: especificação técnica (2026-10-29)
 
-**Status (atualizado em 2026-10-29): compra por VALOR integrada e DESLIGADA por padrão** — liga só com `CHARGE_AMOUNT_MIN`/`CHARGE_AMOUNT_MAX` (decisão 1 da WAPE, `docs/P23_B3_DECISOES_WAPE.md`); sem elas o comportamento é idêntico ao anterior (`PAYMENT_PREAUTH_AMOUNT`). Compra por **kWh** só na regra pura (decisões 4 e 6). Nenhuma regra comercial inventada. Produção **NÃO AUTORIZADA**. Matriz de auditoria em §10.
+**Status (atualizado em 2026-10-29, perfis por ambiente)**: compra por VALOR integrada; perfil `CHARGE_AMOUNT_MODE` = `off` (padrão) | `example` (valores de EXEMPLO, nunca com gateway de produção nem em estação real) | `configured` (faixa + referência da aprovação da WAPE em produção). Versão anterior: — liga só com `CHARGE_AMOUNT_MIN`/`CHARGE_AMOUNT_MAX` (decisão 1 da WAPE, `docs/P23_B3_DECISOES_WAPE.md`); sem elas o comportamento é idêntico ao anterior (`PAYMENT_PREAUTH_AMOUNT`). Compra por **kWh** só na regra pura (decisões 4 e 6). Nenhuma regra comercial inventada. Produção **NÃO AUTORIZADA**. Matriz de auditoria em §10.
 
 Legenda: **[EM VIGOR]** já implementado e testado · **[PREPARADO]** código puro existente, não conectado · **[PROPOSTA]** desenho técnico ainda não aprovado · **[DECISÃO]** depende da WAPE/Asaas.
 
