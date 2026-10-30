@@ -15,7 +15,7 @@
  */
 import Decimal from "decimal.js";
 import { z } from "zod";
-import { Prisma, type ChargingStation } from "@prisma/client";
+import { Prisma, type ChargingStation, type StationEnvironment } from "@prisma/client";
 import { db } from "@/server/db";
 import { audit } from "@/server/audit";
 import { log } from "@/server/log";
@@ -31,7 +31,7 @@ import type { IdTagAuthorizer } from "@/server/ocpp/handler";
 import { requireDriver, type DriverContext } from "./auth";
 import { hit } from "@/server/rate-limit";
 import { limitMargin, limitState, sessionLimit } from "@/domain/charging/limit";
-import { parseAmount, readPurchaseRange, validatePurchaseAmount } from "@/domain/charging/purchase";
+import { parseAmount, purchaseConfigForStation, rangeOf, readPurchaseConfig, validatePurchaseAmount } from "@/domain/charging/purchase";
 
 export const START_TIMEOUT_MS = 3 * 60_000;
 /** Janela para pagar (Pix ou cartão) antes de a cobrança ser removida no gateway. */
@@ -60,28 +60,29 @@ export const startSchema = z.object({
 });
 
 /**
- * B3 — compra por VALOR (P23). Ligada só quando a faixa por recarga (decisão da WAPE) está configurada em
- * CHARGE_AMOUNT_MIN/CHARGE_AMOUNT_MAX; sem ela vale o valor único de PAYMENT_PREAUTH_AMOUNT, como antes.
+ * B3 — compra por VALOR (P23). Perfil do ambiente em CHARGE_AMOUNT_MODE (off | example | configured), lido por
+ * `readPurchaseConfig`: desligado por padrão; exemplo nunca com gateway de produção nem em estação de produção;
+ * produção exige a referência da aprovação formal da WAPE. Sem B3 vale o valor único PAYMENT_PREAUTH_AMOUNT.
  * A compra por kWh NÃO é oferecida: depende de decisões ainda abertas (docs/P23_B3_DECISOES_WAPE.md).
  */
-export function purchaseOptions() {
-  const range = readPurchaseRange(process.env);
-  return range.status === "DEFINED"
-    ? { enabled: true as const, min: range.min.toFixed(2), max: range.max.toFixed(2), margin: limitMargin(process.env.SESSION_LIMIT_MARGIN) }
-    : { enabled: false as const, reason: range.reason };
+export function purchaseOptions(stationEnvironment: StationEnvironment) {
+  const c = purchaseConfigForStation(readPurchaseConfig(process.env), stationEnvironment);
+  return c.status === "ENABLED"
+    ? { enabled: true as const, example: c.source === "EXAMPLE", min: c.min.toFixed(2), max: c.max.toFixed(2), suggested: c.suggested?.toFixed(2) ?? null, shortcuts: c.shortcuts.map((x) => x.toFixed(2)), margin: limitMargin(process.env.SESSION_LIMIT_MARGIN) }
+    : { enabled: false as const, reason: c.reason };
 }
 
-/** Valor a cobrar: o escolhido (validado no servidor contra a faixa) ou o valor único legado. */
-function chargeAmountFor(requested: string | undefined) {
-  const range = readPurchaseRange(process.env);
-  if (range.status === "UNDEFINED") {
-    if (requested) throw new AppError("VALIDATION", "A escolha do valor da recarga ainda não está disponível.");
-    return { amount: preauthAmount(), mode: "FIXED" as const };
+/** Valor a cobrar: o escolhido (validado no servidor contra a faixa do ambiente) ou o valor único legado. */
+function chargeAmountFor(requested: string | undefined, stationEnvironment: StationEnvironment) {
+  const config = purchaseConfigForStation(readPurchaseConfig(process.env), stationEnvironment);
+  if (config.status === "DISABLED") {
+    if (requested) throw new AppError("VALIDATION", `A escolha do valor da recarga não está disponível: ${config.reason}`);
+    return { amount: preauthAmount(), mode: "FIXED" as const, source: null };
   }
   if (!requested) throw new AppError("VALIDATION", "Informe quanto você quer gastar nesta recarga.");
-  const errors = validatePurchaseAmount(requested, range);
+  const errors = validatePurchaseAmount(requested, rangeOf(config));
   if (errors.length) throw new AppError("VALIDATION", errors[0]);
-  return { amount: parseAmount(requested)!.toFixed(2), mode: "AMOUNT" as const };
+  return { amount: parseAmount(requested)!.toFixed(2), mode: "AMOUNT" as const, source: config.source, approvalRef: config.approvalRef };
 }
 
 export async function startCharge(driver: DriverContext | null, raw: unknown) {
@@ -106,7 +107,7 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
   if (station.environment === "TEST" && !(provider.status === "configured" && provider.environment === "SANDBOX")) throw new AppError("VALIDATION", "Provedor de pagamento em ambiente de testes não configurado para a estação de teste.");
   if (!demo && provider.flow === "PREPAID" && !(await db.driver.findUnique({ where: { id: driver.driverId } }))?.documentEnc) throw new AppError("VALIDATION", "Informe seu CPF em Minha conta para pagar a recarga.");
   // Valor validado ANTES de criar pedido ou cobrança: entrada inválida não deixa rastro nem chama o gateway.
-  const purchase = demo ? null : chargeAmountFor(requestedAmount);
+  const purchase = demo ? null : chargeAmountFor(requestedAmount, station.environment);
 
   // Cada pedido cria cliente/cobrança no gateway: limita ciclos de pedir-e-cancelar (protege a cota da conta).
   if (!demo && !(await hit(`charge-start:${driver.driverId}`, 10, 3600_000))) throw new AppError("RATE_LIMITED", "Muitos pedidos de recarga em pouco tempo. Aguarde alguns minutos.");
@@ -126,7 +127,7 @@ export async function startCharge(driver: DriverContext | null, raw: unknown) {
       if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") throw new AppError("CONFLICT", "Já existe um pedido de recarga em andamento para você ou para este conector.");
       throw e;
     });
-  await audit({ action: "charge.requested", entityType: "ChargeRequest", entityId: request.id, data: { station: identity, connectorId, demo, method, ...(purchase ? { purchase: { mode: purchase.mode, amount: purchase.amount, pricePerKwh: tariff.pricePerKwh.toString(), pricePerMin: tariff.pricePerMin.toString(), tariffValidFrom: tariff.validFrom.toISOString() } } : {}) } });
+  await audit({ action: "charge.requested", entityType: "ChargeRequest", entityId: request.id, data: { station: identity, connectorId, demo, method, ...(purchase ? { purchase: { mode: purchase.mode, source: purchase.source, approvalRef: purchase.mode === "AMOUNT" ? purchase.approvalRef : null, amount: purchase.amount, pricePerKwh: tariff.pricePerKwh.toString(), pricePerMin: tariff.pricePerMin.toString(), tariffValidFrom: tariff.validFrom.toISOString() } } : {}) } });
 
   // Demonstração: o pedido já nasce START_REQUESTED (sem pagamento). Sem o `from`, a transição condicional
   // não acontecia e nenhum RemoteStart era emitido (regressão do P13, achada no P23 B1).
@@ -376,5 +377,5 @@ export async function stopCharge(driver: DriverContext | null, sessionId: string
 export function paymentOptions() {
   const provider = activeProvider();
   const prepaid = provider.flow === "PREPAID";
-  return { prepaid, methods: prepaid ? [...PREPAID_METHODS] : [], amount: preauthAmount().toString(), windowMinutes: pixPaymentWindowMs() / 60_000, purchase: purchaseOptions() };
+  return { prepaid, methods: prepaid ? [...PREPAID_METHODS] : [], amount: preauthAmount().toString(), windowMinutes: pixPaymentWindowMs() / 60_000 };
 }

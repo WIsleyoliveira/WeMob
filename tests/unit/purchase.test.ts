@@ -1,6 +1,6 @@
 import Decimal from "decimal.js";
 import { describe, expect, it } from "vitest";
-import { parseAmount, quoteByAmount, quoteByEnergy, readPurchaseRange, validatePurchaseAmount } from "@/domain/charging/purchase";
+import { B3_EXAMPLE, isProductionGateway, parseAmount, purchaseConfigForStation, quoteByAmount, quoteByEnergy, readPurchaseConfig, readPurchaseRange, validatePurchaseAmount } from "@/domain/charging/purchase";
 import { sessionLimit } from "@/domain/charging/limit";
 
 const kwhOnly = { pricePerKwh: "2.4000", pricePerMin: "0" };
@@ -81,5 +81,44 @@ describe("B3 — compra por valor ou kWh (regra preparatória, sem limites comer
 
   it("valores em Decimal (sem erro de ponto flutuante)", () => {
     expect(quoteByAmount("0.30", { pricePerKwh: "0.1", pricePerMin: "0" }, 0.1).maxEnergyKwh?.toFixed(3)).toBe(new Decimal("0.27").div("0.1").toFixed(3));
+  });
+
+  it("perfis por ambiente: desligado por padrão; faixa sozinha não liga; modo desconhecido desliga", () => {
+    expect(readPurchaseConfig({})).toMatchObject({ status: "DISABLED" });
+    expect(readPurchaseConfig({ CHARGE_AMOUNT_MODE: "off", CHARGE_AMOUNT_MIN: "1", CHARGE_AMOUNT_MAX: "9" })).toMatchObject({ status: "DISABLED" });
+    expect(readPurchaseConfig({ CHARGE_AMOUNT_MIN: "1", CHARGE_AMOUNT_MAX: "9" })).toMatchObject({ status: "DISABLED" });
+    expect(readPurchaseConfig({ CHARGE_AMOUNT_MODE: "ligado" })).toMatchObject({ status: "DISABLED", reason: expect.stringMatching(/desconhecido/) });
+  });
+
+  it("perfil EXAMPLE: valores de exemplo só sem gateway de produção; nunca em estação de produção", () => {
+    const ex = readPurchaseConfig({ CHARGE_AMOUNT_MODE: "example", ASAAS_ENVIRONMENT: "sandbox" });
+    expect(ex).toMatchObject({ status: "ENABLED", source: "EXAMPLE" });
+    if (ex.status !== "ENABLED") throw new Error();
+    expect([ex.min.toFixed(2), ex.max.toFixed(2), ex.suggested?.toFixed(2)]).toEqual([B3_EXAMPLE.min, B3_EXAMPLE.max, B3_EXAMPLE.suggested]);
+    expect(readPurchaseConfig({ CHARGE_AMOUNT_MODE: "example", ASAAS_ENVIRONMENT: "production" })).toMatchObject({ status: "DISABLED", reason: expect.stringMatching(/exemplo/) });
+    expect(readPurchaseConfig({ CHARGE_AMOUNT_MODE: "example", ASAAS_PRODUCTION_ENABLED: "1" })).toMatchObject({ status: "DISABLED" });
+    expect(purchaseConfigForStation(ex, "PRODUCTION")).toMatchObject({ status: "DISABLED", reason: expect.stringMatching(/estações reais/) });
+    expect(purchaseConfigForStation(ex, "TEST")).toMatchObject({ status: "ENABLED" });
+    expect(isProductionGateway({ ASAAS_ENVIRONMENT: "Production " })).toBe(true);
+  });
+
+  it("perfil CONFIGURED: faixa obrigatória; produção exige a referência da aprovação da WAPE; sugerido validado", () => {
+    expect(readPurchaseConfig({ CHARGE_AMOUNT_MODE: "configured" })).toMatchObject({ status: "DISABLED", reason: expect.stringMatching(/não definida/) });
+    const sandbox = readPurchaseConfig({ CHARGE_AMOUNT_MODE: "configured", CHARGE_AMOUNT_MIN: "10.00", CHARGE_AMOUNT_MAX: "80.00", ASAAS_ENVIRONMENT: "sandbox" });
+    expect(sandbox).toMatchObject({ status: "ENABLED", source: "CONFIGURED", approvalRef: null });
+    const prodEnv = { CHARGE_AMOUNT_MODE: "configured", CHARGE_AMOUNT_MIN: "10.00", CHARGE_AMOUNT_MAX: "80.00", ASAAS_ENVIRONMENT: "production" };
+    expect(readPurchaseConfig(prodEnv)).toMatchObject({ status: "DISABLED", reason: expect.stringMatching(/aprovação formal/) });
+    expect(readPurchaseConfig({ ...prodEnv, CHARGE_AMOUNT_APPROVAL_REF: "x" })).toMatchObject({ status: "DISABLED" }); // referência curta demais
+    expect(readPurchaseConfig({ ...prodEnv, CHARGE_AMOUNT_APPROVAL_REF: "WAPE-DEC-2026-001" })).toMatchObject({ status: "ENABLED", approvalRef: "WAPE-DEC-2026-001" });
+    expect(purchaseConfigForStation(readPurchaseConfig({ ...prodEnv, CHARGE_AMOUNT_APPROVAL_REF: "WAPE-DEC-2026-001" }), "PRODUCTION")).toMatchObject({ status: "ENABLED" });
+    expect(readPurchaseConfig({ ...prodEnv, CHARGE_AMOUNT_APPROVAL_REF: "WAPE-DEC-2026-001", CHARGE_AMOUNT_SUGGESTED: "90" })).toMatchObject({ status: "DISABLED", reason: expect.stringMatching(/sugerido/) });
+    expect(readPurchaseConfig({ ...prodEnv, CHARGE_AMOUNT_APPROVAL_REF: "WAPE-DEC-2026-001", CHARGE_AMOUNT_SUGGESTED: "40" })).toMatchObject({ status: "ENABLED" });
+  });
+
+  it("exemplo do pedido: R$ 50 a R$ 2,00/kWh equivale a 25 kWh, mas a recarga para em R$ 45 (margem 10%) → até 22,5 kWh", () => {
+    const q = quoteByAmount("50", { pricePerKwh: "2", pricePerMin: "0" }, 0.1);
+    expect(new Decimal(50).div(2).toFixed(1)).toBe("25.0");
+    expect(q.limit.toFixed(2)).toBe("45.00");
+    expect(q.maxEnergyKwh?.toFixed(1)).toBe("22.5");
   });
 });

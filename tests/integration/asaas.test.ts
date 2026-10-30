@@ -601,19 +601,18 @@ describe("limite financeiro da sessão (P16)", () => {
 describe("B3 — compra por valor (P23): desligada sem a faixa da WAPE", () => {
   // Faixa de TESTE (não comercial): a WAPE ainda não definiu mínimo e máximo por recarga.
   const withRange = <T>(fn: () => Promise<T>) => async () => {
-    Object.assign(process.env, { CHARGE_AMOUNT_MIN: "10.00", CHARGE_AMOUNT_MAX: "80.00" });
+    Object.assign(process.env, { CHARGE_AMOUNT_MODE: "configured", CHARGE_AMOUNT_MIN: "10.00", CHARGE_AMOUNT_MAX: "80.00" });
     try {
       return await fn();
     } finally {
-      delete process.env.CHARGE_AMOUNT_MIN;
-      delete process.env.CHARGE_AMOUNT_MAX;
+      for (const k of ["CHARGE_AMOUNT_MODE", "CHARGE_AMOUNT_MIN", "CHARGE_AMOUNT_MAX"]) delete process.env[k];
     }
   };
   const createdCharges = () => fake.control.requests.filter((x) => x.method === "POST" && x.path === "/payments");
 
   it("sem faixa configurada: valor enviado pelo cliente é recusado; sem valor vale o valor único de antes", async () => {
     const { driver, station } = await setup();
-    await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "30" })).rejects.toThrow(/ainda não está disponível/);
+    await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "30" })).rejects.toThrow(/não está disponível/);
     expect(await db.chargeRequest.count()).toBe(0);
     expect(createdCharges()).toHaveLength(0);
     const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1 });
@@ -645,6 +644,38 @@ describe("B3 — compra por valor (P23): desligada sem a faixa da WAPE", () => {
     expect(await db.chargeRequest.count()).toBe(0);
     expect(createdCharges()).toHaveLength(0);
   }));
+
+  it("perfil de EXEMPLO: valores de exemplo funcionam no sandbox e são recusados com gateway de produção (sem fallback)", async () => {
+    const { driver, station } = await setup();
+    process.env.CHARGE_AMOUNT_MODE = "example";
+    try {
+      await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "4.99" })).rejects.toThrow(/abaixo do mínimo por recarga \(R\$ 5,00\)/);
+      await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "500.01" })).rejects.toThrow(/acima do máximo por recarga \(R\$ 500,00\)/);
+      process.env.ASAAS_PRODUCTION_ENABLED = "1"; // como se o gateway fosse de produção
+      await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "50" })).rejects.toThrow(/exemplo não podem ser usados com gateway de produção/);
+      expect(createdCharges()).toHaveLength(0);
+      delete process.env.ASAAS_PRODUCTION_ENABLED;
+      const req = await startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "5" }); // exatamente o mínimo de exemplo
+      expect(JSON.parse(createdCharges().at(-1)!.body!)).toMatchObject({ value: 5 });
+      const audit = await db.auditEvent.findFirstOrThrow({ where: { action: "charge.requested", entityId: req.id } });
+      expect(audit.data).toMatchObject({ purchase: { mode: "AMOUNT", source: "EXAMPLE", amount: "5.00" } });
+    } finally {
+      delete process.env.CHARGE_AMOUNT_MODE;
+      delete process.env.ASAAS_PRODUCTION_ENABLED;
+    }
+  });
+
+  it("faixa sem o perfil explícito NÃO liga o B3 (nada é habilitado por acidente)", async () => {
+    const { driver, station } = await setup();
+    Object.assign(process.env, { CHARGE_AMOUNT_MIN: "10.00", CHARGE_AMOUNT_MAX: "80.00" });
+    try {
+      await expect(startCharge(driver, { identity: station.ocppIdentity, connectorId: 1, amount: "30" })).rejects.toThrow(/não está disponível/);
+      expect(createdCharges()).toHaveLength(0);
+    } finally {
+      delete process.env.CHARGE_AMOUNT_MIN;
+      delete process.env.CHARGE_AMOUNT_MAX;
+    }
+  });
 
   it("com faixa: pedido repetido não gera segunda cobrança (um pedido aberto por motorista)", withRange(async () => {
     const { driver, station } = await setup();
