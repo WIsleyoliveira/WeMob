@@ -93,12 +93,71 @@ export async function listDriverStations(mode: "real" | "demo") {
  * sandbox): não aparecem na lista, mas são acessíveis pelo endereço direto, como o QR Code impresso.
  */
 export async function getDriverStation(identity: string) {
-  const s = await db.chargingStation.findFirst({
-    where: { ocppIdentity: identity, deletedAt: null, OR: [{ environment: "SIMULATED" }, { environment: { in: ["PRODUCTION", "TEST"] }, site: { isPublic: true, deletedAt: null } }] },
-    include: stationInclude,
-  });
+  const s = await db.chargingStation.findFirst({ where: { ocppIdentity: identity, ...DRIVER_REACHABLE }, include: stationInclude });
   if (!s) throw notFound("Estação não encontrada.");
   return toDriverStation(s, new Date());
+}
+
+/** Estações que o motorista pode abrir (lista + link/QR). Favoritos e atalhos nunca apontam para outras. */
+const DRIVER_REACHABLE = {
+  deletedAt: null,
+  OR: [{ environment: "SIMULATED" }, { environment: { in: ["PRODUCTION", "TEST"] }, site: { isPublic: true, deletedAt: null } }],
+} satisfies Prisma.ChargingStationWhereInput;
+
+export const MAX_FAVORITES = 20;
+
+/** Marca/desmarca a estação como favorita (idempotente: repetir o pedido não duplica nem falha). */
+export async function setFavorite(driver: DriverContext | null, raw: unknown) {
+  requireDriver(driver);
+  const d = z.object({ identity: z.string().trim().min(1).max(100), favorite: z.boolean() }).parse(raw);
+  const station = await db.chargingStation.findFirst({ where: { ocppIdentity: d.identity, ...DRIVER_REACHABLE }, select: { id: true } });
+  if (!station) throw notFound("Estação não encontrada.");
+  const key = { driverId_stationId: { driverId: driver.driverId, stationId: station.id } };
+  if (!d.favorite) {
+    await db.driverFavoriteStation.deleteMany({ where: { driverId: driver.driverId, stationId: station.id } });
+    return false;
+  }
+  if (await db.driverFavoriteStation.findUnique({ where: key })) return true;
+  if ((await db.driverFavoriteStation.count({ where: { driverId: driver.driverId } })) >= MAX_FAVORITES) throw new AppError("VALIDATION", `Limite de ${MAX_FAVORITES} estações favoritas. Remova uma para adicionar outra.`);
+  await db.driverFavoriteStation.upsert({ where: key, create: key.driverId_stationId, update: {} });
+  return true;
+}
+
+export async function isMyFavorite(driver: DriverContext | null, stationId: string) {
+  if (!driver) return false;
+  return !!(await db.driverFavoriteStation.findUnique({ where: { driverId_stationId: { driverId: driver.driverId, stationId } }, select: { id: true } }));
+}
+
+/** Favoritas que o motorista ainda pode abrir (estação removida ou unidade que deixou de ser pública some da lista). */
+export async function listMyFavorites(driver: DriverContext | null) {
+  if (!driver) return [];
+  const rows = await db.driverFavoriteStation.findMany({
+    where: { driverId: driver.driverId, station: DRIVER_REACHABLE },
+    include: { station: { include: stationInclude } },
+    orderBy: { createdAt: "asc" },
+  });
+  const now = new Date();
+  return rows.map((r) => toDriverStation(r.station, now));
+}
+
+/**
+ * Atalho "repetir última recarga": estação e conector da última recarga que o carregador INICIOU. Só leva à tela
+ * do conector, que confere a situação de novo e pede o pagamento como sempre — nada é cobrado nem iniciado aqui.
+ */
+export async function lastChargeShortcut(driver: DriverContext | null) {
+  if (!driver) return null;
+  const r = await db.chargeRequest.findFirst({
+    where: { driverId: driver.driverId, status: "STARTED", sessionId: { not: null } },
+    orderBy: { createdAt: "desc" },
+    select: { connectorId: true, createdAt: true, stationId: true },
+  });
+  if (!r) return null;
+  const station = await db.chargingStation.findFirst({
+    where: { id: r.stationId, ...DRIVER_REACHABLE, connectors: { some: { connectorId: r.connectorId } } },
+    select: { ocppIdentity: true, environment: true, site: { select: { name: true } } },
+  });
+  if (!station) return null;
+  return { identity: station.ocppIdentity, connectorId: r.connectorId, siteName: station.site.name, environment: station.environment, lastAt: r.createdAt };
 }
 
 export async function listMySessions(driver: DriverContext | null, filters: HistoryFilters = {}) {
@@ -195,6 +254,8 @@ export async function getMySession(driver: DriverContext | null, sessionId: stri
     lastMeasurementAt: s.measurements[0]?.timestamp ?? null,
     /** Última comunicação do carregador (relógio do servidor). */
     lastSeenAt: s.station.lastSeenAt,
+    /** Estação dentro do prazo de heartbeat (relógio do servidor). */
+    stationFresh: isStationFresh(s.station, new Date()),
     stopCommand: stop ? { id: stop.id, status: stop.status, byLimit: stop.requestedById === "system:limit", createdAt: stop.createdAt } : null,
   };
 }
@@ -256,6 +317,8 @@ export async function exportMyData(driver: DriverContext | null) {
       chargingSessions: { select: { id: true, startedAt: true, stoppedAt: true, meterStartWh: true, meterStopWh: true, amount: true, environment: true, rating: { select: { stars: true, comment: true } } } },
       payments: { select: { id: true, provider: true, status: true, amountAuthorized: true, amountCaptured: true, amountRefunded: true, createdAt: true } },
       supportRequests: { select: { subject: true, message: true, status: true, createdAt: true } },
+      favorites: { select: { createdAt: true, station: { select: { ocppIdentity: true, site: { select: { name: true } } } } } },
+      sessions: { select: { deviceLabel: true, createdAt: true, lastSeenAt: true, expiresAt: true, revokedAt: true } },
     },
   });
   await db.auditEvent.create({ data: { action: "driver.data_exported", entityType: "Driver", entityId: driver.driverId } });
@@ -279,6 +342,7 @@ export async function deleteMyAccount(driver: DriverContext | null, raw: unknown
   await db.$transaction([
     db.driver.update({ where: { id: d.id }, data: { name: "Titular removido", email: `removido-${d.id}@anonimizado.invalid`, phone: null, passwordHash: await hashPassword(randomBytes(32).toString("hex")), disabledAt: now } }),
     db.vehicle.deleteMany({ where: { driverId: d.id } }),
+    db.driverFavoriteStation.deleteMany({ where: { driverId: d.id } }),
     db.driverIdTag.updateMany({ where: { driverId: d.id, revokedAt: null }, data: { revokedAt: now } }),
     db.driverSession.updateMany({ where: { driverId: d.id, revokedAt: null }, data: { revokedAt: now } }),
     db.sessionRating.updateMany({ where: { session: { driverId: d.id } }, data: { comment: null } }),

@@ -48,7 +48,7 @@ Single Next.js 15 App Router app (TypeScript, Prisma/PostgreSQL, Zod, decimal.js
 
 **Auth & tenancy:**
 - Staff: DB sessions (`Session`, SHA-256 token hash, cookie `sm_session`), re-validated each request in `resolveSession`; RBAC via `Role.permissions` strings (`src/server/auth/permissions.ts`). Org kinds: `OPERATOR` (Sansol Mob), `PARTNER`, `INVESTOR`; partners see only sites where `Site.partnerOrganizationId` is their org.
-- Drivers: completely separate auth (`Driver`, `DriverSession`, cookie `sm_driver`, `src/server/drivers/auth.ts`); a driver never gets an `AuthContext`.
+- Drivers: completely separate auth (`Driver`, `DriverSession`, cookie `sm_driver`, `src/server/drivers/auth.ts`); a driver never gets an `AuthContext`. `DriverSession` keeps only a generic `deviceLabel` (`domain/drivers/device.ts`) and `lastSeenAt` (touched ≤ every 5 min) for "Aparelhos conectados" — never store the raw User-Agent or IP. Favorites/shortcuts only point to stations matching `DRIVER_REACHABLE` (same rule as the link/QR).
 - `station:command_production` is superadmin-only and also requires `OCPP_ALLOW_PRODUCTION_COMMANDS=1`.
 
 **Money and projections:** all financial math uses Decimal with ROUND_HALF_UP per line; money columns are `Decimal(14,2)`, rates `Decimal(9,6)` stored as fractions (0.05 = 5%). Commercial model versions are immutable once approved (four-eyes: approver ≠ creator; effective-date windows via `effectiveWhere`). Simulations store inputs + results + engine version; legacy inputs are read through `normalizeStoredInput`. Fee bases are configurable per version; `platformFeeIncludesGateway` forbids separate gateway costs (no double counting).

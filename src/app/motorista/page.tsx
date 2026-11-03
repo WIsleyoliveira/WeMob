@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { getDriver } from "@/server/drivers/current";
-import { getActiveRequest, listDriverStations, listMyVehicles } from "@/server/drivers/service";
+import { getActiveRequest, lastChargeShortcut, listDriverStations, listMyFavorites, listMyVehicles } from "@/server/drivers/service";
 import { Alert } from "@/components/ui/alert";
 import { StateMessage } from "@/components/ui/state";
 import { Button } from "@/components/ui/button";
@@ -13,12 +13,15 @@ import { NearbyList } from "./nearby-list";
 
 export const dynamic = "force-dynamic";
 
+/** Ambiente que não é a rede real: aparece ao lado do nome em favoritos e atalhos. */
+const ENV_TAG: Record<string, string | undefined> = { SIMULATED: "demonstração", TEST: "teste" };
+
 export default async function DriverHome({ searchParams }: { searchParams: Promise<Record<string, string | string[] | undefined>> }) {
   const params = await searchParams;
   const mode = params.modo === "demo" ? "demo" : "real";
   const filters = parseDiscoveryFilters(params);
   const driver = await getDriver();
-  const [stations, active, vehicles] = await Promise.all([listDriverStations(mode), driver ? getActiveRequest(driver) : null, listMyVehicles(driver)]);
+  const [stations, active, vehicles, favorites, last] = await Promise.all([listDriverStations(mode), driver ? getActiveRequest(driver) : null, listMyVehicles(driver), listMyFavorites(driver), lastChargeShortcut(driver)]);
   const shown = stations.filter((s) => matchesFilters(s, filters, vehicles));
   const filtered = hasActiveFilters(filters);
   const base = mode === "demo" ? "/motorista?modo=demo" : "/motorista";
@@ -30,8 +33,39 @@ export default async function DriverHome({ searchParams }: { searchParams: Promi
           <p className="font-display text-lg font-semibold">Acompanhar →</p>
         </Link>
       )}
+      {!active && last && (
+        <Link href={`/motorista/carregar/${encodeURIComponent(last.identity)}/${last.connectorId}`} className="mb-4 flex items-center justify-between gap-3 rounded-xl border border-brand-200 bg-brand-50 p-4 focus-visible:ring-2 focus-visible:ring-brand-500">
+          <span className="min-w-0">
+            <span className="block text-xs font-medium text-brand-800">Repetir última recarga</span>
+            <span className="block truncate font-display font-semibold text-navy-900">{last.siteName} · conector {last.connectorId}</span>
+            <span className="block text-xs text-navy-600">Última vez em {dateTime(last.lastAt)}{ENV_TAG[last.environment] ? ` · ${ENV_TAG[last.environment]}` : ""}. A situação do conector é conferida antes de pagar.</span>
+          </span>
+          <span className="shrink-0 font-display text-lg font-semibold text-brand-700" aria-hidden>→</span>
+        </Link>
+      )}
       <h1 className="font-display text-2xl font-semibold text-navy-900">Encontrar carregador</h1>
       <p className="mt-1 text-sm text-navy-600">Veja o preço e a situação de cada conector antes de ir. Disponível só aparece com informação recente do carregador.</p>
+      {favorites.length > 0 && (
+        <section aria-labelledby="favoritas" className="mt-4">
+          <h2 id="favoritas" className="font-display text-base font-semibold text-navy-900">Favoritas</h2>
+          <ul className="mt-2 grid gap-2">
+            {favorites.map((f) => {
+              const free = f.connectors.filter((c) => isAvailableNow(f, c)).length;
+              return (
+                <li key={f.id}>
+                  <Link href={`/motorista/estacoes/${encodeURIComponent(f.identity)}`} className="flex items-center justify-between gap-3 rounded-xl border border-navy-100 bg-white px-4 py-3 hover:border-navy-200 focus-visible:ring-2 focus-visible:ring-brand-500">
+                    <span className="min-w-0">
+                      <span className="block truncate font-medium text-navy-900">{f.site.name}{ENV_TAG[f.environment] ? <span className="ml-1 text-xs font-normal text-amber-700">({ENV_TAG[f.environment]})</span> : null}</span>
+                      <span className="block text-xs text-navy-600">{!f.fresh ? "Situação desconhecida" : free > 0 ? `${free} de ${f.connectors.length} ${free > 1 ? "disponíveis" : "disponível"}` : "Nenhum conector livre agora"}</span>
+                    </span>
+                    <span className="tabular shrink-0 text-sm font-semibold text-navy-900">{f.tariff ? `${brl(f.tariff.pricePerKwh.toString())}/kWh` : "sem tarifa"}</span>
+                  </Link>
+                </li>
+              );
+            })}
+          </ul>
+        </section>
+      )}
       <div className="mt-3 grid grid-cols-2 rounded-lg border border-navy-200 bg-white p-0.5 text-sm" role="tablist">
         {([["real", "Rede"], ["demo", "Demonstração"]] as const).map(([k, l]) => (
           <Link key={k} href={k === "real" ? "/motorista" : "/motorista?modo=demo"} role="tab" aria-selected={mode === k} className={cn("rounded-md py-2 text-center", mode === k ? "bg-navy-900 font-medium text-white" : "text-navy-600")}>{l}</Link>

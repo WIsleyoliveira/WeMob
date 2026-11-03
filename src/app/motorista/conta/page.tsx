@@ -1,6 +1,9 @@
 import { requireDriverPage } from "@/server/drivers/current";
 import { getProfile } from "@/server/drivers/service";
-import { setDocumentAction, addVehicleAction, deleteDriverAccountAction, driverLogoutAction, removeVehicleAction, updateProfileAction } from "@/app/actions/driver";
+import { setDocumentAction, addVehicleAction, deleteDriverAccountAction, driverLogoutAction, removeVehicleAction, revokeDeviceAction, revokeOtherDevicesAction, updateProfileAction } from "@/app/actions/driver";
+import { listMyDevices } from "@/server/drivers/auth";
+import { Badge } from "@/components/ui/badge";
+import { dateTime } from "@/lib/format";
 import { Field, Input } from "@/components/ui/field";
 import { ActionForm } from "@/components/app/action-form";
 import { Button } from "@/components/ui/button";
@@ -10,7 +13,8 @@ const TYPES = ["CCS2", "TYPE2", "CHADEMO", "GBT"] as const;
 
 export default async function ContaPage() {
   const driver = await requireDriverPage("/motorista/conta");
-  const p = await getProfile(driver);
+  const [p, devices] = await Promise.all([getProfile(driver), listMyDevices(driver)]);
+  const others = devices.filter((d) => !d.current).length;
   return (
     <>
       <h1 className="font-display text-xl font-semibold text-navy-900">Minha conta</h1>
@@ -53,9 +57,31 @@ export default async function ContaPage() {
         <p className="mt-1 text-navy-600">Usado pelo carregador para reconhecer sua conta: <code className="font-mono">{p.idTags[0]?.idTag ?? "—"}</code></p>
         <p className="mt-2 text-xs text-navy-500">Cartões RFID ainda não estão disponíveis.</p>
       </section>
+      <section className="mt-4 rounded-xl border border-navy-100 bg-white p-4 text-sm" aria-labelledby="aparelhos">
+        <h2 id="aparelhos" className="font-display font-semibold text-navy-900">Aparelhos conectados</h2>
+        <p className="mt-1 text-navy-600">Onde sua conta está aberta. Não reconhece algum? Desconecte e troque a senha.</p>
+        <ul className="mt-2 divide-y divide-navy-50" aria-label="Aparelhos conectados">
+          {devices.map((d) => (
+            <li key={d.id} className="flex items-center justify-between gap-2 py-2">
+              <span className="min-w-0">
+                <span className="block font-medium text-navy-900">{d.deviceLabel ?? "Aparelho não identificado"} {d.current && <Badge tone="green">este aparelho</Badge>}</span>
+                <span className="block text-xs text-navy-500">Entrou em {dateTime(d.createdAt)}{d.lastSeenAt ? ` · último uso ${dateTime(d.lastSeenAt)}` : ""}</span>
+              </span>
+              {!d.current && (
+                <ActionForm action={revokeDeviceAction} submitLabel="Desconectar" variant="secondary" size="sm" confirm="Desconectar este aparelho? Ele precisará entrar de novo com e-mail e senha.">
+                  <input type="hidden" name="sessionId" value={d.id} />
+                </ActionForm>
+              )}
+            </li>
+          ))}
+        </ul>
+        {others > 1 && (
+          <ActionForm action={revokeOtherDevicesAction} submitLabel="Desconectar todos os outros" variant="secondary" size="sm" className="mt-2" confirm="Desconectar todos os outros aparelhos? Só este continuará conectado." />
+        )}
+      </section>
       <section className="mt-4 rounded-xl border border-navy-100 bg-white p-4 text-sm">
         <h2 className="font-display font-semibold text-navy-900">Seus dados (LGPD)</h2>
-        <p className="mt-1 text-navy-600"><a className="font-medium text-brand-700 underline" href="/api/motorista/meus-dados">Baixar meus dados</a> (arquivo JSON com cadastro, veículos, recargas, pagamentos e solicitações).</p>
+        <p className="mt-1 text-navy-600"><a className="font-medium text-brand-700 underline" href="/api/motorista/meus-dados">Baixar meus dados</a> (arquivo JSON com cadastro, veículos, favoritos, aparelhos, recargas, pagamentos e solicitações).</p>
         <details className="mt-3">
           <summary className="cursor-pointer font-medium text-red-700">Excluir minha conta</summary>
           <p className="mt-2 text-navy-600">Seus dados de identificação serão anonimizados e o acesso encerrado. Recargas e pagamentos ficam guardados sem identificação direta, para obrigações fiscais.</p>

@@ -9,7 +9,7 @@ import { Select, Textarea } from "@/components/ui/field";
 import { ActionForm } from "@/components/app/action-form";
 import { AutoRefresh } from "@/components/app/auto-refresh";
 import { brl, dateTime, num } from "@/lib/format";
-import { STOP_STAGE_TEXT, canRequestStop, stopStage } from "@/domain/charging/driver-state";
+import { STOP_STAGE_TEXT, canRequestStop, readingFreshness, stopStage } from "@/domain/charging/driver-state";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +21,10 @@ export default async function RecargaPage({ params }: { params: Promise<{ id: st
   const paid = v.payment && ["CAPTURED", "PARTIALLY_REFUNDED", "REFUNDED"].includes(v.payment.status);
   // Encerramento solicitado ≠ encerrado: o estado vem do comando gravado, não da resposta do botão.
   const stop = stopStage(s.status, v.stopCommand?.status ?? null);
+  // Sem comunicação (ou atrasada): os números param na última leitura recebida — a tela diz de quando são.
+  const reading = readingFreshness(s.status, v.stationFresh, v.lastSeenAt);
+  const since = reading.kind !== "LIVE" && reading.minutesSinceSeen !== null ? ` (há ${reading.minutesSinceSeen === 0 ? "menos de 1 min" : `${reading.minutesSinceSeen} min`})` : "";
+  const lastReading = v.lastMeasurementAt ? <>Energia e custo abaixo são da última leitura do medidor, de {dateTime(v.lastMeasurementAt)} (relógio do carregador).</> : <>O carregador não enviou nenhuma leitura do medidor nesta recarga.</>;
   return (
     <>
       {live && <AutoRefresh ms={5000} />}
@@ -28,10 +32,16 @@ export default async function RecargaPage({ params }: { params: Promise<{ id: st
       <h1 className="mt-2 font-display text-xl font-semibold text-navy-900">{live ? "Recarga em andamento" : "Recarga encerrada"}</h1>
       <p className="text-sm text-navy-500">{s.station.site.name} · conector {s.connectorId} · transação {s.transactionId}</p>
       {v.demo && <Alert tone="warning" className="mt-3" title="Demonstração">Sem cobrança. Valores ilustrativos de uma estação simulada.</Alert>}
-      {s.status === "COMMUNICATION_LOST" && (
+      {reading.kind === "LOST" && (
         <Alert tone="danger" className="mt-3" title="Carregador sem comunicação">
-          Os valores abaixo são parciais e mostram a última informação confiável. Estamos verificando o estado do carregador; o total será apurado quando ele reconectar e informar o encerramento.
-          {v.lastSeenAt && <> Última comunicação: {dateTime(v.lastSeenAt)}.</>}
+          Os valores abaixo são parciais e mostram a última informação confiável. {lastReading} Estamos verificando o estado do carregador; o total será apurado quando ele reconectar e informar o encerramento.
+          {v.lastSeenAt && <> Última comunicação: {dateTime(v.lastSeenAt)}{since}.</>}
+        </Alert>
+      )}
+      {reading.kind === "DELAYED" && (
+        <Alert tone="warning" className="mt-3" title="Comunicação atrasada">
+          O carregador não se comunica dentro do prazo esperado. {lastReading}
+          {v.lastSeenAt && <> Última comunicação: {dateTime(v.lastSeenAt)}{since}.</>}
         </Alert>
       )}
       {(stop === "STOP_SENDING" || stop === "STOP_ACCEPTED" || stop === "STOP_REFUSED") && (
@@ -63,7 +73,7 @@ export default async function RecargaPage({ params }: { params: Promise<{ id: st
           )}
         </div>
       </div>
-      {live && (
+      {live && reading.kind === "LIVE" && (
         <p className="mt-2 text-xs text-navy-500">
           {v.lastMeasurementAt ? <>Última medição recebida {dateTime(v.lastMeasurementAt)}{v.lastPowerW !== null ? ` · potência ${num(v.lastPowerW / 1000, 1)} kW` : ""}.</> : "Nenhuma medição recebida do carregador até agora."}
         </p>

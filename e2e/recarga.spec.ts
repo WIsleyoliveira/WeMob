@@ -73,6 +73,8 @@ test("C. recarga: início, consumo, barra e alerta de limite, parada aceita ≠ 
   await page.reload();
   await expect(page.getByText("Carregador sem comunicação")).toBeVisible();
   await expect(page.getByText(/Última comunicação: /)).toBeVisible();
+  await expect(page.getByText(/Energia e custo abaixo são da última leitura do medidor, de \d{2}\/\d{2}\/\d{4}/)).toBeVisible();
+  await expect(page.getByText(/Última medição recebida/)).toHaveCount(0); // a linha "ao vivo" some sem comunicação
 
   // 8) Sem telemetria e parada não confirmada (20 min depois): alertas de contingência na tela da equipe.
   await op("evaluateAlerts", { operatorId: f.operatorId, offsetMs: 20 * 60_000 });
@@ -88,6 +90,18 @@ test("C. recarga: início, consumo, barra e alerta de limite, parada aceita ≠ 
   expect(Number(s.amount)).toBe(46.4);
   expect(Number(s.payments[0].amountCaptured)).toBe(46.4);
   await staffCtx.close();
+});
+
+test("repetir última recarga: atalho leva ao conector da última recarga iniciada, sem cobrar nada", async ({ page }) => {
+  const f = fx();
+  await driverLogin(page, f.driverA); // a recarga do teste C foi do motorista A
+  await page.goto("/motorista");
+  const shortcut = page.getByRole("link", { name: /Repetir última recarga/ });
+  await expect(shortcut).toContainText("Posto A (E2E) · conector 1");
+  const before = await prisma<number>("chargeRequest", "count", { where: { driverId: f.driverA.driverId } });
+  await shortcut.click();
+  await expect(page).toHaveURL(new RegExp(`/motorista/carregar/${f.station.identity}/1$`));
+  expect(await prisma<number>("chargeRequest", "count", { where: { driverId: f.driverA.driverId } })).toBe(before); // nenhum pedido criado
 });
 
 test("P23 B1: encerramento pedido pelo motorista continua visível ao recarregar a página e só vira 'encerrada' com a confirmação do carregador", async ({ page }) => {

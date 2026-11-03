@@ -2,7 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ChevronDown, Clock, MapPin, Navigation } from "lucide-react";
 import { getDriver } from "@/server/drivers/current";
-import { getDriverStation, listMyVehicles } from "@/server/drivers/service";
+import { getDriverStation, isMyFavorite, listMyVehicles } from "@/server/drivers/service";
 import { CONNECTOR_LABEL, compatibleVehicles } from "@/domain/stations/discovery";
 import { Alert } from "@/components/ui/alert";
 import { ButtonLink } from "@/components/ui/button";
@@ -10,6 +10,8 @@ import { ConnectorStatusBadge } from "@/components/app/station-badges";
 import { brl, dateTime } from "@/lib/format";
 import { StartForm } from "../../start-form";
 import { paymentOptions, purchaseOptions } from "@/server/drivers/charging";
+import { setFavoriteAction } from "@/app/actions/driver";
+import { ActionForm } from "@/components/app/action-form";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +21,7 @@ export default async function DriverStationPage({ params }: { params: Promise<{ 
   const identity = decodeURIComponent((await params).identity);
   const s = await getDriverStation(identity).catch(() => notFound());
   const driver = await getDriver();
-  const vehicles = await listMyVehicles(driver);
+  const [vehicles, favorite] = await Promise.all([listMyVehicles(driver), isMyFavorite(driver, s.id)]);
   const demo = s.environment === "SIMULATED";
   const pay = paymentOptions();
   const purchase = purchaseOptions(s.environment);
@@ -55,6 +57,12 @@ export default async function DriverStationPage({ params }: { params: Promise<{ 
             <a href={maps} target="_blank" rel="noopener noreferrer" className="inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-navy-200 bg-white px-3 text-sm font-medium text-navy-800 hover:border-navy-300">
               <Navigation className="size-4" aria-hidden />Como chegar <span className="sr-only">(abre o mapa em outro site)</span>
             </a>
+          )}
+          {driver && (
+            <ActionForm action={setFavoriteAction} submitLabel={favorite ? "Remover dos favoritos" : "Salvar nos favoritos"} variant="secondary" size="sm">
+              <input type="hidden" name="identity" value={s.identity} />
+              <input type="hidden" name="favorite" value={favorite ? "0" : "1"} />
+            </ActionForm>
           )}
         </div>
         {s.tariff && <p className="mt-1.5 text-xs text-navy-500">Tarifa vigente desde {dateTime(s.tariff.validFrom)}.</p>}

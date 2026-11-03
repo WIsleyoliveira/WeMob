@@ -46,6 +46,19 @@ export const STOP_STAGE_TEXT: Record<Exclude<StopStage, "NONE" | "STOPPED">, str
   STOP_REFUSED: "O carregador não confirmou o pedido de encerramento. Você pode tentar de novo ou encerrar pelo próprio veículo.",
 };
 
+export type ReadingFreshness = { kind: "LIVE" } | { kind: "DELAYED" | "LOST"; minutesSinceSeen: number | null };
+
+/**
+ * Confiabilidade dos números exibidos durante a recarga. "LOST": a sessão foi marcada sem comunicação.
+ * "DELAYED": a sessão ainda consta ativa, mas a estação passou do prazo de heartbeat (relógio do servidor) —
+ * os valores param na última leitura recebida e a tela precisa dizer isso, sem esperar a varredura.
+ */
+export function readingFreshness(session: SessionStatus, stationFresh: boolean, lastSeenAt: Date | null, now = new Date()): ReadingFreshness {
+  if (session === "COMPLETED" || (session === "ACTIVE" && stationFresh)) return { kind: "LIVE" };
+  const minutesSinceSeen = lastSeenAt ? Math.max(0, Math.floor((now.getTime() - lastSeenAt.getTime()) / 60_000)) : null;
+  return { kind: session === "COMMUNICATION_LOST" ? "LOST" : "DELAYED", minutesSinceSeen };
+}
+
 /** O botão de encerrar só volta a aparecer quando não há pedido em curso (nunca dois pedidos simultâneos). */
 export function canRequestStop(session: SessionStatus, stage: StopStage) {
   return session === "ACTIVE" && (stage === "NONE" || stage === "STOP_REFUSED");

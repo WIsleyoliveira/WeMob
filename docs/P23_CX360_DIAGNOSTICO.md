@@ -51,7 +51,7 @@ Legenda: **V** já implementada e validada · **P** parcial · **S** só em simu
 | Taxa de início / ociosidade / estacionamento | **C** | `Tariff` só tem kWh e minuto; nada a exibir até existir política |
 | Estados detalhados: "ordem aceita" × "iniciada" | **P** | `RemoteCommand.ACCEPTED` existe, a tela mostra só "Aguardando o carregador" |
 | **"Solicitação de encerramento enviada"** persistente | **P** | `stopCharge` cria o `REMOTE_STOP`, mas a tela de recarga não mostra o pedido após recarregar a página (volta a "Recarga em andamento" + botão); só a parada por limite é persistida |
-| Última leitura confiável + horário durante perda de comunicação | **P** | mostra "valores parciais", sem horário da última medição |
+| Última leitura confiável + horário durante perda de comunicação | **V** (2026-11-03) | horário da última leitura do medidor e da última comunicação; "Comunicação atrasada" antes da varredura |
 | Saldo não consumido e prazo de estorno no final | **V** | recibo/recarga + FAQ |
 | Avaliação opcional, sem bloquear recibo | **V** | — |
 
@@ -65,7 +65,7 @@ Legenda: **V** já implementada e validada · **P** parcial · **S** só em simu
 | Filtros (conector, potência, disponibilidade, preço) | **D** | dados existem |
 | Filtros por rede/operador, plano aceito | **C** | uma rede só; planos inexistentes |
 | Compatibilidade com o veículo | **P** | `Vehicle.connectorTypes` existe mas não é usado nas telas; potência AC/DC do veículo não é guardada |
-| Favoritos, repetir última escolha | **D** | — |
+| Favoritos, repetir última escolha | **V** (2026-11-03) | favoritos na tela da estação e na inicial; atalho para o conector da última recarga iniciada (sem cobrar nem iniciar) |
 | Planejamento de viagem/rota | **E** | depende de mapas/rotas; fora da Fase B |
 | Reserva | não fazer | sem suporte operacional nem OCPP `ReserveNow` implementado |
 | Pagamento tokenizado salvo | **E** | tokenização do Asaas não integrada; hoje cartão sempre na página do Asaas |
@@ -93,7 +93,7 @@ Legenda: **V** já implementada e validada · **P** parcial · **S** só em simu
 | Preferências de comunicação (operacional × marketing) | **D** (depende de **E**) | — |
 | Login, logout, limite de tentativas | **V** | `auth.ts` |
 | **Recuperação de senha do motorista** | **D** | só existe para a equipe; também depende de e-mail (**E**) para enviar o link |
-| Revogação de dispositivos/sessões | **P** | logout encerra a sessão atual; sem lista de dispositivos |
+| Revogação de dispositivos/sessões | **V** (2026-11-03) | "Aparelhos conectados" na conta: rótulo genérico, entrada, último uso; desconectar um ou todos os outros (sem guardar User-Agent nem IP) |
 | Exportar dados / excluir conta | **V** (com limitações) | `exportMyData`, `deleteMyAccount`; textos ainda sem revisão jurídica (**C**) |
 
 ### Totem (Parte 2, Fase F)

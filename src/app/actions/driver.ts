@@ -4,10 +4,10 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { requestMeta } from "@/server/auth/current";
 import { toActionState, type ActionState } from "@/server/action-result";
-import { DRIVER_COOKIE, loginDriver, logoutDriver, signupDriver } from "@/server/drivers/auth";
+import { DRIVER_COOKIE, loginDriver, logoutDriver, revokeMyDevice, revokeOtherDevices, signupDriver } from "@/server/drivers/auth";
 import { getDriver } from "@/server/drivers/current";
 import { cancelChargeRequest, startCharge, stopCharge } from "@/server/drivers/charging";
-import { addVehicle, createSupportRequest, deleteMyAccount, rateSession, refreshMyPayment, removeVehicle, setMyDocument, updateProfile } from "@/server/drivers/service";
+import { addVehicle, createSupportRequest, deleteMyAccount, rateSession, refreshMyPayment, removeVehicle, setFavorite, setMyDocument, updateProfile } from "@/server/drivers/service";
 import { PAYMENT_STATUS_LABEL } from "@/server/payments/service";
 
 const s = (f: FormData, k: string) => {
@@ -120,4 +120,29 @@ export async function refreshPaymentAction(_p: ActionState, f: FormData): Promis
   revalidatePath(`/motorista/pedido/${f.get("requestId")}`);
   if (r.status !== "ok" || !r.data) return r as ActionState;
   return { status: "ok", message: r.data.status === "PENDING" ? "O gateway ainda não confirmou o pagamento. Se você acabou de pagar, aguarde alguns instantes." : `Situação no gateway: ${PAYMENT_STATUS_LABEL[r.data.status]}.` };
+}
+
+export async function setFavoriteAction(_p: ActionState, f: FormData): Promise<ActionState> {
+  const driver = await getDriver();
+  const favorite = f.get("favorite") === "1";
+  const identity = String(f.get("identity"));
+  const r = await toActionState(async () => void (await setFavorite(driver, { identity, favorite })), favorite ? "Estação salva nos favoritos." : "Estação removida dos favoritos.");
+  revalidatePath(`/motorista/estacoes/${encodeURIComponent(identity)}`);
+  revalidatePath("/motorista");
+  return r;
+}
+
+export async function revokeDeviceAction(_p: ActionState, f: FormData): Promise<ActionState> {
+  const driver = await getDriver();
+  const r = await toActionState(() => revokeMyDevice(driver, String(f.get("sessionId"))), "Aparelho desconectado.");
+  revalidatePath("/motorista/conta");
+  return r;
+}
+
+export async function revokeOtherDevicesAction(_p: ActionState, _f: FormData): Promise<ActionState> {
+  const driver = await getDriver();
+  const r = await toActionState(() => revokeOtherDevices(driver));
+  revalidatePath("/motorista/conta");
+  if (r.status !== "ok") return r as ActionState;
+  return { status: "ok", message: r.data ? `${r.data === 1 ? "1 aparelho desconectado" : `${r.data} aparelhos desconectados`}.` : "Nenhum outro aparelho estava conectado." };
 }

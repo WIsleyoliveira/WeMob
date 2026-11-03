@@ -545,6 +545,7 @@ model ChargingStation {
   maintenancePlans MaintenancePlan[]
   alerts           Alert[]
   commands         RemoteCommand[]
+  favoritedBy      DriverFavoriteStation[]
 
   @@index([operatorId])
   @@index([siteId])
@@ -762,18 +763,35 @@ model Driver {
   chargingSessions ChargingSession[]
   payments         Payment[]
   supportRequests  SupportRequest[]
+  favorites        DriverFavoriteStation[]
 }
 
 model DriverSession {
-  id        String    @id @default(cuid())
-  tokenHash String    @unique
-  driverId  String
-  driver    Driver    @relation(fields: [driverId], references: [id])
-  expiresAt DateTime
-  revokedAt DateTime?
-  createdAt DateTime  @default(now())
+  id          String    @id @default(cuid())
+  tokenHash   String    @unique
+  driverId    String
+  driver      Driver    @relation(fields: [driverId], references: [id])
+  expiresAt   DateTime
+  revokedAt   DateTime?
+  createdAt   DateTime  @default(now())
+  /// Rótulo genérico do aparelho ("Chrome no Android"), derivado do User-Agent no login. O User-Agent e o IP não são guardados.
+  deviceLabel String?
+  /// Último uso (atualizado no máximo a cada 5 min).
+  lastSeenAt  DateTime?
 
   @@index([driverId])
+}
+
+/// Estação favorita do motorista (atalho na tela inicial). Só aponta para estações que ele pode abrir.
+model DriverFavoriteStation {
+  id        String          @id @default(cuid())
+  driverId  String
+  driver    Driver          @relation(fields: [driverId], references: [id])
+  stationId String
+  station   ChargingStation @relation(fields: [stationId], references: [id])
+  createdAt DateTime        @default(now())
+
+  @@unique([driverId, stationId])
 }
 
 model Vehicle {
