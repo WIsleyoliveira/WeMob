@@ -4,6 +4,23 @@ Atualizado em 2026-11-03 (custos da plataforma, Excel nativo, observabilidade e 
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
 
+## Finalização das interfaces administrativas (2026-11-03)
+
+Base: `f498da2` = `origin/main`, CI 41697529319 verde. Capturas antes/depois: `E2E_TELAS=1 E2E_TELAS_DIR=e2e-telas/antes|depois npm run e2e:browser -- e2e/telas.spec.ts` (fora do Git).
+- **Auditoria** — antes: códigos técnicos (`auth.login`), IDs, 200 registros fixos, sem filtros. Depois: texto legível por ação (`src/domain/audit/labels.ts`; teste garante que toda ação do código tem texto), área, filtros (área, autor, período, busca), paginação de 50, detalhes sob demanda (código, entidade, dados).
+- **Usuários e permissões** — antes: lista com "Revogar acesso" vermelho em cada linha, sem busca. Depois: resumo (ativos, com sessão, quem administra — alerta quando é o último), busca e filtros, aparelhos e último acesso (rótulo genérico, sem IP), menu "Gerenciar" (trocar perfil, encerrar sessões, link de senha, revogar), quadro "Perfis e permissões" em linguagem simples (teste garante cobertura de todas as permissões). Serviços novos com salvaguardas: `changeMemberRole` (não altera o próprio perfil; não tira a administração do último administrador; superadmin só por superadmin; encerra as sessões para o novo perfil valer) e `revokeMemberSessions`, ambos auditados.
+- **Contratos** — resumo (ativos, aguardando aprovação, 30/70, modelo antigo, vigência futura, sem versão aprovada), filtros, link direto para a versão pendente; no detalhe, aviso de aprovação pendente explicando a regra de duas pessoas, destaque da versão e aditivo recolhido. Correção encontrada na revisão visual: contrato aprovado com vigência futura aparecia como "sem versão vigente".
+- **CRM** — os filtros usavam `w-72` sobre o `w-full` do campo e ocupavam uma linha cada; agora barra de filtros em grade, resumo do funil, alternância quadro/lista e "só os meus leads". **Propostas**: resumo por situação com valores, propostas enviadas vencidas, filtros. **Empresas**: busca no padrão.
+- **Suporte** — resumo (em aberto, prazo estourado, em risco, críticos, sem responsável), abas, busca e categoria, colunas responsivas. **Manutenção** — resumo (em aberto, em execução, agendadas, concluídas e custo do mês, planos ativos), abas com contagem, busca e tipo; formulários de nova OS e de plano recolhidos (antes ocupavam metade da página abaixo da lista).
+- Componentes: `FilterBar`/`FilterField`/`SearchInput`, `Pagination`, `SummaryStrip`, `SegmentedLinks`, `hrefWith` (`src/lib/query.ts`).
+- E2E: o login da equipe tem limite de 10 tentativas por conta/15 min; a suíte passou disso com a nova jornada. Os testes agora reaproveitam a sessão por perfil **em memória** (nunca em disco) e entram de novo se ela for encerrada; o teste de autenticação continua usando o login real.
+- Regras preservadas (sem alteração de serviço): 30/70, contratos antigos e vigências, aprovação por duas pessoas, escopo por organização, auditoria, conciliação, Asaas, OCPP, histórico financeiro.
+
+### Verificação (2026-11-03, saída real)
+- `npm test` → 39 arquivos, **368/368** (novos: `query` 2, `admin-labels` 4)
+- `npm run lint` → 0 · `npm run typecheck` → 0 · `npm run e2e:build` → OK · `node scripts/audit-gate.mjs` → OK
+- `E2E_TELAS=1 npm run e2e:browser` → **39/39** (novo: `e2e/admin-jornadas.spec.ts` — criar e editar lead, gerar proposta, criar contrato, aprovar por outra pessoa, abrir e resolver chamado, registrar OS, trocar perfil e voltar, consultar auditoria por área); 56 capturas "depois" e 34 "antes"
+
 ## Redesign, tema escuro, orçamento versionado e correções do CI (2026-11-03)
 
 - **CI 41670256337 (falhou)** — duas causas reais, corrigidas em commits próprios:

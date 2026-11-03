@@ -74,7 +74,9 @@ Base: código em `main` local (commits `5e25cdd`, `7c60aca` e as alterações de
 | Redesign — administração (navegação agrupada, gaveta no celular, alertas no cabeçalho, painel com economia da WeMob e utilização por conector) | **Validado automaticamente** | `src/app/app/layout.tsx`, `nav.ts`, `page.tsx`; E2E e capturas |
 | Redesign — operador do posto (portal com período, indicadores, energia, sua parte por competência, utilização/disponibilidade por conector, seções) | **Validado automaticamente** | `src/app/app/portal/page.tsx`; E2E e capturas (estação do E2E é de teste: estados vazios honestos) |
 | Redesign — motorista | **Validado automaticamente** (P23 + tema) | telas do P23 com tema escuro e seletor no cabeçalho; capturas |
-| Redesign — telas internas restantes (CRM, contratos, suporte, manutenção, usuários) | **Em andamento** | herdam navegação, tema e componentes; layout interno de cada tela não foi refeito nesta rodada |
+| Redesign — telas internas (CRM, propostas, empresas, contratos e aprovação, suporte, manutenção, usuários e permissões, auditoria) | **Validado automaticamente** | padrão de lista (resumo → abas → filtros → tabela responsiva → paginação → estado vazio); auditoria legível com filtros e paginação; usuários com troca de perfil, encerrar sessões, aparelhos e quadro de permissões; contratos com destaque de aprovação pendente e vigência futura; `e2e/admin-jornadas.spec.ts` (8 jornadas) e capturas antes/depois (`E2E_TELAS=1`) |
+| Redesign — detalhes de lead, proposta, chamado e OS | **Em andamento** | herdam tema e navegação; organização interna dessas páginas não foi refeita nesta rodada |
+| Convite de usuário por e-mail e MFA | **Bloqueado** (provedor de e-mail) | link de redefinição gerado na tela até lá |
 | Teste de usabilidade com pessoas reais | **Não iniciado** | precisa de participantes (WAPE) |
 | Marca definitiva (WeMob/WAPE × "Sansol Mob" na interface) | **Bloqueado** (decisão WAPE) | |
 | Pontos, planos, carteira pré-paga | **Bloqueado** | regras comerciais aprovadas; carteira exige parecer regulatório (Banco Central) e contábil |

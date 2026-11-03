@@ -51,6 +51,8 @@ Single Next.js 15 App Router app (TypeScript, Prisma/PostgreSQL, Zod, decimal.js
 - Platform costs (`src/domain/costs`, `/app/financeiro/custos`) are WeMob's own operating budget: never feed closings, repasses or the 30/70 share.
 - Theme: dark mode redefines the color SCALES under `:root[data-theme="dark"]` (`globals.css`) — use the normal classes (`bg-white`, `text-navy-900`), never `dark:` variants; areas dark in both themes get `theme-fixed`. Preference cookie `sm_theme` applied before paint by `ThemeScript`.
 - CI dependency gate: `scripts/audit-gate.mjs` (prod 0; dev moderate+ only with an explicit, dated exception).
+- Admin list pattern (see `docs/design-system.md` → Listas administrativas): `SummaryStrip` → `SegmentedLinks` → `FilterBar` (GET) → responsive `Table` → `Pagination`; destructive actions only inside a "Gerenciar" menu with confirmation.
+- E2E staff login is rate-limited (10/account/15 min): `staffLogin` reuses the session per role in memory; use `freshStaffLogin` only when the test is about logging in/out.
 - UI: `src/components/ui/*` design system (tokens in `src/app/globals.css`, documented in `docs/design-system.md`); `ActionForm` (`src/components/app/action-form.tsx`) is the standard form-with-server-action component (pending/success/error + accessible confirm dialog).
 
 **Auth & tenancy:**

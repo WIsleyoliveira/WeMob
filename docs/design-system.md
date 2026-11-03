@@ -24,6 +24,12 @@ Contraste medido (WCAG 2.1, fórmula de luminância relativa) — ver IMPLEMENTA
 - Equipe: menu agrupado por tarefa em `src/app/app/nav.ts` (Visão geral · Rede de recarga · Financeiro · Comercial · Atendimento · Meu posto · Administração), filtrado por permissão; no celular, gaveta aberta pelo botão "Menu" (`mobile-nav.tsx`, fecha com Esc e ao trocar de página). Cabeçalho com organização, perfil por extenso, alertas abertos (vermelho se houver crítico), tema, conta e sair.
 - Motorista: navegação inferior fixa (Estações · Recargas · Consumo · Ajuda · Conta).
 
+## Listas administrativas (padrão)
+Ordem fixa em toda lista da equipe: **cabeçalho com a ação principal** → `SummaryStrip` (o que precisa de atenção; cada número pode ser atalho para a lista filtrada) → `SegmentedLinks` (situação, quando houver) → `FilterBar` (GET: filtros no endereço, funcionam sem JavaScript; "Limpar" só aparece com filtro ativo; no celular, duas colunas e a busca em largura total) → tabela com `aria-label`, colunas secundárias ocultas em telas pequenas (`hidden md:table-cell`) → `Pagination` quando a lista pode crescer → estado vazio que diz **por que** está vazio e o que fazer.
+- Ações destrutivas ficam num menu "Gerenciar" e sempre com confirmação; nunca um botão vermelho por linha.
+- Formulários longos de criação ficam recolhidos (`<details>`) acima da lista, abertos por "+ Novo …".
+- `hrefWith` (`src/lib/query.ts`) mantém os filtros atuais ao paginar, ordenar ou trocar de aba.
+
 ## Indicadores
 - `BarChart` (série no tempo, com tabela para leitor de tela) e `MeterList` (`src/components/ui/meter-list.tsx`: barras 0–100% acessíveis como `role="meter"`, `null` = sem dado, nunca 0%, destaque abaixo de um limite).
 - Todo indicador diz período, unidade e fonte; dado de teste/simulação só entra quando pedido e com aviso visível.
