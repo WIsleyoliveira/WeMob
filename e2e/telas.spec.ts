@@ -8,7 +8,7 @@ import { driverLogin, fx, staffLogin } from "./support/helpers";
  * usam "incluir teste/simulação", que a própria interface identifica. Arquivos em e2e-telas/ (fora do Git).
  */
 test.skip(!process.env.E2E_TELAS, "capturas só com E2E_TELAS=1");
-const DIR = "e2e-telas";
+const DIR = process.env.E2E_TELAS_DIR || "e2e-telas";
 mkdirSync(DIR, { recursive: true });
 
 async function shoot(page: Page, name: string, url: string, opts: { mobile?: boolean } = {}) {
@@ -46,4 +46,17 @@ test("telas do motorista", async ({ page }) => {
   await shoot(page, "motorista-estacao", `/motorista/estacoes/${f.station.identity}`, { mobile: true });
   await shoot(page, "motorista-consumo", "/motorista/consumo?dados=teste", { mobile: true });
   await shoot(page, "motorista-conta", "/motorista/conta", { mobile: true });
+});
+
+/** Telas internas da administração (comparação antes/depois do redesign). */
+const INTERNAS: [string, string][] = [
+  ["crm", "/app/crm"], ["crm-lista", "/app/crm?view=lista"], ["crm-empresas", "/app/crm/empresas"], ["crm-propostas", "/app/crm/propostas"], ["crm-tarefas", "/app/crm/tarefas"], ["crm-novo", "/app/crm/novo"],
+  ["contratos", "/app/contratos"], ["suporte", "/app/suporte"], ["suporte-novo", "/app/suporte/novo"], ["manutencao", "/app/manutencao"], ["usuarios", "/app/usuarios"], ["auditoria", "/app/auditoria"],
+];
+
+test("telas internas da administração", async ({ page }) => {
+  test.setTimeout(300_000);
+  await staffLogin(page, fx().admin);
+  for (const [name, url] of INTERNAS) await shoot(page, `interna-${name}`, url);
+  for (const [name, url] of INTERNAS.filter(([n]) => ["crm", "contratos", "suporte", "usuarios", "auditoria"].includes(n))) await shoot(page, `interna-${name}`, url, { mobile: true });
 });

@@ -6,7 +6,27 @@ import type { E2EFixtures } from "./seed";
 /** Dados criados pelo orquestrador (scripts/e2e-browser.ts) no banco temporário. */
 export const fx = (): E2EFixtures => JSON.parse(readFileSync("e2e/.fixtures.json", "utf8"));
 
+/**
+ * Sessão da equipe reaproveitada entre specs do mesmo processo (só em memória, nunca em disco): o login tem limite
+ * de 10 tentativas por conta a cada 15 min, e a suíte inteira passa disso. Se a sessão tiver sido encerrada (logout,
+ * troca de perfil, revogação), entra de novo.
+ */
+const sessions = new Map<string, { name: string; value: string; domain: string; path: string; expires: number; httpOnly: boolean; secure: boolean; sameSite: "Strict" | "Lax" | "None" }[]>();
+
 export async function staffLogin(page: Page, who: { email: string; password: string }) {
+  const cached = sessions.get(who.email);
+  if (cached) {
+    await page.context().addCookies(cached);
+    await page.goto("/app");
+    if (new URL(page.url()).pathname.startsWith("/app")) return;
+    sessions.delete(who.email);
+  }
+  await freshStaffLogin(page, who);
+  sessions.set(who.email, (await page.context().cookies()).filter((c) => c.name === "sm_session"));
+}
+
+/** Login real pela tela (sem reaproveitar sessão). */
+export async function freshStaffLogin(page: Page, who: { email: string; password: string }) {
   await page.goto("/login");
   await page.getByLabel("E-mail").fill(who.email);
   await page.getByLabel("Senha").fill(who.password);

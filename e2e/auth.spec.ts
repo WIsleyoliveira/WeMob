@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { driverLogin, fx, prisma, staffLogin } from "./support/helpers";
+import { driverLogin, freshStaffLogin, fx, prisma, staffLogin } from "./support/helpers";
 
 test.describe("A. autenticação e autorização", () => {
   test("login inválido mostra erro e não cria sessão", async ({ page }) => {
@@ -17,7 +17,7 @@ test.describe("A. autenticação e autorização", () => {
   test("página protegida sem sessão leva ao login; login válido abre o painel", async ({ page }) => {
     await page.goto("/app/pagamentos");
     await expect(page).toHaveURL(/\/login/);
-    await staffLogin(page, fx().admin);
+    await freshStaffLogin(page, fx().admin); // login real pela tela (não reaproveita sessão)
     await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   });
 
@@ -33,7 +33,7 @@ test.describe("A. autenticação e autorização", () => {
   });
 
   test("sair revoga a sessão: o mesmo cookie deixa de valer", async ({ page, context }) => {
-    await staffLogin(page, fx().admin);
+    await freshStaffLogin(page, fx().admin); // sessão própria: sair não derruba a reaproveitada pelos outros testes
     const cookie = (await context.cookies()).find((c) => c.name === "sm_session")!;
     expect(cookie).toBeTruthy();
     await page.getByRole("button", { name: "Sair" }).click();
