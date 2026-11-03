@@ -1,4 +1,4 @@
-# Matriz de lacunas — WeMob (2026-11-03)
+# Matriz de lacunas — WeMob (2026-11-03, atualizada na rodada de custos/Excel/observabilidade)
 
 Base: código em `main` local (commits `5e25cdd`, `7c60aca` e as alterações desta rodada, ainda sem push), testes executados nesta rodada e documentos P15–P23. Documentação **não** foi aceita como prova: cada linha "validado" tem teste que roda.
 **Status**: Não iniciado · Em andamento · Implementado, não validado · Validado automaticamente · Homologado externamente · Bloqueado · Concluído.
@@ -23,7 +23,7 @@ Base: código em `main` local (commits `5e25cdd`, `7c60aca` e as alterações de
 | Conciliação diária consolidada (relatório do dia) | **Não iniciado** | hoje: por transação + horária + mensal |
 | Fechamento mensal, quatro olhos, hash, bloqueio de período | **Validado automaticamente** (P08) | `closing.ts` |
 | Exportação CSV | **Validado automaticamente** | demonstrativo com colunas da participação |
-| Exportação Excel (.xlsx) | **Não iniciado** | CSV abre no Excel; .xlsx nativo não existe |
+| Exportação Excel (.xlsx) | **Validado automaticamente** | `src/lib/xlsx.ts` (sem dependência): demonstrativo, lançamentos, extrato do parceiro e orçamento de custos; dinheiro como número; lido pelo `openpyxl`; `tests/unit/xlsx.test.ts`, E2E |
 | Aprovação de repasses / pagamento ao posto | **Implementado, não validado** externamente | provisão → pago registrado manualmente; **sem integração de pagamento** (nunca transfere dinheiro) |
 | Simulador com 30/70 e cenários | **Validado automaticamente** | modelo "Participação 30/70"; cenários de referência testados como ilustrativos |
 
@@ -34,12 +34,13 @@ Base: código em `main` local (commits `5e25cdd`, `7c60aca` e as alterações de
 | Health para monitor externo (`/api/health?exigir=automacao` → 503 com o ciclo parado) | **Validado automaticamente** (nesta rodada) | `resilience.test.ts` |
 | Monitor externo de disponibilidade (fora da aplicação) | **Bloqueado** (infraestrutura) | precisa de serviço externo (ex.: verificação HTTP a cada minuto) apontado para a URL acima |
 | Logs estruturados sem segredos | **Validado automaticamente** (P10/P17) | `log.ts` |
-| IDs de correlação por requisição | **Não iniciado** | |
-| Métricas de API/banco, dashboard de saúde | **Não iniciado** | sem agregador |
+| IDs de correlação por requisição | **Validado automaticamente** | `src/middleware.ts` (`x-request-id`), `src/server/correlation.ts`; logs com `requestId` em ações, webhooks, mensagens OCPP e automações |
+| Métricas operacionais (Prometheus) | **Validado automaticamente** | `/api/metrics` com `METRICS_TOKEN`; agregador/dashboard externo: **Bloqueado** (escolha do serviço) |
 | Alertas de webhook, OCPP offline, cobrança, estorno, automação | **Validado automaticamente** (motor de alertas P09/P16) | alertas internos na tela; **sem canal de envio** (e-mail/SMS) |
-| Staging, TLS, cofre, backups automáticos e restauração testada | **Bloqueado** (infraestrutura WAPE) | runbook pronto; não ensaiado |
+| Backup verificável (dump + restauração comparada) | **Validado** em desenvolvimento | `npm run db:backup:verificar`: 69 tabelas, 15 migrações idênticas (2026-11-03) |
+| Staging, TLS, cofre, backups agendados | **Bloqueado** (infraestrutura WAPE) | `docs/staging.md` §4–5 com agendamento e alertas sugeridos |
 | Migrações explícitas no deploy | **Validado automaticamente** (P19, CI `docker`) | |
-| Dependências | **Em andamento** | produção 0; desenvolvimento 14 moderadas no ESLint (não tratado nesta rodada) |
+| Dependências | **Em andamento** | produção 0; desenvolvimento 12 moderadas (era 14): `minimatch` 11 em `@eslint/config-array` e `typescript-estree`; restam 5 cópias 3.1.5 em `eslint`, `@eslint/eslintrc` e plugins `import`/`jsx-a11y`/`react`, que exigem a API antiga (risco aceito: só lêem padrões do nosso `eslint.config.mjs`) |
 | Revisão de segurança independente / pentest | **Bloqueado** (terceiro) | |
 
 ## Fase D — OCPP e confiabilidade
@@ -71,7 +72,8 @@ Base: código em `main` local (commits `5e25cdd`, `7c60aca` e as alterações de
 | Painel administrativo (rede, financeiro, CRM, suporte, manutenção, alertas, auditoria) | **Validado automaticamente** | custos de infraestrutura e relatórios executivos: **Não iniciado** |
 | Redesign completo do design system e tema escuro | **Em andamento** (motorista e painel redesenhados no P23) | marca definitiva (WeMob/WAPE × "Sansol Mob" na interface): **decisão pendente** |
 | Pontos, planos, carteira pré-paga | **Bloqueado** | regras comerciais aprovadas; carteira exige parecer regulatório (Banco Central) e contábil |
-| Custos operacionais da plataforma e risco cambial | **Não iniciado** | planilha `WeMob_Custos_Mensais_Detalhados.xlsx` **não está no ambiente** |
+| Custos operacionais da plataforma e risco cambial | **Validado automaticamente** | `/app/financeiro/custos`: premissas da planilha (SHA-256 `00da01b7…`), câmbio de stress, reserva, custo por posto, cenários, sensibilidade cambial, realizado (R$/US$) × orçado com alerta, Excel; separado do fechamento (teste) |
+| Orçamento versionado por mês | **Não iniciado** | o orçado do histórico usa as premissas atuais |
 
 ## Bloqueadores externos (resumo)
 | Bloqueador | Quem resolve | Evidência de resolução | Pode avançar antes | Não ativar até |

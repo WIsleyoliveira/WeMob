@@ -26,6 +26,7 @@ npm run asaas:webhook -- listar|criar <url>|atualizar <id> <url>|remover <id>   
 NEXT_DIST_DIR=.next-build npm run build   # build without stopping `npm run dev` (Next rewrites tsconfig.json include: restore it)
 npm run e2e:rotas           # HTTP route/permission E2E (dev DB only; E2E_BASE=http://localhost:3002 for a prod build — `next dev` restarts on memory with many routes)
 npm run e2e:build && npm run e2e:browser   # Playwright browser E2E: temp DB sansol_e2e_*, prod build served via standalone server.js, simulated gateway; cleans up
+npm run db:backup:verificar # pg_dump (same snapshot as row counts) → restore into temp DB → compare every table + migrations → drop temp DB
 ```
 - Port 3000 may be taken by another local project; `.claude/launch.json` has `sansol-dev-3001`.
 - Lockfile: regenerate only with npm 10.9.3 (Node 22.19.0, same as Docker/CI). npm 11 drops optional `@emnapi/*` wasm32 entries (see `docs/runbook.md` → Dependências).
@@ -44,6 +45,10 @@ Single Next.js 15 App Router app (TypeScript, Prisma/PostgreSQL, Zod, decimal.js
 - `src/server/modules/*`, `src/server/drivers/*`, `src/server/payments/*`, `src/server/ocpp/*` — services. Every staff-facing service takes an `AuthContext` and calls `requirePermission(ctx, "recurso:ação")` and filters by `ctx.organizationId` itself. Pages and actions must not query `db` directly for tenant data — go through a service.
 - `src/app/actions/*` — thin `"use server"` wrappers using `toActionState()` (`src/server/action-result.ts`), which maps `ZodError`/`AppError` to form state. Actions must return only plain data (ids/messages), never Prisma records (Decimal breaks client serialization).
 - Never add `loading.tsx` under `src/app/app`: in the production build (Next 15.5) it made server actions with `revalidatePath` never resolve (guard: `tests/unit/sem-loading-app.test.ts`).
+- Client components must import `ActionState`/`idle` from `@/lib/action-state`, never `@/server/*` (server modules use `node:` APIs and break the production build).
+- Observability: `src/middleware.ts` sets/propagates `x-request-id`; `src/server/correlation.ts` (AsyncLocalStorage) adds `requestId` to every log line inside actions, webhooks, OCPP messages and automation jobs. `/api/metrics` (Prometheus) needs `METRICS_TOKEN`.
+- Exports: `src/lib/xlsx.ts` writes native .xlsx (stored ZIP, no dependency); finance routes take `formato=xlsx`.
+- Platform costs (`src/domain/costs`, `/app/financeiro/custos`) are WeMob's own operating budget: never feed closings, repasses or the 30/70 share.
 - UI: `src/components/ui/*` design system (tokens in `src/app/globals.css`, documented in `docs/design-system.md`); `ActionForm` (`src/components/app/action-form.tsx`) is the standard form-with-server-action component (pending/success/error + accessible confirm dialog).
 
 **Auth & tenancy:**

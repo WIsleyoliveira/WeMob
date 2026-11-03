@@ -53,12 +53,17 @@ Não usar túnel temporário em staging: o endereço gratuito do localhost.run t
 
 ## 4. Backup e restauração
 - Backup automático diário + retenção de 7–30 dias (gerenciado) e `pg_dump` semanal fora do provedor.
-- **Teste de restauração mensal** obrigatório: restaurar em banco temporário, comparar contagens das tabelas principais e o número de migrations (procedimento já exercitado localmente no P14, nunca em staging).
+- **Teste de restauração mensal** obrigatório: `npm run db:backup:verificar` (`scripts/backup-verify.ts`) — dump com a mesma "foto" das contagens, restauração num banco temporário próprio, comparação de **todas** as tabelas e das migrações, remoção do temporário. Variáveis: `BACKUP_SOURCE_URL` (origem, só leitura), `BACKUP_RESTORE_URL` (servidor da restauração de teste — de preferência **outro** servidor), `BACKUP_DIR` (pasta com permissão restrita; o relatório `.verificacao.json` traz SHA-256, tabelas, linhas e última migração, sem senha).
+- Agendamento sugerido (cron do servidor de staging): diário `0 3 * * * cd /srv/wemob && npm run db:backup:verificar >> /var/log/wemob-backup.log 2>&1`, com alerta se a saída não terminar em `OK`. Copiar o `.dump` para armazenamento fora do provedor do banco.
+- **Executado em desenvolvimento (2026-11-03)**: `sansol_dev` → 218 KB, 442 objetos, 69 tabelas, 15 migrações, restauração idêntica, temporário removido. **Nunca executado em staging** (ambiente inexistente).
 
 ## 5. Monitoramento e logs
-- Logs JSON do app e do OCPP (já estruturados, segredos redigidos) para um agregador; retenção mínima 30 dias.
+- Logs JSON do app e do OCPP (já estruturados, segredos redigidos) para um agregador; retenção mínima 30 dias. Cada linha traz `requestId`: HTTP (cabeçalho `x-request-id`, reaproveitado do proxy quando válido e devolvido na resposta), `ocpp:<estação>:<UniqueId>` por mensagem do carregador e `job:<nome>:<execução>` por automação.
+- **Monitor externo (obrigatório; fora da infraestrutura do app)**: verificação HTTP a cada 1 min de `https://staging.<domínio>/api/health?exigir=automacao` — 503 quando banco, migração ou ciclo de automações falha; alerta após 2 falhas seguidas. Serviços possíveis: Better Stack, UptimeRobot, Healthchecks.io, Grafana Cloud Synthetic (escolha e contratação: WAPE).
+- **Métricas**: `GET /api/metrics` (Prometheus) com `Authorization: Bearer $METRICS_TOKEN` (≥ 24 caracteres; vazio = 404). Séries: `wemob_up`, `wemob_db_latency_ms`, `wemob_schema_ok`, `wemob_automation_last_run_age_seconds`, `wemob_stations{environment,state}`, `wemob_sessions_open{environment,status}`, `wemob_webhook_events_pending|retrying`, `wemob_refunds_open{status}`, `wemob_remote_commands_open{status}`, `wemob_alerts_open{severity}`, `wemob_payments_pending_production`. Alertas sugeridos: `wemob_automation_last_run_age_seconds > 300`, `wemob_webhook_events_retrying > 0` por 15 min, `wemob_refunds_open{status="FAILED"} > 0`, `wemob_stations{environment="PRODUCTION",state="DISCONNECTED"} > 0` por 10 min, `wemob_schema_ok == 0`.
 - Alertas: health check do app, conexão do OCPP, erros 5xx, `payment_webhook_rejected` em sequência, `payment_settlement_failed`, divergências da conciliação, pedidos em análise.
-- Webhook do Asaas: acompanhar `penalizedRequestsCount`/`interrupted` (`npm run asaas:webhook -- listar`); a fila é interrompida após 15 falhas seguidas. **Gap:** não há alerta automático para isso nem para eventos `UNPROCESSED_WEBHOOK`.
+- Webhook do Asaas: acompanhar `penalizedRequestsCount`/`interrupted` (`npm run asaas:webhook -- listar`); a fila é interrompida após 15 falhas seguidas. **Gap:** não há alerta automático para a fila interrompida **do lado do Asaas** (a métrica `wemob_webhook_events_pending` só vê o que chegou).
+- Roteiros de homologação física e financeira: `docs/ROTEIRO_HOMOLOGACAO.md`.
 
 ## 6. Critérios para sair do staging
 Webhook real de pagamento, estorno (incluindo cartão no dia seguinte), split com carteira de teste, ciclo OCPP com carregador de bancada,
