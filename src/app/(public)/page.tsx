@@ -29,7 +29,7 @@ const FAQ = [
 export default function Home() {
   return (
     <>
-      <section className="relative overflow-hidden bg-navy-950 text-white">
+      <section className="theme-fixed relative overflow-hidden bg-navy-950 text-white">
         <div className="pointer-events-none absolute inset-0 opacity-40 [background:radial-gradient(60%_60%_at_80%_20%,rgba(22,163,107,0.35),transparent_70%)]" aria-hidden />
         <div className="relative mx-auto grid max-w-6xl gap-10 px-4 py-20 md:grid-cols-[1.2fr_1fr] md:py-28">
           <div>

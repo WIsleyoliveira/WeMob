@@ -33,7 +33,7 @@ export function ConfirmDialog({
       ref={ref}
       onCancel={(e) => { e.preventDefault(); onCancel(); }}
       aria-labelledby="confirm-title"
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-[var(--radius-card)] bg-white p-0 text-navy-900 shadow-2xl backdrop:bg-navy-950/50 open:animate-fade-in"
+      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-[var(--radius-card)] bg-white p-0 text-navy-900 shadow-2xl backdrop:bg-black/60 open:animate-fade-in"
     >
       <div className="p-6">
         <h2 id="confirm-title" className="font-display text-lg font-semibold text-navy-900">{title}</h2>

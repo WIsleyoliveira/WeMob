@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Logo } from "@/components/ui/logo";
 import { ButtonLink } from "@/components/ui/button";
 
@@ -13,13 +14,14 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
   return (
     <div className="flex min-h-dvh flex-col bg-white">
       <a href="#conteudo" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded focus:bg-white focus:px-3 focus:py-2">Pular para o conteúdo</a>
-      <header className="sticky top-0 z-40 border-b border-white/10 bg-navy-950/95 backdrop-blur">
+      <header className="theme-fixed sticky top-0 z-40 border-b border-white/10 bg-navy-950/95 backdrop-blur">
         <div className="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4">
           <Link href="/" aria-label="Sansol Mob — início"><Logo inverted /></Link>
           <nav aria-label="Principal" className="hidden items-center gap-6 md:flex">
             {NAV.map((n) => <Link key={n.href} href={n.href} className="text-sm text-navy-200 transition-colors hover:text-white">{n.label}</Link>)}
           </nav>
           <div className="flex items-center gap-2">
+            <ThemeToggle tone="inverted" className="hidden sm:inline-flex" />
             <Link href="/login" className="hidden text-sm text-navy-300 hover:text-white sm:inline">Entrar</Link>
             <ButtonLink href="/contato" size="sm">Fale conosco</ButtonLink>
           </div>
@@ -29,7 +31,7 @@ export default function PublicLayout({ children }: { children: React.ReactNode }
         </nav>
       </header>
       <main id="conteudo" className="flex-1">{children}</main>
-      <footer className="bg-navy-950 text-navy-300">
+      <footer className="theme-fixed bg-navy-950 text-navy-300">
         <div className="mx-auto grid max-w-6xl gap-8 px-4 py-12 sm:grid-cols-3">
           <div>
             <Logo inverted />
