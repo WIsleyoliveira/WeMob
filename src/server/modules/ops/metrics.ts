@@ -5,7 +5,8 @@
  */
 import { timingSafeEqual } from "node:crypto";
 import { db } from "@/server/db";
-import { schemaState, type MigrationRow } from "@/domain/ops/schema";
+import { schemaState } from "@/domain/ops/schema";
+import { readMigrations } from "@/server/schema-status";
 import { renderMetrics, type Metric } from "@/domain/ops/metrics";
 
 /** `METRICS_TOKEN` ausente = endpoint desligado. Comparação em tempo constante. */
@@ -23,7 +24,7 @@ export async function collectMetrics(now = new Date()): Promise<string> {
   await db.$queryRaw`SELECT 1`;
   const dbLatency = Date.now() - t0;
   const [migrations, lastRun, stations, sessions, webhookPending, webhookRetrying, refunds, commands, alerts, paymentsPending] = await Promise.all([
-    db.$queryRaw<MigrationRow[]>`SELECT migration_name, finished_at, rolled_back_at FROM "_prisma_migrations"`,
+    readMigrations(db),
     db.automationRun.findFirst({ where: { job: "alerts.evaluate" }, orderBy: { startedAt: "desc" }, select: { startedAt: true, status: true } }),
     db.chargingStation.groupBy({ by: ["environment", "connectionState"], where: { deletedAt: null }, _count: { _all: true } }),
     db.chargingSession.groupBy({ by: ["environment", "status"], where: { status: { in: ["ACTIVE", "COMMUNICATION_LOST"] } }, _count: { _all: true } }),

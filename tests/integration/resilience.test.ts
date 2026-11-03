@@ -31,7 +31,10 @@ describe("resiliência e estados vazios (P10)", () => {
     const client = db as unknown as Record<string, unknown>;
     const real = db.$queryRaw.bind(db);
     // Simula só a leitura de _prisma_migrations; o banco de teste não é tocado.
-    const fake = (rows: unknown[]) => (strings: TemplateStringsArray, ...v: unknown[]) => (strings.join("?").includes("_prisma_migrations") ? Promise.resolve(rows) : real(strings, ...v));
+    const fake = (rows: unknown[]) => (strings: TemplateStringsArray, ...v: unknown[]) => {
+      const q = strings.join("?");
+      return q.includes("to_regclass") ? Promise.resolve([{ present: true }]) : q.includes("_prisma_migrations") ? Promise.resolve(rows) : real(strings, ...v);
+    };
     client.$queryRaw = fake([{ migration_name: "20261027125541_init", finished_at: new Date(), rolled_back_at: null }]);
     const pending = await health(new Request("http://localhost/api/health")).finally(() => delete client.$queryRaw);
     expect(pending.status).toBe(503);
@@ -40,6 +43,11 @@ describe("resiliência e estados vazios (P10)", () => {
     const failed = await health(new Request("http://localhost/api/health")).finally(() => delete client.$queryRaw);
     expect(failed.status).toBe(503);
     expect(await failed.json()).toMatchObject({ schema: "migration_failed" });
+    // Banco recém-criado (CI docker): sem a tabela _prisma_migrations → pendente, não "banco inacessível".
+    client.$queryRaw = (strings: TemplateStringsArray, ...v: unknown[]) => (strings.join("?").includes("to_regclass") ? Promise.resolve([{ present: false }]) : real(strings, ...v));
+    const fresh = await health(new Request("http://localhost/api/health")).finally(() => delete client.$queryRaw);
+    expect(fresh.status).toBe(503);
+    expect(await fresh.json()).toMatchObject({ status: "degraded", db: "ok", schema: "migrations_pending" });
   });
 
   it("health para monitor externo: ?exigir=automacao dá 503 com o ciclo parado; o padrão continua 200", async () => {

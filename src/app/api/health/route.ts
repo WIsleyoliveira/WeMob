@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { db } from "@/server/db";
-import { schemaState, type MigrationRow } from "@/domain/ops/schema";
+import { schemaState } from "@/domain/ops/schema";
+import { readMigrations } from "@/server/schema-status";
 
 export const dynamic = "force-dynamic";
 
@@ -19,8 +20,7 @@ export async function GET(req: Request) {
   const started = Date.now();
   try {
     await db.$queryRaw`SELECT 1`;
-    const rows = await db.$queryRaw<MigrationRow[]>`SELECT migration_name, finished_at, rolled_back_at FROM "_prisma_migrations"`;
-    const schema = schemaState(rows);
+    const schema = schemaState(await readMigrations(db));
     if (schema !== "ok") return Response.json({ status: "degraded", db: "ok", schema, time: new Date().toISOString() }, { status: 503, headers: { "Cache-Control": "no-store" } });
     const last = await db.automationRun.findFirst({ where: { job: "alerts.evaluate" }, orderBy: { startedAt: "desc" }, select: { startedAt: true, status: true } });
     const automation = !last ? "never" : Date.now() - last.startedAt.getTime() > 5 * 60_000 ? "stale" : last.status === "FAILED" ? "failing" : "ok";
