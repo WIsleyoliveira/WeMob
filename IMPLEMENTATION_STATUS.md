@@ -4,6 +4,24 @@ Atualizado em 2026-11-03 (custos da plataforma, Excel nativo, observabilidade e 
 
 Classificação usada nos relatórios de etapa: **implementado** (código existe) · **testado** (teste automatizado e/ou verificação manual registrada) · **simulado** (funciona só com dublê/fake identificado) · **bloqueado** (depende de terceiro/credencial/decisão).
 
+## Redesign, tema escuro, orçamento versionado e correções do CI (2026-11-03)
+
+- **CI 41670256337 (falhou)** — duas causas reais, corrigidas em commits próprios:
+  - `docker`: num banco recém-criado o health respondia `db: unreachable` (a consulta a `_prisma_migrations` falhava com 42P01) em vez de `schema: migrations_pending`. `readMigrations` checa `to_regclass` antes; reproduzido localmente com banco vazio: 503 `migrations_pending` → migrar → 200.
+  - `check`: `npm audit --audit-level=moderate` com o aviso do `minimatch` (publicado após o último CI verde, sem correção compatível com o ESLint). `scripts/audit-gate.mjs`: produção sem tolerância; desenvolvimento falha com qualquer aviso moderado+ exceto exceções explícitas (aviso + pacote + justificativa + validade 2026-12-31). Testado: sem exceção → falha; exceção vencida → falha.
+- **Tema escuro** completo com preferência salva (`sm_theme`): paleta por escalas, áreas fixas (`theme-fixed`), aplicação antes da primeira pintura, seletor nos três cabeçalhos.
+- **Redesign** — administração: menu agrupado por tarefa, gaveta no celular, cabeçalho com perfil, alertas abertos e tema; painel com "Economia da WeMob" (participação dos fechamentos aprovados × custo realizado, lado a lado e separados) e utilização/disponibilidade por conector. Operador do posto: portal com período, indicadores, gráficos (energia, sua parte por competência), medidores por conector e navegação por seções. Motorista: telas do P23 com tema e seletor.
+- **Orçamento versionado** por competência, comparação com o mês anterior, histórico de alterações e **importação** da planilha com prévia/diferença/aplicação auditada (migração `20261103200000_cost_budget_versions`).
+- Ambiente local: o Mac reiniciou durante a sessão e o PostgreSQL não subia por um `postmaster.pid` antigo (PID 696 = `corespotlightd`); arquivo movido (cópia guardada), serviço reiniciado, recuperação normal. Banco E2E órfão da execução interrompida removido (`sansol_e2e_1793723634723`).
+
+### Verificação (2026-11-03, saída real)
+- `npm test` → 37 arquivos, **362/362** (novos: `xlsx-read` 6, `platform-costs` +6 — versões, comparação, concorrência, importação, economia; `resilience` +1 caso de banco vazio)
+- `npm run lint` → 0 · `npm run typecheck` → 0 · `npm run e2e:build` → OK
+- `E2E_TELAS=1 npm run e2e:browser` → **37/37** (novos: `e2e/redesign.spec.ts` 4; `e2e/telas.spec.ts` 3 com 22 capturas claro/escuro, desktop/celular em `e2e-telas/`, fora do Git)
+- `node scripts/audit-gate.mjs` → OK (produção 0; desenvolvimento 1 aviso com exceção válida até 2026-12-31) · `npm audit --omit=dev` → 0
+- Planilha real `WeMob_Custos_Mensais_Detalhados.xlsx` lida pelo importador: 8 itens e 4 premissas iguais aos da planilha
+- CI remoto: correções ainda **não enviadas** (push aguarda autorização)
+
 ## Custos da plataforma, Excel nativo, observabilidade e backup verificável (2026-11-03)
 
 - **Custos operacionais da WeMob** (`/app/financeiro/custos`; `src/domain/costs/*`, `src/server/modules/costs/service.ts`; migração `20261103180000_platform_costs`): premissas da planilha `WeMob_Custos_Mensais_Detalhados.xlsx` (lida como dado, SHA-256 `00da01b7cae1ee40f55870535278edf11b831296262084acb8d715c828bd709f`): 8 itens, câmbio de stress 40%, reserva 60%, R$ 250 + R$ 150 por posto. Reproduz a planilha (prudencial R$ 1.952,32; Piloto R$ 2.352,32 … Rede maior R$ 9.952,32). Custo por posto só com estações de PRODUÇÃO; simulação por número de postos; sensibilidade cambial; realizado em R$ ou US$ (valor original + câmbio guardados) × orçado com alerta de tolerância; edição auditada; exportação Excel. **Separado** do fechamento e da participação 30/70 (teste prova que não entra nas despesas da rede).

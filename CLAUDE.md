@@ -49,6 +49,8 @@ Single Next.js 15 App Router app (TypeScript, Prisma/PostgreSQL, Zod, decimal.js
 - Observability: `src/middleware.ts` sets/propagates `x-request-id`; `src/server/correlation.ts` (AsyncLocalStorage) adds `requestId` to every log line inside actions, webhooks, OCPP messages and automation jobs. `/api/metrics` (Prometheus) needs `METRICS_TOKEN`.
 - Exports: `src/lib/xlsx.ts` writes native .xlsx (stored ZIP, no dependency); finance routes take `formato=xlsx`.
 - Platform costs (`src/domain/costs`, `/app/financeiro/custos`) are WeMob's own operating budget: never feed closings, repasses or the 30/70 share.
+- Theme: dark mode redefines the color SCALES under `:root[data-theme="dark"]` (`globals.css`) — use the normal classes (`bg-white`, `text-navy-900`), never `dark:` variants; areas dark in both themes get `theme-fixed`. Preference cookie `sm_theme` applied before paint by `ThemeScript`.
+- CI dependency gate: `scripts/audit-gate.mjs` (prod 0; dev moderate+ only with an explicit, dated exception).
 - UI: `src/components/ui/*` design system (tokens in `src/app/globals.css`, documented in `docs/design-system.md`); `ActionForm` (`src/components/app/action-form.tsx`) is the standard form-with-server-action component (pending/success/error + accessible confirm dialog).
 
 **Auth & tenancy:**

@@ -70,10 +70,17 @@ Base: código em `main` local (commits `5e25cdd`, `7c60aca` e as alterações de
 | Totem de autoatendimento | **Não iniciado** | hardware, leitor de cartão, compra sem cadastro (CPF exigido pelo Asaas), política de comprovante |
 | Painel do operador do posto (portal do parceiro) | **Validado automaticamente** (P09) para extratos e isolamento; receita diária/ocupação por posto: **Não iniciado** | |
 | Painel administrativo (rede, financeiro, CRM, suporte, manutenção, alertas, auditoria) | **Validado automaticamente** | custos de infraestrutura e relatórios executivos: **Não iniciado** |
-| Redesign completo do design system e tema escuro | **Em andamento** (motorista e painel redesenhados no P23) | marca definitiva (WeMob/WAPE × "Sansol Mob" na interface): **decisão pendente** |
+| Tema escuro completo (com preferência salva) | **Validado automaticamente** | paleta escura por escalas, `theme-fixed`, `ThemeScript` sem piscar; `e2e/redesign.spec.ts` (persistência, sistema, cores calculadas); capturas claro/escuro em `npm run e2e:browser` com `E2E_TELAS=1` |
+| Redesign — administração (navegação agrupada, gaveta no celular, alertas no cabeçalho, painel com economia da WeMob e utilização por conector) | **Validado automaticamente** | `src/app/app/layout.tsx`, `nav.ts`, `page.tsx`; E2E e capturas |
+| Redesign — operador do posto (portal com período, indicadores, energia, sua parte por competência, utilização/disponibilidade por conector, seções) | **Validado automaticamente** | `src/app/app/portal/page.tsx`; E2E e capturas (estação do E2E é de teste: estados vazios honestos) |
+| Redesign — motorista | **Validado automaticamente** (P23 + tema) | telas do P23 com tema escuro e seletor no cabeçalho; capturas |
+| Redesign — telas internas restantes (CRM, contratos, suporte, manutenção, usuários) | **Em andamento** | herdam navegação, tema e componentes; layout interno de cada tela não foi refeito nesta rodada |
+| Teste de usabilidade com pessoas reais | **Não iniciado** | precisa de participantes (WAPE) |
+| Marca definitiva (WeMob/WAPE × "Sansol Mob" na interface) | **Bloqueado** (decisão WAPE) | |
 | Pontos, planos, carteira pré-paga | **Bloqueado** | regras comerciais aprovadas; carteira exige parecer regulatório (Banco Central) e contábil |
 | Custos operacionais da plataforma e risco cambial | **Validado automaticamente** | `/app/financeiro/custos`: premissas da planilha (SHA-256 `00da01b7…`), câmbio de stress, reserva, custo por posto, cenários, sensibilidade cambial, realizado (R$/US$) × orçado com alerta, Excel; separado do fechamento (teste) |
-| Orçamento versionado por mês | **Não iniciado** | o orçado do histórico usa as premissas atuais |
+| Orçamento versionado por competência | **Validado automaticamente** | congelar o mês (nova versão substitui a anterior, uma ativa por mês — índice parcial), realizado × versão do mês, Δ do mês anterior, histórico de alterações; `tests/integration/platform-costs.test.ts` (inclui concorrência) |
+| Importação segura de nova versão da planilha | **Validado automaticamente** | `src/lib/xlsx-read.ts` (limites de tamanho/partes/descompactação, sem fórmulas, sem caminhos fora de `xl/worksheets`), `src/domain/costs/import.ts` (validação estrita), prévia com diferença → aplicar (motivo, auditado, uma vez) ou descartar; lida a planilha real recebida |
 
 ## Bloqueadores externos (resumo)
 | Bloqueador | Quem resolve | Evidência de resolução | Pode avançar antes | Não ativar até |

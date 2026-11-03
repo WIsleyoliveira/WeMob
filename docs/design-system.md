@@ -13,6 +13,21 @@ Fonte da verdade: tokens em `src/app/globals.css` (`@theme`, Tailwind 4) e compo
 
 Contraste medido (WCAG 2.1, fórmula de luminância relativa) — ver IMPLEMENTATION_STATUS.md, P03.
 
+## Tema claro e escuro
+- Preferência por aparelho no cookie `sm_theme` (`light` | `dark` | `system`, padrão `system`); seletor `ThemeToggle` (`src/components/theme/theme-toggle.tsx`) no cabeçalho da equipe, do motorista e do site.
+- `ThemeScript` (no `<head>` do layout raiz) define `data-theme` antes da primeira pintura — sem piscar. Em `system`, a troca de tema do aparelho é acompanhada sem recarregar.
+- No escuro, as **escalas** (`navy`, `brand`, `tiffany`, `amber`, `red` e `white`) são redefinidas em `:root[data-theme="dark"]` mantendo o significado de cada degrau (50 = fundo sutil … 900 = texto forte). Por isso componentes e gráficos usam as classes de sempre (`bg-white`, `text-navy-900`, `fill-brand-600`) e **não** variantes `dark:`.
+- Áreas que são escuras nos dois temas (barra lateral, cabeçalho do motorista, faixas do site, login) levam `theme-fixed`, que repõe a paleta clara por dentro.
+- Sobreposições de modal usam `backdrop:bg-black/60` (não marinho, que clareia no escuro).
+
+## Navegação
+- Equipe: menu agrupado por tarefa em `src/app/app/nav.ts` (Visão geral · Rede de recarga · Financeiro · Comercial · Atendimento · Meu posto · Administração), filtrado por permissão; no celular, gaveta aberta pelo botão "Menu" (`mobile-nav.tsx`, fecha com Esc e ao trocar de página). Cabeçalho com organização, perfil por extenso, alertas abertos (vermelho se houver crítico), tema, conta e sair.
+- Motorista: navegação inferior fixa (Estações · Recargas · Consumo · Ajuda · Conta).
+
+## Indicadores
+- `BarChart` (série no tempo, com tabela para leitor de tela) e `MeterList` (`src/components/ui/meter-list.tsx`: barras 0–100% acessíveis como `role="meter"`, `null` = sem dado, nunca 0%, destaque abaixo de um limite).
+- Todo indicador diz período, unidade e fonte; dado de teste/simulação só entra quando pedido e com aviso visível.
+
 ## Tipografia
 Manrope (títulos, `font-display`) + Inter (texto). Escala: `text-xs` 12 · `text-sm` 14 (padrão no backoffice) · `text-base` 16 · `text-lg` 18 · `text-2xl` 24 (título de página) · `text-3xl/4xl/5xl` (site). Números financeiros com `.tabular`.
 
