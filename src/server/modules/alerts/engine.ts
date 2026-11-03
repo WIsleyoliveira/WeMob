@@ -218,6 +218,14 @@ export async function listAlerts(ctx: AuthContext | null, raw: { status?: "open"
   });
 }
 
+/** Contagem de alertas abertos por severidade (badge do cabeçalho). Sem permissão = null (não é erro). */
+export async function openAlertCounts(ctx: AuthContext | null) {
+  if (!ctx || !ctx.permissions.has("alert:read") || ctx.orgKind !== "OPERATOR") return null;
+  const rows = await db.alert.groupBy({ by: ["severity"], where: { operatorId: ctx.organizationId, status: "OPEN" }, _count: { _all: true } });
+  const by = Object.fromEntries(rows.map((r) => [r.severity, r._count._all])) as Record<string, number>;
+  return { total: rows.reduce((a, r) => a + r._count._all, 0), critical: by.CRITICAL ?? 0 };
+}
+
 export async function acknowledgeAlert(ctx: AuthContext | null, alertId: string) {
   requirePermission(ctx, "alert:read");
   requireOperator(ctx);

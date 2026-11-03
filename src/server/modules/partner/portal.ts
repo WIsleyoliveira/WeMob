@@ -59,10 +59,10 @@ export async function partnerStatements(ctx: AuthContext | null) {
     .sort((a, b) => b.period.localeCompare(a.period));
 }
 
-export async function partnerIndicators(ctx: AuthContext | null) {
+export async function partnerIndicators(ctx: AuthContext | null, days = 30) {
   requirePartner(ctx);
   const to = new Date();
-  const from = new Date(to.getTime() - 30 * 86400_000);
+  const from = new Date(to.getTime() - days * 86400_000);
   return operationalOverview(ctx, { from, to });
 }
 

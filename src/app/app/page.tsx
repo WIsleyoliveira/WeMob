@@ -15,6 +15,8 @@ import { BarChart } from "@/components/ui/bar-chart";
 import { STATUS_LABEL, type ConnectorStatus } from "@/domain/stations/status";
 import { periodRange, type UsagePeriod } from "@/domain/usage/series";
 import { cn } from "@/lib/cn";
+import { MeterList } from "@/components/ui/meter-list";
+import { wemobEconomics } from "@/server/modules/costs/service";
 
 const PERIODS: Record<string, string> = { "7": "Últimos 7 dias", "30": "Últimos 30 dias", "90": "Últimos 90 dias" };
 const kwhFmt = (v: number) => `${num(v, v < 10 ? 2 : 1)} kWh`;
@@ -29,13 +31,15 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
   const { from, to } = periodRange(periodKey as UsagePeriod);
   const canOps = ctx.permissions.has("site:read");
   const canPay = ctx.permissions.has("payment:read") && ctx.orgKind === "OPERATOR";
-  const [funnel, sites, sims, ops, usage, pay] = await Promise.all([
+  const canFinance = ctx.permissions.has("finance:read") && ctx.orgKind === "OPERATOR";
+  const [funnel, sites, sims, ops, usage, pay, econ] = await Promise.all([
     ctx.permissions.has("lead:read") ? pipelineSummary(ctx) : null,
     canOps ? listSites(ctx) : null,
     ctx.permissions.has("simulation:read") ? listSimulations(ctx) : null,
     canOps ? operationalOverview(ctx, { from, to, includeNonProduction: includeTest }) : null,
     canOps ? networkUsage(ctx, { from, to, includeNonProduction: includeTest }) : null,
     canPay ? paymentsOverview(ctx) : null,
+    canFinance ? wemobEconomics(ctx, 6) : null,
   ]);
   const now = new Date();
   const periodLabel = PERIODS[periodKey].toLowerCase();
@@ -46,48 +50,7 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
 
   return (
     <>
-      <PageHeader title={`Olá, ${ctx.userName.split(" ")[0]}`} description="Indicadores calculados somente a partir de dados registrados na plataforma." />
-
-      {funnel && (
-        <section className="mb-8">
-          <h2 className="mb-3 font-display text-sm font-semibold uppercase tracking-wide text-navy-400">Comercial</h2>
-          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-            <Stat label="Leads em aberto" value={num(funnel.open)} definition="Leads que não estão em etapa de ganho ou perda." source="CRM (tabela Lead)" updatedAt={funnel.computedAt} />
-            <Stat label="Novos leads (30 dias)" value={num(funnel.newLast30Days)} definition="Leads criados nos últimos 30 dias, de qualquer origem." source="CRM (Lead.createdAt)" updatedAt={funnel.computedAt} />
-            <Stat label="Oportunidades paradas" value={num(funnel.stale)} definition="Leads em aberto sem mudança de etapa há mais de 7 dias." source="CRM (Lead.stageChangedAt)" updatedAt={funnel.computedAt} />
-            <Stat label="Taxa de conversão" value={funnel.conversionRate === null ? "—" : pct(funnel.conversionRate)} definition="Ganhos ÷ (ganhos + perdidos). Sem negócios encerrados, não é calculada." source="CRM (etapas de ganho/perda)" updatedAt={funnel.computedAt} />
-          </div>
-          <Card className="mt-4">
-            <CardHeader
-              title="Leads por etapa do funil"
-              description={`Quantidade atual de leads (unidade: leads) em cada etapa · todos os períodos · fonte: CRM · ${dateTime(funnel.computedAt)}`}
-              actions={<Link href="/app/crm" className="text-sm font-medium text-brand-700 hover:underline">Abrir CRM →</Link>}
-            />
-            <CardBody>
-              {funnel.total === 0 ? (
-                <p className="text-sm text-navy-500">Nenhum lead registrado ainda.</p>
-              ) : (
-                <ul className="space-y-2.5">
-                  {funnel.stages.map((s) => {
-                    const max = Math.max(...funnel.stages.map((x) => x.count), 1);
-                    return (
-                      <li key={s.id}>
-                        <Link href={`/app/crm?stageId=${s.id}&view=lista`} className="group grid grid-cols-[minmax(7rem,10rem)_1fr_3rem] items-center gap-3 text-sm">
-                          <span className="truncate text-navy-700 group-hover:text-navy-900">{s.name}</span>
-                          <span className="h-2.5 rounded-full bg-navy-50" aria-hidden>
-                            <span className={`block h-full rounded-full ${s.isLost ? "bg-navy-300" : s.isWon ? "bg-brand-600" : "bg-tiffany-500"}`} style={{ width: `${(s.count / max) * 100}%` }} />
-                          </span>
-                          <span className="tabular text-right font-semibold text-navy-900">{s.count}</span>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </CardBody>
-          </Card>
-        </section>
-      )}
+      <PageHeader title={`Olá, ${ctx.userName.split(" ")[0]}`} description="O que está acontecendo na rede agora, o dinheiro e o comercial — calculado só com dados registrados na plataforma." />
 
       {ops && usage && (
         <section className="mb-8" aria-labelledby="op-titulo">
@@ -138,11 +101,73 @@ export default async function Dashboard({ searchParams }: { searchParams: Promis
               </CardBody>
             </Card>
           </div>
+          <Card className="mt-3">
+            <CardHeader title="Utilização e disponibilidade por conector" description={`Tempo ocupado e tempo disponível ÷ período (${periodLabel}). Sem comunicação conta como indisponível.`} />
+            <CardBody className="grid gap-6 md:grid-cols-2">
+              <MeterList tone="tiffany" items={ops.perConnector.slice(0, 12).map((c) => ({ key: `u-${c.stationId}-${c.connectorId}`, label: `${c.identity} · ${c.connectorId}`, sub: c.site, value: c.utilization }))} emptyText="Nenhum conector neste escopo." />
+              <MeterList thresholds={{ warnBelow: 0.95 }} items={ops.perConnector.slice(0, 12).map((c) => ({ key: `a-${c.stationId}-${c.connectorId}`, label: `${c.identity} · ${c.connectorId}`, sub: c.site, value: c.availability }))} emptyText="Nenhum conector neste escopo." />
+            </CardBody>
+          </Card>
           {ops.alerts.length > 0 && (
             <Alert tone="warning" className="mt-4" title={`${ops.alerts.length} ${ops.alerts.length === 1 ? "ponto de atenção" : "pontos de atenção"} na operação`}>
               <ul className="list-disc pl-4">{ops.alerts.slice(0, 5).map((a, i) => <li key={i}>{a.text}</li>)}</ul>
             </Alert>
           )}
+        </section>
+      )}
+
+      {econ && (
+        <section className="mb-8" aria-labelledby="eco-titulo">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+            <h2 id="eco-titulo" className="font-display text-sm font-semibold uppercase tracking-wide text-navy-400">Economia da WeMob · últimos 6 meses</h2>
+            <Link href="/app/financeiro/custos" className="text-sm font-medium text-brand-700 hover:underline">Custos da plataforma →</Link>
+          </div>
+          <div className="grid gap-3 lg:grid-cols-2">
+            <BarChart title="Participação WeMob (fechamentos aprovados)" unit="R$ por competência" period="somente meses fechados e aprovados" tone="brand" data={econ.rows.map((r) => ({ key: r.competence, label: r.competence.slice(2).replace("-", "/"), value: Number(r.wemobShare ?? 0) }))} format={(v) => brl(v)} emptyText="Nenhum fechamento aprovado nos últimos 6 meses: a participação de 30% aparece quando o mês é fechado." />
+            <BarChart title="Custo da plataforma (realizado)" unit="R$ por competência" period={`orçado atual ${brl(econ.currentMonthlyBudget)}/mês`} tone="navy" data={econ.rows.map((r) => ({ key: r.competence, label: r.competence.slice(2).replace("-", "/"), value: Number(r.platformCost ?? 0) }))} format={(v) => brl(v)} emptyText="Nenhum custo realizado lançado. Registre as faturas em Financeiro → Custos da plataforma." />
+          </div>
+          <p className="mt-2 text-xs text-navy-500">Receita de participação e custos da plataforma são apurados em módulos separados; esta visão só os coloca lado a lado. A participação não é lucro: tarifas, tributos e custos ficam fora dela.</p>
+        </section>
+      )}
+
+      {funnel && (
+        <section className="mb-8">
+          <h2 className="mb-3 font-display text-sm font-semibold uppercase tracking-wide text-navy-400">Comercial</h2>
+          <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <Stat label="Leads em aberto" value={num(funnel.open)} definition="Leads que não estão em etapa de ganho ou perda." source="CRM (tabela Lead)" updatedAt={funnel.computedAt} />
+            <Stat label="Novos leads (30 dias)" value={num(funnel.newLast30Days)} definition="Leads criados nos últimos 30 dias, de qualquer origem." source="CRM (Lead.createdAt)" updatedAt={funnel.computedAt} />
+            <Stat label="Oportunidades paradas" value={num(funnel.stale)} definition="Leads em aberto sem mudança de etapa há mais de 7 dias." source="CRM (Lead.stageChangedAt)" updatedAt={funnel.computedAt} />
+            <Stat label="Taxa de conversão" value={funnel.conversionRate === null ? "—" : pct(funnel.conversionRate)} definition="Ganhos ÷ (ganhos + perdidos). Sem negócios encerrados, não é calculada." source="CRM (etapas de ganho/perda)" updatedAt={funnel.computedAt} />
+          </div>
+          <Card className="mt-4">
+            <CardHeader
+              title="Leads por etapa do funil"
+              description={`Quantidade atual de leads (unidade: leads) em cada etapa · todos os períodos · fonte: CRM · ${dateTime(funnel.computedAt)}`}
+              actions={<Link href="/app/crm" className="text-sm font-medium text-brand-700 hover:underline">Abrir CRM →</Link>}
+            />
+            <CardBody>
+              {funnel.total === 0 ? (
+                <p className="text-sm text-navy-500">Nenhum lead registrado ainda.</p>
+              ) : (
+                <ul className="space-y-2.5">
+                  {funnel.stages.map((s) => {
+                    const max = Math.max(...funnel.stages.map((x) => x.count), 1);
+                    return (
+                      <li key={s.id}>
+                        <Link href={`/app/crm?stageId=${s.id}&view=lista`} className="group grid grid-cols-[minmax(7rem,10rem)_1fr_3rem] items-center gap-3 text-sm">
+                          <span className="truncate text-navy-700 group-hover:text-navy-900">{s.name}</span>
+                          <span className="h-2.5 rounded-full bg-navy-50" aria-hidden>
+                            <span className={`block h-full rounded-full ${s.isLost ? "bg-navy-300" : s.isWon ? "bg-brand-600" : "bg-tiffany-500"}`} style={{ width: `${(s.count / max) * 100}%` }} />
+                          </span>
+                          <span className="tabular text-right font-semibold text-navy-900">{s.count}</span>
+                        </Link>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </CardBody>
+          </Card>
         </section>
       )}
 
