@@ -32,11 +32,22 @@ export default async function ContratoPage({ params }: { params: Promise<{ id: s
         description={<>{c.partnerOrganization.name} · unidades: {c.sites.map((s) => s.site.name).join(", ")}{c.statusReason && <> · último motivo de status: “{c.statusReason}”</>}</>}
         actions={<Badge tone={c.status === "ACTIVE" ? "green" : c.status === "DRAFT" ? "amber" : "neutral"}>{CONTRACT_STATUS_LABEL[c.status]}</Badge>}
       />
+      {(() => {
+        const pending = c.versions.find((v) => v.status === "DRAFT");
+        if (!pending) return null;
+        const mine = pending.createdById === ctx.userId;
+        return (
+          <Alert tone="warning" className="mb-4" title={`Versão ${pending.version} aguardando aprovação`}>
+            Proposta por {name(pending.createdById)} em {dateTime(pending.createdAt)}. {mine ? "Você criou esta versão: a decisão cabe a outra pessoa autorizada (aprovação por duas pessoas)." : canApprove ? "Revise as condições e decida abaixo." : "Uma pessoa com permissão de aprovação precisa decidir."}{" "}
+            <a href={`#versao-${pending.id}`} className="font-medium underline">Ver a versão</a>
+          </Alert>
+        );
+      })()}
       {!c.current && <Alert tone="warning" className="mb-6">Nenhuma versão aprovada vigente hoje: fechamentos das unidades deste contrato ficarão bloqueados.</Alert>}
       <div className="grid gap-6 xl:grid-cols-[1fr_380px] [&>*]:min-w-0">
         <div className="space-y-4">
           {c.versions.map((v) => (
-            <Card key={v.id} className={c.current?.id === v.id ? "ring-2 ring-brand-200" : ""}>
+            <Card key={v.id} id={`versao-${v.id}`} className={`scroll-mt-24 ${c.current?.id === v.id ? "ring-2 ring-brand-200" : v.status === "DRAFT" ? "ring-2 ring-amber-200" : ""}`}>
               <CardHeader
                 title={<>v{v.version} · {v.kind === "ORIGINAL" ? "Original" : "Aditivo"} {c.current?.id === v.id && <Badge tone="green">vigente</Badge>}</>}
                 description={`${VERSION_STATUS[v.status]} · vigência ${date(v.effectiveFrom)} → ${v.effectiveTo ? date(v.effectiveTo) : "sem término"}`}
@@ -78,8 +89,13 @@ export default async function ContratoPage({ params }: { params: Promise<{ id: s
           ))}
           {opts && c.status !== "TERMINATED" && !c.versions.some((v) => v.status === "DRAFT") && (
             <Card>
-              <CardHeader title="Novo aditivo" description="Cria a próxima versão em rascunho; as versões anteriores permanecem inalteradas." />
-              <CardBody><ActionForm action={createAmendmentAction} submitLabel="Criar aditivo"><input type="hidden" name="contractId" value={c.id} /><ContractTermsFields modelVersions={opts.modelVersions} reasonLabel="Motivo do aditivo" /></ActionForm></CardBody>
+              <CardHeader title="Novo aditivo" description="Cria a próxima versão em rascunho; as versões anteriores permanecem inalteradas e a nova só vale depois de aprovada por outra pessoa." />
+              <CardBody>
+                <details>
+                  <summary className="cursor-pointer text-sm font-medium text-brand-700">Propor aditivo</summary>
+                  <div className="mt-4"><ActionForm action={createAmendmentAction} submitLabel="Criar aditivo"><input type="hidden" name="contractId" value={c.id} /><ContractTermsFields modelVersions={opts.modelVersions} reasonLabel="Motivo do aditivo" /></ActionForm></div>
+                </details>
+              </CardBody>
             </Card>
           )}
         </div>

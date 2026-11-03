@@ -1,31 +1,35 @@
 import Link from "next/link";
 import { requirePage } from "@/server/auth/current";
-import { LEAD_SOURCES, listLeads, listLeadsPage, listStages, STALE_LEAD_DAYS } from "@/server/modules/leads/service";
+import { LEAD_SOURCES, listLeads, listLeadsPage, listStages, pipelineSummary, STALE_LEAD_DAYS } from "@/server/modules/leads/service";
+import { FilterBar, FilterField, SearchInput } from "@/components/ui/filter-bar";
+import { SummaryStrip } from "@/components/ui/summary-strip";
+import { SegmentedLinks } from "@/components/ui/segmented";
 import { PRIORITY_LABEL } from "@/server/modules/crm/details";
 import { moveStageAction } from "@/app/actions/leads";
 import { PageHeader } from "@/components/ui/page-header";
 import { ButtonLink, buttonClass } from "@/components/ui/button";
-import { Input, Select } from "@/components/ui/field";
+import { Select } from "@/components/ui/field";
 import { Badge } from "@/components/ui/badge";
 import { Table } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { ActionForm } from "@/components/app/action-form";
 import { brl, date } from "@/lib/format";
-import { cn } from "@/lib/cn";
 
 export const dynamic = "force-dynamic";
 
-type SP = { q?: string; stageId?: string; source?: string; view?: string; page?: string; sort?: string; dir?: string };
+type SP = { q?: string; stageId?: string; source?: string; view?: string; page?: string; sort?: string; dir?: string; assignee?: string };
 
 export default async function CrmPage({ searchParams }: { searchParams: Promise<SP> }) {
   const ctx = await requirePage("lead:read");
   const sp = await searchParams;
   const view = sp.view === "lista" ? "lista" : "kanban";
-  const filter = { q: sp.q || undefined, stageId: sp.stageId || undefined, source: (sp.source || undefined) as keyof typeof LEAD_SOURCES | undefined };
-  const [stages, leads, page] = await Promise.all([
+  const mineOnly = sp.assignee === "me";
+  const filter = { q: sp.q || undefined, stageId: sp.stageId || undefined, source: (sp.source || undefined) as keyof typeof LEAD_SOURCES | undefined, assigneeId: mineOnly ? ctx.userId : undefined };
+  const [stages, leads, page, summary] = await Promise.all([
     listStages(ctx),
     view === "kanban" ? listLeads(ctx, filter) : Promise.resolve([]),
     view === "lista" ? listLeadsPage(ctx, { ...filter, page: sp.page, sort: sp.sort, dir: sp.dir }) : Promise.resolve(null),
+    pipelineSummary(ctx),
   ]);
   const canExport = ctx.permissions.has("lead:export");
   const exportQs = new URLSearchParams(Object.entries(filter).filter(([, v]) => v) as [string, string][]).toString();
@@ -52,24 +56,40 @@ export default async function CrmPage({ searchParams }: { searchParams: Promise<
           </>
         }
       />
-      <form className="mb-5 flex flex-wrap items-center gap-2" method="get">
-        <input type="hidden" name="view" value={view} />
-        <Input name="q" defaultValue={sp.q} placeholder="Buscar nome, empresa, e-mail, cidade" className="w-72" aria-label="Buscar" />
-        <Select name="stageId" defaultValue={sp.stageId ?? ""} className="w-48" aria-label="Etapa">
-          <option value="">Todas as etapas</option>
-          {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </Select>
-        <Select name="source" defaultValue={sp.source ?? ""} className="w-56" aria-label="Origem">
-          <option value="">Todas as origens</option>
-          {Object.entries(LEAD_SOURCES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </Select>
-        <button className={buttonClass({ variant: "secondary" })}>Filtrar</button>
-        <div className="ml-auto inline-flex rounded-lg border border-navy-200 bg-white p-0.5 text-sm">
-          {(["kanban", "lista"] as const).map((v) => (
-            <Link key={v} href={`/app/crm?${qs(v)}`} aria-current={view === v ? "page" : undefined} className={cn("rounded-md px-3 py-1.5 capitalize", view === v ? "bg-navy-900 text-white" : "text-navy-600")}>{v}</Link>
-          ))}
-        </div>
-      </form>
+      {summary && (
+        <SummaryStrip
+          label="Resumo do funil"
+          items={[
+            { label: "Leads em aberto", value: summary.open },
+            { label: "Novos (30 dias)", value: summary.newLast30Days },
+            { label: "Parados há mais de 7 dias", value: summary.stale, tone: summary.stale ? "warning" : "default", hint: "sem mudança de etapa" },
+            { label: "Conversão", value: summary.conversionRate === null ? "—" : `${Math.round(summary.conversionRate * 1000) / 10}%`, hint: "ganhos ÷ encerrados" },
+          ]}
+        />
+      )}
+      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+        <SegmentedLinks
+          label="Visualização"
+          className="mb-0"
+          items={(["kanban", "lista"] as const).map((v) => ({ href: `/app/crm?${qs(v)}`, label: v === "kanban" ? "Funil (quadro)" : "Lista", current: view === v }))}
+        />
+        {canWrite && <a href={`/app/crm?${new URLSearchParams({ ...Object.fromEntries(Object.entries(sp).filter(([k, x]) => x && k !== "assignee")), ...(mineOnly ? {} : { assignee: "me" }) })}`} className="text-sm font-medium text-brand-700 hover:underline">{mineOnly ? "Ver de todos" : "Só os meus leads"}</a>}
+      </div>
+      <FilterBar action="/app/crm" hidden={{ view, assignee: sp.assignee }} clearHref={`/app/crm?view=${view}`} active={!!(sp.q || sp.stageId || sp.source)}>
+        <FilterField label="Buscar" wide><SearchInput defaultValue={sp.q} placeholder="Nome, empresa, e-mail ou cidade" /></FilterField>
+        <FilterField label="Etapa">
+          <Select name="stageId" defaultValue={sp.stageId ?? ""}>
+            <option value="">Todas as etapas</option>
+            {stages.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </Select>
+        </FilterField>
+        <FilterField label="Origem">
+          <Select name="source" defaultValue={sp.source ?? ""}>
+            <option value="">Todas as origens</option>
+            {Object.entries(LEAD_SOURCES).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </Select>
+        </FilterField>
+      </FilterBar>
 
       {(view === "kanban" ? leads.length === 0 : page?.total === 0) ? (
         <EmptyState title="Nenhum lead encontrado" description="Leads chegam pelo formulário de estudo de viabilidade do site ou podem ser cadastrados manualmente." action={canWrite && <ButtonLink href="/app/crm/novo">Cadastrar lead</ButtonLink>} />
