@@ -1,4 +1,5 @@
 import { AppError } from "./errors";
+import { XLSX_CONTENT_TYPE } from "@/lib/xlsx";
 
 /** Converte AppError em resposta JSON com status HTTP; demais erros seguem para o tratador do Next. */
 export function errorResponse(e: unknown) {
@@ -9,4 +10,12 @@ export function errorResponse(e: unknown) {
 
 export function csvResponse({ filename, content }: { filename: string; content: string }) {
   return new Response(content, { headers: { "Content-Type": "text/csv; charset=utf-8", "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store" } });
+}
+
+/** Download de exportação: CSV (texto) ou Excel (.xlsx, binário). */
+export function exportResponse({ filename, content }: { filename: string; content: string | Buffer }) {
+  if (typeof content === "string") return csvResponse({ filename, content });
+  return new Response(new Uint8Array(content), {
+    headers: { "Content-Type": XLSX_CONTENT_TYPE, "Content-Disposition": `attachment; filename="${filename}"`, "Cache-Control": "no-store", "X-Content-Type-Options": "nosniff" },
+  });
 }

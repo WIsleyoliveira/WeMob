@@ -3,7 +3,7 @@ import { db } from "@/server/db";
 import { createSite, createStation } from "@/server/modules/stations/service";
 import { createAmendment, createContract, decideContractVersion } from "@/server/modules/contracts/service";
 import { previewClosing, requestClosing } from "@/server/modules/finance/closing";
-import { exportStatementCsv } from "@/server/modules/finance/statement";
+import { exportStatement, exportStatementCsv } from "@/server/modules/finance/statement";
 import { createEntry, createTaxRule } from "@/server/modules/finance/entries";
 import { getPublicTerms } from "@/server/modules/commercial/service";
 import { retireLegacy14Models } from "@/server/bootstrap";
@@ -135,6 +135,30 @@ describe("fechamento com participação 30/70", () => {
     expect(header).toContain("modelo,participacao_wemob,parte_posto,tarifas_gateway,tarifas_sem_responsavel");
     // proporcional: tarifa 3,00 → WeMob 0,90 / posto 2,10; posto 70,00 − 2,10 = 67,90; WeMob 30,00 − 0,90 = 29,10
     expect(row).toContain('"67.90","29.10","participacao_bruto","30.00","70.00","3.00","0.00"');
+  });
+});
+
+describe("exportação em Excel nativo", () => {
+  it("demonstrativo .xlsx: valores como número, cabeçalhos legíveis, exportação auditada com o formato", async () => {
+    const s = await setup();
+    await approved(s, s.p2.id, s.site2.id, share({ gatewayFeeBearer: "PARTNER" }));
+    await revenue(s.st2.id, "100.00", { fee: "3.00" });
+    const r = await exportStatement(s.fin.ctx, PERIOD, "xlsx");
+    expect(r.filename).toBe("demonstrativo-2026-09-previa.xlsx");
+    const buf = r.content as Buffer;
+    expect(Buffer.isBuffer(buf)).toBe(true);
+    expect(buf.subarray(0, 4).toString("hex")).toBe("504b0304"); // ZIP
+    const sheet = buf.toString("utf8"); // partes sem compressão: o XML é legível no próprio arquivo
+    expect(sheet).toContain("Participação WeMob (R$)");
+    expect(sheet).toMatch(/<c r="T2" s="2"><v>30<\/v><\/c>/); // participação WeMob 30,00 como número
+    expect(sheet).toMatch(/<c r="Q2" s="2"><v>67<\/v><\/c>/); // repasse ao posto: 70,00 − 3,00 de tarifa
+    expect(await db.auditEvent.findFirst({ where: { action: "finance.statement_exported" }, orderBy: { createdAt: "desc" } })).toMatchObject({ data: expect.objectContaining({ format: "xlsx" }) });
+  });
+
+  it("exportar exige finance:export (comercial não exporta)", async () => {
+    const s = await setup();
+    const commercial = await createUser(s.op.id, "commercial");
+    await expect(exportStatement(commercial.ctx, PERIOD, "xlsx")).rejects.toMatchObject({ code: "FORBIDDEN" });
   });
 });
 

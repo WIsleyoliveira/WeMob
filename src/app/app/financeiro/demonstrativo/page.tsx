@@ -26,7 +26,7 @@ export default async function DemonstrativoPage({ searchParams }: { searchParams
       <PageHeader
         title={`Demonstrativo ${period}`}
         description="Bruto, deduções e líquido; repasses provisionados × efetivamente pagos. Período aberto mostra prévia não registrada."
-        actions={ctx.permissions.has("finance:export") && <a className="text-sm font-medium text-brand-700 hover:underline" href={`/api/financeiro/exportar?periodo=${period}`}>Exportar CSV</a>}
+        actions={ctx.permissions.has("finance:export") && <span className="flex gap-3"><a className="text-sm font-medium text-brand-700 hover:underline" href={`/api/financeiro/exportar?periodo=${period}&formato=xlsx`}>Exportar Excel</a><a className="text-sm font-medium text-brand-700 hover:underline" href={`/api/financeiro/exportar?periodo=${period}`}>CSV</a></span>}
       />
       <form method="get" className="mb-6 flex flex-wrap items-end gap-3">
         <label className="text-sm text-navy-700">Período <Input type="month" name="periodo" defaultValue={period} className="mt-1 w-44" /></label>

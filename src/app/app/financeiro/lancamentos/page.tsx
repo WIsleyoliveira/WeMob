@@ -28,7 +28,7 @@ export default async function LancamentosPage({ searchParams }: { searchParams: 
       <PageHeader
         title="Contas a pagar e receber"
         description="Provisionado = em aberto. Baixado = pagamento/recebimento já feito fora da plataforma e registrado aqui. Períodos fechados não aceitam alterações."
-        actions={ctx.permissions.has("finance:export") && <a className="text-sm font-medium text-brand-700 hover:underline" href={`/api/financeiro/exportar?${qs}`}>Exportar CSV</a>}
+        actions={ctx.permissions.has("finance:export") && <span className="flex gap-3"><a className="text-sm font-medium text-brand-700 hover:underline" href={`/api/financeiro/exportar?${qs}&formato=xlsx`}>Exportar Excel</a><a className="text-sm font-medium text-brand-700 hover:underline" href={`/api/financeiro/exportar?${qs}`}>CSV</a></span>}
       />
       <form className="mb-6 flex flex-wrap items-end gap-3" method="get">
         <label className="text-sm text-navy-700">Competência <Input type="month" name="competencia" defaultValue={filter.competence} className="mt-1 w-44" /></label>

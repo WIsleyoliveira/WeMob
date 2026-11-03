@@ -10,7 +10,7 @@ import { versionEffectiveAt } from "@/domain/finance/contracts";
 import { assertPeriod } from "@/domain/finance/period";
 import { totals } from "@/domain/finance/settlement";
 import type { ClosingResult } from "@/server/modules/finance/closing";
-import { repasseStatus, statementLinesCsv } from "@/server/modules/finance/statement";
+import { repasseStatus, statementLinesCsv, statementLinesXlsx, type ExportFormat } from "@/server/modules/finance/statement";
 import { operationalOverview } from "@/server/modules/stations/service";
 
 function requirePartner(ctx: AuthContext | null): asserts ctx is AuthContext {
@@ -67,11 +67,18 @@ export async function partnerIndicators(ctx: AuthContext | null) {
 }
 
 export async function exportPartnerStatementCsv(ctx: AuthContext | null, period: string) {
+  const r = await exportPartnerStatement(ctx, period, "csv");
+  return { filename: r.filename, content: r.content as string };
+}
+
+/** Extrato do PRÓPRIO parceiro (só as linhas dele), em CSV ou Excel. */
+export async function exportPartnerStatement(ctx: AuthContext | null, period: string, format: ExportFormat) {
   requirePartner(ctx);
   assertPeriod(period);
   const s = (await partnerStatements(ctx)).find((x) => x.period === period);
-  await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "partner.statement_exported", entityType: "PeriodClosing", entityId: s?.closingId ?? null, data: { period, rows: s?.lines.length ?? 0 } });
-  return { filename: `extrato-${period}.csv`, content: statementLinesCsv(period, "fechado", s?.lines ?? []) };
+  await audit({ organizationId: ctx.organizationId, actorUserId: ctx.userId, action: "partner.statement_exported", entityType: "PeriodClosing", entityId: s?.closingId ?? null, data: { period, rows: s?.lines.length ?? 0, format } });
+  const lines = s?.lines ?? [];
+  return { filename: `extrato-${period}.${format}`, content: format === "xlsx" ? statementLinesXlsx(period, "fechado", lines) : statementLinesCsv(period, "fechado", lines) };
 }
 
 /**

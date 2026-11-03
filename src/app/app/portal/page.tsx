@@ -49,7 +49,7 @@ export default async function PortalPage() {
           <CardHeader
             title={`Competência ${s.period}`}
             description={`Aprovado em ${s.approvedAt ? dateTime(s.approvedAt) : "—"} · seu repasse ${brl(s.totals.partnerShare)} · provisionado ${brl(s.provisioned)} · pago ${brl(s.paid)}`}
-            actions={<a className="text-sm font-medium text-brand-700 hover:underline" href={`/api/portal/extrato?periodo=${s.period}`}>Baixar CSV</a>}
+            actions={<span className="flex gap-3"><a className="text-sm font-medium text-brand-700 hover:underline" href={`/api/portal/extrato?periodo=${s.period}&formato=xlsx`}>Baixar Excel</a><a className="text-sm font-medium text-brand-700 hover:underline" href={`/api/portal/extrato?periodo=${s.period}`}>CSV</a></span>}
           />
           <SettlementTable lines={s.lines} />
           {(s.repasses.length > 0 || s.adjustments.length > 0) && (
