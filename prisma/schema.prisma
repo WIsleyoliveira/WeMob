@@ -266,6 +266,14 @@ enum FeeBase {
   GROSS_NET_OF_PAYMENT_FEES // bruto menos taxa de sistema/gateway
 }
 
+/// Quem suporta as tarifas reais do gateway no modelo de participação sobre o bruto. PENDING_DECISION bloqueia a aprovação do fechamento.
+enum GatewayFeeBearer {
+  PENDING_DECISION // contrato ainda não define (decisão da WAPE)
+  WEMOB // descontadas da participação da WeMob
+  PARTNER // descontadas da parte do posto
+  PROPORTIONAL // rateadas na proporção da participação
+}
+
 enum LossTreatment {
   SHARE_MONTHLY // prejuízo do mês é rateado e aportado pelas partes no mesmo mês
   CARRY_FORWARD // prejuízo acumula e é compensado antes de novas distribuições
@@ -312,6 +320,10 @@ model CommercialModelVersion {
   platformFeeIncludesGateway Boolean            @default(true)
   /// Como prejuízos mensais afetam a partilha (base = resultado operacional, apurado mensalmente).
   lossTreatment              LossTreatment      @default(SHARE_MONTHLY)
+  /// Participação da WeMob sobre o faturamento bruto elegível (0.30 = 30%). Preenchido = modelo de participação
+  /// (posto fica com o restante do bruto); royalty e taxa de sistema não se aplicam.
+  revenueShareRate           Decimal?           @db.Decimal(9, 6)
+  gatewayFeeBearer           GatewayFeeBearer   @default(PENDING_DECISION)
   taxRate                    Decimal            @db.Decimal(9, 6)
   taxBase                    FeeBase
   maintenancePolicy          String // texto contratual (ex.: "conforme contrato")
@@ -1111,6 +1123,10 @@ model ContractVersion {
   partnerShareRate         Decimal                 @db.Decimal(9, 6)
   partnerShareBase         SettlementBase
   lossTreatment            LossTreatment           @default(SHARE_MONTHLY)
+  /// Participação da WeMob sobre o faturamento bruto elegível (0.30 = 30%). Preenchido = modelo de participação:
+  /// o posto recebe o restante do bruto; royalty/taxa de sistema ficam em 0.
+  revenueShareRate         Decimal?                @db.Decimal(9, 6)
+  gatewayFeeBearer         GatewayFeeBearer        @default(PENDING_DECISION)
   paymentTermDays          Int                     @default(10)
   conditions               String
   /// Motivo da versão/aditivo (obrigatório).

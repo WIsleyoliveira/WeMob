@@ -45,6 +45,14 @@ export default async function DemonstrativoPage({ searchParams }: { searchParams
               ))}
             </tbody>
           </Table>
+
+          {Number(t.wemobShare ?? 0) !== 0 || Number(t.partnerGrossShare ?? 0) !== 0 ? (
+            <div className="border-t border-navy-100 px-5 py-3 text-sm">
+              <p className="font-medium text-navy-900">Contratos de participação sobre o bruto (30/70)</p>
+              <p className="mt-1 text-navy-700">Participação WeMob <b className="tabular">{brl(t.wemobShare)}</b> · parte dos postos <b className="tabular">{brl(t.partnerGrossShare)}</b>{Number(t.gatewayFeesUnallocated ?? 0) !== 0 && <span className="text-amber-700"> · tarifas do gateway sem responsável {brl(t.gatewayFeesUnallocated)}</span>}</p>
+              <p className="mt-1 text-xs text-navy-500">Nesses contratos tributos e custos não reduzem as partes; a cascata acima soma linhas dos dois modelos, por isso “resultado da operadora” não é a diferença das linhas anteriores.</p>
+            </div>
+          ) : null}
         </Card>
       )}
       {view === "parceiro" && (

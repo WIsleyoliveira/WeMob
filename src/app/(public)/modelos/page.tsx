@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import { getPublicTerms } from "@/server/modules/commercial/service";
-import { FEE_BASE_LABEL } from "@/domain/commercial/types";
+import { FEE_BASE_LABEL, isRevenueShare } from "@/domain/commercial/types";
 import { brl, date, pct } from "@/lib/format";
 import { ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 
 export const dynamic = "force-dynamic";
-export const metadata: Metadata = { title: "Modelos de investimento", description: "Compare a compra integral e a parceria 50/50 para eletropostos Sansol Mob." };
+export const metadata: Metadata = { title: "Modelos de investimento", description: "Condições comerciais vigentes para eletropostos da rede: participação sobre o faturamento bruto." };
 
 export default async function ModelosPage() {
   const models = await getPublicTerms();
@@ -27,8 +27,17 @@ export default async function ModelosPage() {
                 <dl className="mt-5 grid grid-cols-2 gap-4 text-sm">
                   <div><dt className="text-navy-500">Investimento do cliente</dt><dd className="tabular font-display text-lg font-semibold">{brl(t.referenceInvestment * t.partnerCapitalShare)}</dd></div>
                   <div><dt className="text-navy-500">Resultado das recargas</dt><dd className="font-display text-lg font-semibold">{pct(t.partnerResultShare, 0)} do cliente</dd></div>
-                  <div><dt className="text-navy-500">Royalty da marca</dt><dd className="font-semibold">{pct(t.royaltyRate, 0)} <span className="font-normal text-navy-500">s/ {FEE_BASE_LABEL[t.royaltyBase].toLowerCase()}</span></dd></div>
-                  <div><dt className="text-navy-500">Sistema + gateway</dt><dd className="font-semibold">{pct(t.platformFeeRate, 0)} <span className="font-normal text-navy-500">por transação</span></dd></div>
+                  {isRevenueShare(t) ? (
+                    <>
+                      <div><dt className="text-navy-500">Participação da rede</dt><dd className="font-semibold">{pct(t.revenueShareRate!, 0)} <span className="font-normal text-navy-500">do faturamento bruto mensal</span></dd></div>
+                      <div><dt className="text-navy-500">Parte do posto</dt><dd className="font-semibold">{pct(1 - t.revenueShareRate!, 0)} <span className="font-normal text-navy-500">do faturamento bruto mensal</span></dd></div>
+                    </>
+                  ) : (
+                    <>
+                      <div><dt className="text-navy-500">Royalty da marca</dt><dd className="font-semibold">{pct(t.royaltyRate, 0)} <span className="font-normal text-navy-500">s/ {FEE_BASE_LABEL[t.royaltyBase].toLowerCase()}</span></dd></div>
+                      <div><dt className="text-navy-500">Sistema + gateway</dt><dd className="font-semibold">{pct(t.platformFeeRate, 0)} <span className="font-normal text-navy-500">por transação</span></dd></div>
+                    </>
+                  )}
                   <div><dt className="text-navy-500">Tributos estimados</dt><dd className="font-semibold">até {pct(t.taxRate, 0)} <span className="font-normal text-navy-500">s/ bruto</span></dd></div>
                   <div><dt className="text-navy-500">Manutenção</dt><dd className="font-semibold">{maintenancePolicy}</dd></div>
                 </dl>

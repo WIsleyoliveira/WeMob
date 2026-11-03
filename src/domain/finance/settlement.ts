@@ -17,6 +17,15 @@
  *   já repassado via split = Σ splits LIQUIDADOS (DONE) do parceiro no período (Asaas)
  *   saldo do repasse  = repasse − já repassado via split   (positivo: a pagar; negativo: a receber do parceiro)
  *   tarifas do gateway = Σ (valor − líquido) informado pelo gateway — informativo: cobertas pela taxa de sistema
+ *
+ * Modelo de PARTICIPAÇÃO sobre o bruto (contrato com `revenueShareRate`, ex.: 30/70 — regra oficial WAPE de 2026-11):
+ *   participação WeMob = bruto elegível × taxa (arredondada); parte do posto = bruto − participação WeMob
+ *     (pelo resto: as duas partes somam exatamente o bruto, sem centavo criado ou perdido)
+ *   tarifas reais do gateway: descontadas conforme `gatewayFeeBearer` (WeMob, posto ou proporcional);
+ *     PENDING_DECISION = não alocadas (o fechamento não pode ser aprovado com tarifas não alocadas)
+ *   tributos e despesas da unidade: exibidos À PARTE e NÃO descontados de nenhuma das partes (a participação não é lucro)
+ *   royalty, taxa de sistema e compensação de prejuízo não se aplicam
+ *   bruto elegível = capturado − estornado (nunca valor só autorizado ou estornado depois): o que não foi recebido não é repartido
  * Cada linha é arredondada a 2 casas (ROUND_HALF_UP) e os totais somam as linhas arredondadas.
  * Resultado gerencial: não substitui escrituração contábil nem apuração fiscal.
  */
@@ -25,8 +34,24 @@ import Decimal from "decimal.js";
 /**
  * 1.1.0: receita de recarga lançada manualmente passa a compor "receita de recarga" (antes: "outras receitas").
  * 1.2.0: split liquidado no gateway é descontado do repasse (saldo do repasse) e tarifas reais do gateway são exibidas.
+ * 1.3.0: modelo de participação sobre o bruto (30/70) com alocação explícita das tarifas do gateway.
  */
-export const SETTLEMENT_ENGINE_VERSION = "settlement-1.2.0";
+export const SETTLEMENT_ENGINE_VERSION = "settlement-1.3.0";
+
+export type GatewayFeeBearer = "PENDING_DECISION" | "WEMOB" | "PARTNER" | "PROPORTIONAL";
+export const GATEWAY_FEE_BEARER_LABEL: Record<GatewayFeeBearer, string> = {
+  PENDING_DECISION: "A definir (decisão da WAPE)",
+  WEMOB: "WeMob (desconta da participação da WeMob)",
+  PARTNER: "Posto (desconta da parte do posto)",
+  PROPORTIONAL: "Proporcional à participação",
+};
+
+/** Divisão do bruto no modelo de participação, com conservação de centavos (as partes somam o bruto). */
+export function splitGross(gross: Decimal.Value, wemobRate: Decimal.Value) {
+  const g = r2(D(gross));
+  const wemob = r2(g.times(wemobRate));
+  return { gross: g.toFixed(2), wemob: wemob.toFixed(2), partner: g.minus(wemob).toFixed(2) };
+}
 
 export type Base = "GROSS_REVENUE" | "NET_REVENUE" | "OPERATING_RESULT";
 export type LossTreatment = "SHARE_MONTHLY" | "CARRY_FORWARD";
@@ -43,6 +68,9 @@ export interface ContractTerms {
   partnerShareBase: Base;
   lossTreatment: LossTreatment;
   paymentTermDays: number;
+  /** Modelo de participação: fração da WeMob sobre o bruto elegível. Ausente/nulo = modelo royalty + taxa + repasse. */
+  revenueShareRate?: string | null;
+  gatewayFeeBearer?: GatewayFeeBearer;
 }
 
 export interface SiteInput {
@@ -89,6 +117,15 @@ export interface SiteLine {
   partnerSplitReceived: string;
   partnerBalance: string;
   gatewayFees: string;
+  /** Modelo de participação (ausente em snapshots anteriores à 1.3.0). */
+  shareModel?: "REVENUE_SHARE" | "LEGACY";
+  /** Participação da WeMob sobre o bruto, ANTES de tarifas, tributos e custos. */
+  wemobShare?: string;
+  /** Parte do posto sobre o bruto, antes das tarifas que couberem a ele. */
+  partnerGrossShare?: string;
+  gatewayFeesWemob?: string;
+  gatewayFeesPartner?: string;
+  gatewayFeesUnallocated?: string;
 }
 
 const D = (v: Decimal.Value) => new Decimal(v);
@@ -98,6 +135,7 @@ const sum = (xs: Decimal.Value[]) => xs.reduce<Decimal>((a, x) => a.plus(x), D(0
 
 export function computeSiteLine(site: SiteInput, taxRules: { name: string; rate: string }[]): SiteLine {
   const c = site.contract;
+  if (c?.revenueShareRate !== undefined && c.revenueShareRate !== null && site.partnerOrganizationId) return revenueShareLine(site, c, taxRules);
   const manualCharging = site.manualRevenue.filter((x) => x.category === "CHARGING_REVENUE").map((x) => x.amount);
   const chargingRevenue = r2(sum([...site.stations.map((s) => s.chargingRevenue), ...manualCharging]));
   const otherRevenue = r2(sum(site.manualRevenue.filter((x) => x.category !== "CHARGING_REVENUE").map((x) => x.amount)));
@@ -158,7 +196,71 @@ export function computeSiteLine(site: SiteInput, taxRules: { name: string; rate:
   };
 }
 
-const TOTAL_KEYS = ["chargingRevenue", "otherRevenue", "gross", "taxTotal", "platformFee", "netRevenue", "royalty", "expenses", "operatingResult", "partnerShare", "operatorResult", "partnerSplitReceived", "partnerBalance", "gatewayFees"] as const;
+/** Linha no modelo de participação sobre o bruto (ver cabeçalho). */
+function revenueShareLine(site: SiteInput, c: ContractTerms, taxRules: { name: string; rate: string }[]): SiteLine {
+  const manualCharging = site.manualRevenue.filter((x) => x.category === "CHARGING_REVENUE").map((x) => x.amount);
+  const chargingRevenue = r2(sum([...site.stations.map((s) => s.chargingRevenue), ...manualCharging]));
+  const otherRevenue = r2(sum(site.manualRevenue.filter((x) => x.category !== "CHARGING_REVENUE").map((x) => x.amount)));
+  const gross = chargingRevenue.plus(otherRevenue);
+  const split = splitGross(gross, c.revenueShareRate!);
+  const fees = r2(D(site.gatewayFees ?? 0));
+  const bearer = c.gatewayFeeBearer ?? "PENDING_DECISION";
+  let feeWemob = D(0);
+  let feePartner = D(0);
+  if (bearer === "WEMOB") feeWemob = fees;
+  else if (bearer === "PARTNER") feePartner = fees;
+  else if (bearer === "PROPORTIONAL") {
+    feeWemob = r2(fees.times(c.revenueShareRate!));
+    feePartner = fees.minus(feeWemob);
+  }
+  const unallocated = fees.minus(feeWemob).minus(feePartner);
+  const taxes = taxRules.map((t) => ({ name: t.name, rate: t.rate, amount: s2(gross.times(t.rate)) }));
+  const expensesByCategory: Record<string, Decimal> = {};
+  for (const e of site.expenses) expensesByCategory[e.category] = (expensesByCategory[e.category] ?? D(0)).plus(e.amount);
+  const expenses = r2(sum(Object.values(expensesByCategory)));
+  const partnerShare = D(split.partner).minus(feePartner);
+  const wemobAfterFees = D(split.wemob).minus(feeWemob);
+  const taxTotal = sum(taxes.map((t) => t.amount));
+  // Informativos (unidade como um todo): não alteram as partes de ninguém.
+  const netRevenue = gross.minus(taxTotal).minus(fees);
+  return {
+    siteId: site.siteId,
+    siteName: site.siteName,
+    partnerOrganizationId: site.partnerOrganizationId,
+    partnerName: site.partnerName,
+    contract: c,
+    stations: site.stations.map((s) => ({ ...s, chargingRevenue: s2(D(s.chargingRevenue)) })),
+    chargingRevenue: s2(chargingRevenue),
+    otherRevenue: s2(otherRevenue),
+    gross: split.gross,
+    taxes,
+    taxTotal: s2(taxTotal),
+    // Campos do modelo antigo sem efeito aqui: taxa de sistema e royalty não existem na participação.
+    platformFee: "0.00",
+    netRevenue: s2(netRevenue),
+    royalty: "0.00",
+    expensesByCategory: Object.fromEntries(Object.entries(expensesByCategory).map(([k, v]) => [k, s2(v)])),
+    expenses: s2(expenses),
+    operatingResult: s2(netRevenue.minus(expenses)),
+    lossCarriedIn: "0.00",
+    partnerShareBaseValue: split.gross,
+    partnerShare: s2(partnerShare),
+    lossCarriedOut: "0.00",
+    // Resultado da operadora = participação da WeMob menos as tarifas que lhe cabem (tributos e custos à parte).
+    operatorResult: s2(wemobAfterFees),
+    partnerSplitReceived: s2(D(site.splitAlreadyTransferred ?? 0)),
+    partnerBalance: s2(partnerShare.minus(site.splitAlreadyTransferred ?? 0)),
+    gatewayFees: s2(fees),
+    shareModel: "REVENUE_SHARE",
+    wemobShare: split.wemob,
+    partnerGrossShare: split.partner,
+    gatewayFeesWemob: s2(feeWemob),
+    gatewayFeesPartner: s2(feePartner),
+    gatewayFeesUnallocated: s2(unallocated),
+  };
+}
+
+const TOTAL_KEYS = ["chargingRevenue", "otherRevenue", "gross", "taxTotal", "platformFee", "netRevenue", "royalty", "expenses", "operatingResult", "partnerShare", "operatorResult", "partnerSplitReceived", "partnerBalance", "gatewayFees", "wemobShare", "partnerGrossShare", "gatewayFeesUnallocated"] as const;
 export type Totals = Record<(typeof TOTAL_KEYS)[number], string>;
 
 /** Snapshots anteriores à 1.2.0 não têm os campos de split/tarifa: tratados como zero/repasse integral. */

@@ -6,7 +6,8 @@ import { Card } from "@/components/ui/card";
 import { Table } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { EmptyState } from "@/components/ui/empty-state";
-import { date, pct } from "@/lib/format";
+import { date } from "@/lib/format";
+import { describeTerms } from "@/domain/finance/contracts";
 
 export const dynamic = "force-dynamic";
 
@@ -31,7 +32,7 @@ export default async function ContratosPage() {
                   <td>{c.partnerOrganization.name}</td>
                   <td className="text-xs">{c.sites.map((s) => s.site.name).join(", ")}</td>
                   <td><Badge tone={c.status === "ACTIVE" ? "green" : c.status === "DRAFT" ? "amber" : "neutral"}>{CONTRACT_STATUS_LABEL[c.status]}</Badge></td>
-                  <td className="text-xs">{c.current ? <>v{c.current.version} desde {date(c.current.effectiveFrom)} · parceiro {pct(c.current.partnerShareRate.toString())} · royalty {pct(c.current.royaltyRate.toString())}</> : "Nenhuma versão aprovada vigente"}</td>
+                  <td className="text-xs">{c.current ? <>v{c.current.version} desde {date(c.current.effectiveFrom)} · {describeTerms(c.current)}</> : "Nenhuma versão aprovada vigente"}</td>
                   <td className="text-xs">{c.pending ? <Badge tone="amber">v{c.pending.version} aguardando aprovação</Badge> : "—"}</td>
                 </tr>
               ))}

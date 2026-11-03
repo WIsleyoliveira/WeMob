@@ -18,10 +18,15 @@ const pct = (f: FormData, k: string) => {
 const day = (f: FormData, k: string) => (s(f, k) ? `${s(f, k)}T00:00:00-03:00` : undefined);
 
 /** Condições digitadas em % na tela → frações no serviço. */
-const terms = (f: FormData) => ({
+const terms = (f: FormData) => {
+  // Modelo de participação (padrão): só a participação e o responsável pelas tarifas; o antigo só com escolha explícita.
+  const legacy = f.get("shareModel") === "LEGACY";
+  return {
   effectiveFrom: day(f, "effectiveFrom"),
   effectiveTo: day(f, "effectiveTo"),
   commercialModelVersionId: s(f, "commercialModelVersionId"),
+  revenueShareRate: legacy ? undefined : pct(f, "revenueShareRate") ?? 0,
+  gatewayFeeBearer: s(f, "gatewayFeeBearer"),
   royaltyRate: pct(f, "royaltyRate"),
   royaltyBase: s(f, "royaltyBase"),
   platformFeeRate: pct(f, "platformFeeRate"),
@@ -31,7 +36,8 @@ const terms = (f: FormData) => ({
   paymentTermDays: s(f, "paymentTermDays"),
   conditions: s(f, "conditions"),
   reason: s(f, "reason"),
-});
+  };
+};
 
 export async function createContractAction(_p: ActionState, f: FormData): Promise<ActionState> {
   const ctx = await getCurrentContext();

@@ -14,14 +14,15 @@ export async function createDraftVersionAction(_prev: ActionState, f: FormData):
       await createDraftVersion(ctx, String(f.get("modelId")), {
         referenceInvestment: n(f.get("referenceInvestment")),
         partnerCapitalShare: pctToFraction(f.get("partnerCapitalShare")),
-        partnerResultShare: pctToFraction(f.get("partnerResultShare")),
-        royaltyRate: pctToFraction(f.get("royaltyRate")),
-        royaltyBase: f.get("royaltyBase"),
-        platformFeeRate: pctToFraction(f.get("platformFeeRate")),
+        partnerResultShare: f.get("revenueShareRate") ? 1 : pctToFraction(f.get("partnerResultShare")),
+        ...(f.get("revenueShareRate")
+          ? // Participação 30/70: a participação é a "taxa de sistema" do cálculo, sem royalty e com gateway à parte.
+            { revenueShareRate: pctToFraction(f.get("revenueShareRate")), royaltyRate: 0, royaltyBase: "GROSS_REVENUE", platformFeeRate: pctToFraction(f.get("revenueShareRate")) }
+          : { royaltyRate: pctToFraction(f.get("royaltyRate")), royaltyBase: f.get("royaltyBase"), platformFeeRate: pctToFraction(f.get("platformFeeRate")) }),
         platformFeeBase: "GROSS_REVENUE",
         taxRate: pctToFraction(f.get("taxRate")),
         taxBase: f.get("taxBase"),
-        platformFeeIncludesGateway: f.get("platformFeeIncludesGateway") === "on",
+        platformFeeIncludesGateway: f.get("revenueShareRate") ? false : f.get("platformFeeIncludesGateway") === "on",
         lossTreatment: f.get("lossTreatment") ?? "SHARE_MONTHLY",
         maintenancePolicy: f.get("maintenancePolicy"),
         sourceNote: f.get("sourceNote") || undefined,

@@ -6,7 +6,7 @@ import { randomBytes } from "node:crypto";
 import { db } from "@/server/db";
 import { hashPassword } from "@/server/auth/password";
 import { login, resolveSession } from "@/server/auth/session";
-import { ensureOperator, ensureReferenceModels, ensureStages, ensureSystemRoles } from "@/server/bootstrap";
+import { ensureOperator, ensureReferenceModels, ensureStages, ensureSystemRoles, retireLegacy14Models } from "@/server/bootstrap";
 import { addTariff, createSite, createStation, upsertConnector } from "@/server/modules/stations/service";
 import { signupDriver } from "@/server/drivers/auth";
 import { sandboxProvider } from "@/server/payments/sandbox";
@@ -22,6 +22,7 @@ export async function seedE2E() {
   const op = await ensureOperator(db);
   await ensureStages(db, op.id);
   await ensureReferenceModels(db, op.id);
+  await retireLegacy14Models(db, op.id); // como o seed real: a taxa de 14% foi substituída pela participação 30/70
   await ensureDefaultAlertRules(db, op.id);
   await db.alertRule.updateMany({ where: { operatorId: op.id }, data: { includeNonProduction: true } });
 

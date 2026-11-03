@@ -53,7 +53,7 @@ export default async function ClosingPage({ params }: { params: Promise<{ id: st
         </Card>
       )}
       <Card className="mb-6">
-        <CardHeader title="Resultado" description={`Bruto ${brl(t.gross)} · Royalties ${brl(t.royalty)} · Repasses ${brl(t.partnerShare)} · Resultado da rede ${brl(t.networkResult)}`} />
+        <CardHeader title="Resultado" description={`Bruto ${brl(t.gross)} · Participação WeMob ${brl(t.wemobShare ?? "0")} · Royalties ${brl(t.royalty)} · Repasses ${brl(t.partnerShare)} · Resultado da rede ${brl(t.networkResult)}`} />
         <SettlementTable lines={c.result.lines} showStations />
       </Card>
       {c.entries.length > 0 && (

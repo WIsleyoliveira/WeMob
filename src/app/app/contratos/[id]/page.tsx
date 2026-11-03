@@ -10,6 +10,7 @@ import { Alert } from "@/components/ui/alert";
 import { Field, Input, Select } from "@/components/ui/field";
 import { ActionForm } from "@/components/app/action-form";
 import { Attachments } from "@/components/app/attachments";
+import { GATEWAY_FEE_BEARER_LABEL } from "@/domain/finance/settlement";
 import { ContractTermsFields } from "@/components/app/contract-terms-fields";
 import { date, dateTime, pct } from "@/lib/format";
 
@@ -42,10 +43,20 @@ export default async function ContratoPage({ params }: { params: Promise<{ id: s
               />
               <CardBody className="space-y-3 text-sm">
                 <dl className="grid gap-2 sm:grid-cols-3">
-                  <div><dt className="text-xs text-navy-500">Royalty</dt><dd>{pct(v.royaltyRate.toString(), 2)} s/ {BASE_LABEL[v.royaltyBase].toLowerCase()}</dd></div>
-                  <div><dt className="text-xs text-navy-500">Taxa de sistema</dt><dd>{pct(v.platformFeeRate.toString(), 2)} s/ bruto (inclui gateway)</dd></div>
-                  <div><dt className="text-xs text-navy-500">Parceiro</dt><dd>{pct(v.partnerShareRate.toString(), 2)} s/ {BASE_LABEL[v.partnerShareBase].toLowerCase()}</dd></div>
-                  <div><dt className="text-xs text-navy-500">Prejuízo</dt><dd>{LOSS_LABEL[v.lossTreatment]}</dd></div>
+                  {v.revenueShareRate !== null ? (
+                    <>
+                      <div><dt className="text-xs text-navy-500">Participação WeMob</dt><dd>{pct(v.revenueShareRate.toString(), 2)} do faturamento bruto</dd></div>
+                      <div><dt className="text-xs text-navy-500">Posto</dt><dd>{pct(v.partnerShareRate.toString(), 2)} do faturamento bruto</dd></div>
+                      <div><dt className="text-xs text-navy-500">Tarifas do gateway</dt><dd className={v.gatewayFeeBearer === "PENDING_DECISION" ? "text-amber-700" : undefined}>{GATEWAY_FEE_BEARER_LABEL[v.gatewayFeeBearer]}</dd></div>
+                    </>
+                  ) : (
+                    <>
+                      <div><dt className="text-xs text-navy-500">Royalty</dt><dd>{pct(v.royaltyRate.toString(), 2)} s/ {BASE_LABEL[v.royaltyBase].toLowerCase()}</dd></div>
+                      <div><dt className="text-xs text-navy-500">Taxa de sistema (modelo antigo)</dt><dd>{pct(v.platformFeeRate.toString(), 2)} s/ bruto (inclui gateway)</dd></div>
+                      <div><dt className="text-xs text-navy-500">Parceiro</dt><dd>{pct(v.partnerShareRate.toString(), 2)} s/ {BASE_LABEL[v.partnerShareBase].toLowerCase()}</dd></div>
+                      <div><dt className="text-xs text-navy-500">Prejuízo</dt><dd>{LOSS_LABEL[v.lossTreatment]}</dd></div>
+                    </>
+                  )}
                   <div><dt className="text-xs text-navy-500">Prazo do repasse</dt><dd>{v.paymentTermDays} dias após o mês</dd></div>
                   <div><dt className="text-xs text-navy-500">Premissa de origem</dt><dd>{v.commercialModelVersion ? `${v.commercialModelVersion.model.name} v${v.commercialModelVersion.version}` : "—"}</dd></div>
                 </dl>

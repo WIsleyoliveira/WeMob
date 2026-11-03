@@ -20,7 +20,7 @@ const SEGMENTS = [
 
 const FAQ = [
   ["Preciso entender de eletromobilidade para ter um eletroposto?", "Não. A Sansol Mob conduz a análise do local, o projeto, a implantação, a ativação e oferece sistema de gestão, suporte e manutenção conforme o contrato."],
-  ["Qual a diferença entre compra integral e parceria 50/50?", "Na compra integral o investidor aporta a implantação e fica com o resultado das recargas, pagando royalty e as taxas previstas. Na parceria, Sansol Mob e parceiro dividem investimento, custos e resultado líquido. As condições vigentes estão na página de modelos."],
+  ["Como a rede é remunerada?", "Pela participação sobre o faturamento bruto mensal de cada posto: 30% para a rede e 70% para o operador do posto. A participação incide sobre o valor efetivamente recebido (estornos são descontados) e não é lucro — tarifas de pagamento, tributos e custos são tratados à parte, conforme o contrato. As condições vigentes estão na página de modelos."],
   ["Os números do simulador são garantidos?", "Não. O simulador mostra projeções baseadas nas premissas que você informa. O resultado real depende da demanda do local, do preço praticado, do custo de energia, de tributos e das condições do contrato."],
   ["Posso usar energia das usinas Sansol?", "Existe essa possibilidade, sujeita a análise técnica, viabilidade de conexão e condições comerciais específicas, avaliadas no estudo de viabilidade."],
   ["Quanto tempo leva a implantação?", "Depende do local, da infraestrutura elétrica existente e de eventuais aprovações da concessionária. O prazo é definido no projeto técnico."],

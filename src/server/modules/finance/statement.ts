@@ -47,11 +47,11 @@ export async function getStatement(ctx: AuthContext | null, period: string) {
   return { kind: closing ? ("CLOSED" as const) : ("PREVIEW" as const), closing, result, validations, repasses, adjustments, partnerPayment };
 }
 
-const LINE_HEADER = ["periodo", "situacao", "unidade", "parceiro", "contrato", "versao", "receita_recarga", "outras_receitas", "bruto", "tributos", "taxa_sistema", "receita_liquida", "royalty", "custos", "resultado_operacional", "prejuizo_compensado", "repasse_parceiro", "resultado_operadora"];
+const LINE_HEADER = ["periodo", "situacao", "unidade", "parceiro", "contrato", "versao", "receita_recarga", "outras_receitas", "bruto", "tributos", "taxa_sistema", "receita_liquida", "royalty", "custos", "resultado_operacional", "prejuizo_compensado", "repasse_parceiro", "resultado_operadora", "modelo", "participacao_wemob", "parte_posto", "tarifas_gateway", "tarifas_sem_responsavel"];
 
 export function statementLinesCsv(period: string, situation: string, lines: ClosingResult["lines"]) {
   const rows = lines.map((l) =>
-    [period, situation, l.siteName, l.partnerName, l.contract?.contractNumber, l.contract?.version, l.chargingRevenue, l.otherRevenue, l.gross, l.taxTotal, l.platformFee, l.netRevenue, l.royalty, l.expenses, l.operatingResult, l.lossCarriedIn, l.partnerShare, l.operatorResult]
+    [period, situation, l.siteName, l.partnerName, l.contract?.contractNumber, l.contract?.version, l.chargingRevenue, l.otherRevenue, l.gross, l.taxTotal, l.platformFee, l.netRevenue, l.royalty, l.expenses, l.operatingResult, l.lossCarriedIn, l.partnerShare, l.operatorResult, l.shareModel === "REVENUE_SHARE" ? "participacao_bruto" : "antigo", l.wemobShare ?? "", l.partnerGrossShare ?? "", l.gatewayFees ?? "", l.gatewayFeesUnallocated ?? ""]
       .map(csvCell)
       .join(","),
   );

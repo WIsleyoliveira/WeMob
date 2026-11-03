@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import { Table } from "@/components/ui/table";
 import { brl, pct } from "@/lib/format";
-import type { SiteLine } from "@/domain/finance/settlement";
+import { GATEWAY_FEE_BEARER_LABEL, type SiteLine } from "@/domain/finance/settlement";
 
 const BASE = { GROSS_REVENUE: "bruto", NET_REVENUE: "líquida", OPERATING_RESULT: "resultado" } as const;
 
@@ -22,7 +22,7 @@ export function SettlementTable({ lines, showStations = false }: { lines: SiteLi
             <Fragment key={l.siteId}>
               <tr>
                 <td><p className="font-medium text-navy-900">{l.siteName}</p><p className="text-xs text-navy-400">{l.partnerName ?? "Unidade própria"}</p></td>
-                <td className="text-xs">{l.contract ? <>{l.contract.contractNumber} v{l.contract.version}<br />royalty {pct(l.contract.royaltyRate)} s/ {BASE[l.contract.royaltyBase]} · sistema {pct(l.contract.platformFeeRate)} · parceiro {pct(l.contract.partnerShareRate)} s/ {BASE[l.contract.partnerShareBase]}{l.contract.lossTreatment === "CARRY_FORWARD" ? " (compensação)" : ""}</> : "—"}</td>
+                <td className="text-xs">{l.shareModel === "REVENUE_SHARE" && l.contract ? <>{l.contract.contractNumber} v{l.contract.version}<br />participação WeMob {pct(l.contract.revenueShareRate!)} · posto {pct(l.contract.partnerShareRate)} s/ bruto</> : l.contract ? <>{l.contract.contractNumber} v{l.contract.version}<br />royalty {pct(l.contract.royaltyRate)} s/ {BASE[l.contract.royaltyBase]} · sistema {pct(l.contract.platformFeeRate)} · parceiro {pct(l.contract.partnerShareRate)} s/ {BASE[l.contract.partnerShareBase]}{l.contract.lossTreatment === "CARRY_FORWARD" ? " (compensação)" : ""}</> : "—"}</td>
                 <td className="tabular text-right">{brl(l.gross)}</td>
                 <td className="tabular text-right">{brl(l.taxTotal)}</td>
                 <td className="tabular text-right">{brl(l.platformFee)}</td>
@@ -33,6 +33,15 @@ export function SettlementTable({ lines, showStations = false }: { lines: SiteLi
                 <td className="tabular text-right font-medium">{brl(l.partnerShare)}{Number(l.partnerShare) < 0 && <p className="text-xs text-amber-700">aporte do parceiro</p>}{Number(l.lossCarriedOut) > 0 && <p className="text-xs text-amber-700">prejuízo a compensar {brl(l.lossCarriedOut)}</p>}</td>
                 <td className="tabular text-right">{brl(l.operatorResult)}</td>
               </tr>
+              {l.shareModel === "REVENUE_SHARE" && (
+                <tr className="text-xs text-navy-600">
+                  <td colSpan={11} className="pl-8">
+                    ↳ Participação sobre o bruto: WeMob <b className="tabular">{brl(l.wemobShare)}</b> · posto <b className="tabular">{brl(l.partnerGrossShare)}</b>
+                    {" "}· tarifas do gateway {brl(l.gatewayFees)} ({GATEWAY_FEE_BEARER_LABEL[l.contract?.gatewayFeeBearer ?? "PENDING_DECISION"].toLowerCase()}{Number(l.gatewayFeesUnallocated) !== 0 ? <span className="font-semibold text-amber-700"> — {brl(l.gatewayFeesUnallocated)} sem responsável</span> : null})
+                    {" "}· tributos e custos da unidade aparecem à parte e não reduzem nenhuma das partes. A participação não é lucro.
+                  </td>
+                </tr>
+              )}
               {showStations && l.stations.map((s) => (
                 <tr key={`${l.siteId}-${s.stationId}`} className="text-xs text-navy-500">
                   <td colSpan={2} className="pl-8">↳ Estação {s.identity} · {s.paymentCount} pagamento(s)</td>
@@ -51,6 +60,7 @@ export function SettlementTable({ lines, showStations = false }: { lines: SiteLi
           <li>Tributos = Σ (bruto × alíquota vigente). Taxa de sistema = bruto × taxa do contrato (já inclui gateway). Líquida = bruto − tributos − taxa de sistema.</li>
           <li>Royalty = base (bruto ou líquida) × taxa. Resultado = líquida − custos da unidade − royalty.</li>
           <li>Repasse = base (bruto, líquida ou resultado − prejuízo a compensar) × participação. Base negativa: rateio → aporte do parceiro; compensação → repasse zero e prejuízo levado ao mês seguinte.</li>
+          <li>Participação sobre o bruto (contratos 30/70): WeMob = bruto × participação; posto = bruto − parte da WeMob (as partes somam o bruto). Tarifas reais do gateway saem de quem o contrato indicar; tributos e custos ficam à parte. Bruto = capturado − estornado: valor não recebido ou estornado não é repartido.</li>
           <li>Cada linha é arredondada a 2 casas (meio para cima). Dados de teste/simulação nunca entram.</li>
         </ul>
       </details>

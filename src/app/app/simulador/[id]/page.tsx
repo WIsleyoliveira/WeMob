@@ -4,7 +4,7 @@ import { requirePage } from "@/server/auth/current";
 import { getSimulation } from "@/server/modules/commercial/service";
 import { normalizeStoredInput, type ViabilityResult } from "@/domain/viability/engine";
 import { INPUT_LABELS, type Change } from "@/domain/viability/diff";
-import { FEE_BASE_LABEL, LOSS_TREATMENT_LABEL } from "@/domain/commercial/types";
+import { FEE_BASE_LABEL, LOSS_TREATMENT_LABEL, isRevenueShare } from "@/domain/commercial/types";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Table } from "@/components/ui/table";
@@ -47,8 +47,12 @@ export default async function SimulacaoPage({ params }: { params: Promise<{ id: 
   const termsRows: [string, string][] = [
     ["Modelo", `${t.modelName} v${t.version ?? "?"} (${input.versionStatusAtRun === "DRAFT" ? "rascunho no momento do cálculo" : "aprovada"})`],
     ["Aporte / resultado do investidor", `${pct(t.partnerCapitalShare, 0)} / ${pct(t.partnerResultShare, 0)}`],
-    ["Royalty", `${pct(t.royaltyRate)} sobre ${FEE_BASE_LABEL[t.royaltyBase].toLowerCase()}`],
-    ["Taxa de sistema", `${pct(t.platformFeeRate)} sobre ${FEE_BASE_LABEL[t.platformFeeBase].toLowerCase()} — ${t.platformFeeIncludesGateway ? "inclui gateway" : "gateway à parte"}`],
+    ...(isRevenueShare(t)
+      ? ([["Participação WeMob", `${pct(t.revenueShareRate!, 0)} do faturamento bruto (posto: ${pct(1 - t.revenueShareRate!, 0)}) — gateway à parte`]] as [string, string][])
+      : ([
+          ["Royalty", `${pct(t.royaltyRate)} sobre ${FEE_BASE_LABEL[t.royaltyBase].toLowerCase()}`],
+          ["Taxa de sistema", `${pct(t.platformFeeRate)} sobre ${FEE_BASE_LABEL[t.platformFeeBase].toLowerCase()} — ${t.platformFeeIncludesGateway ? "inclui gateway" : "gateway à parte"}`],
+        ] as [string, string][])),
     ["Tributos", `${pct(t.taxRate)} sobre ${FEE_BASE_LABEL[t.taxBase].toLowerCase()}`],
     ["Partilha", `Resultado operacional mensal; ${LOSS_TREATMENT_LABEL[t.lossTreatment].toLowerCase()}`],
   ];

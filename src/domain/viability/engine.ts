@@ -17,7 +17,7 @@
  */
 import Decimal from "decimal.js";
 import { z } from "zod";
-import { commercialTermsSchema, type FeeBase } from "@/domain/commercial/types";
+import { commercialTermsSchema, isRevenueShare, type FeeBase } from "@/domain/commercial/types";
 
 export const ENGINE_VERSION = "viability-2.0.0";
 export const DEFAULT_DAYS_PER_MONTH = 365 / 12;
@@ -96,6 +96,10 @@ export const viabilityInputSchema = z
   .refine((v) => !v.terms.platformFeeIncludesGateway || (v.gatewayRate === 0 && v.gatewayFixedPerSession === 0), {
     message: "A taxa de sistema deste modelo já inclui o gateway: informar custo de gateway à parte seria dupla contagem.",
     path: ["gatewayRate"],
+  })
+  .refine((v) => !isRevenueShare(v.terms) || (v.terms.platformFeeRate === v.terms.revenueShareRate && v.terms.royaltyRate === 0 && v.terms.partnerResultShare === 1 && !v.terms.platformFeeIncludesGateway), {
+    message: "Modelo de participação: a taxa de sistema do cálculo deve ser a própria participação, sem royalty, com 100% do resultado ao posto e gateway à parte.",
+    path: ["terms", "revenueShareRate"],
   })
   .refine((v) => v.gatewayFixedPerSession === 0 || v.kwhPerSession !== undefined, {
     message: "Para tarifa fixa por transação, informe o kWh médio por sessão.",
@@ -258,6 +262,12 @@ export function runViability(raw: ViabilityInput, opts: { sensitivity?: boolean 
   const monthlyCapacity = effectiveKw.mul(maxHours).mul(days);
   if (efficiency.eq(1)) warnings.push("Eficiência de recarga = 100%: perdas elétricas não estão consideradas.");
   if (input.terms.taxRate === 0) warnings.push("Tributos zerados: confirme o regime tributário com a contabilidade.");
+  if (isRevenueShare(t)) {
+    const share = new D(t.revenueShareRate!).mul(100).toDecimalPlaces(2).toString();
+    warnings.push(
+      `Participação da WeMob de ${share}% sobre o faturamento bruto já deduzida (linha “taxa de sistema” do cálculo). Tarifas do gateway: informe à parte — quem as suporta depende de decisão da WAPE.`,
+    );
+  }
 
   const fixedTotal = Object.values(input.fixedMonthly).reduce((acc, v) => acc.plus(v), new D(0));
   const investmentTotal = money(Object.values(input.investment).reduce((acc, v) => acc.plus(v), new D(0)));

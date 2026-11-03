@@ -1,5 +1,5 @@
 import { PrismaClient } from "@prisma/client";
-import { ensureOperationsDefaults, ensureOperator, ensureReferenceModels, ensureStages, ensureSystemRoles } from "../src/server/bootstrap";
+import { ensureOperationsDefaults, ensureOperator, ensureReferenceModels, ensureStages, ensureSystemRoles, retireLegacy14Models } from "../src/server/bootstrap";
 import { hashPassword, passwordSchema } from "../src/server/auth/password";
 
 // Seed de DESENVOLVIMENTO. Não cria dados operacionais fictícios (unidades, sessões, receitas).
@@ -11,6 +11,8 @@ async function main() {
   const org = await ensureOperator(db);
   await ensureStages(db, org.id);
   await ensureReferenceModels(db, org.id);
+  const retired = await retireLegacy14Models(db, org.id);
+  if (retired) console.log(`Modelos com taxa de 14% retirados de vigência: ${retired} (substituídos pela participação 30/70).`);
   await ensureOperationsDefaults(db, org.id);
 
   const email = (process.env.SEED_ADMIN_EMAIL ?? "admin@sansolmob.local").toLowerCase();

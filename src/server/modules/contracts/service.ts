@@ -4,6 +4,7 @@
  * nunca são editadas; autor, data e motivo ficam na própria versão e na auditoria.
  */
 import { z } from "zod";
+import Decimal from "decimal.js";
 import type { ContractStatus } from "@prisma/client";
 import { db } from "@/server/db";
 import { audit } from "@/server/audit";
@@ -20,20 +21,40 @@ export const LOSS_LABEL = { SHARE_MONTHLY: "Prejuízo rateado no mês (parceiro 
 
 const rate = z.coerce.number().min(0, "Mínimo 0").max(1, "Informe como fração entre 0 e 1");
 
+/**
+ * Condições de uma versão. Com `revenueShareRate` (participação da WeMob sobre o bruto, ex.: 0,30) a versão é do
+ * modelo de PARTICIPAÇÃO: royalty e taxa de sistema ficam em 0 e o posto recebe o restante do bruto. Sem ela, o
+ * modelo antigo (royalty + taxa de sistema + repasse) — mantido só para registrar contratos já existentes.
+ */
 export const versionTermsSchema = z
   .object({
     effectiveFrom: z.coerce.date(),
     effectiveTo: z.coerce.date().optional(),
     commercialModelVersionId: z.string().optional().transform((v) => v || undefined),
-    royaltyRate: rate,
-    royaltyBase: z.enum(["GROSS_REVENUE", "NET_REVENUE"]),
-    platformFeeRate: rate,
-    partnerShareRate: rate,
-    partnerShareBase: z.enum(["GROSS_REVENUE", "NET_REVENUE", "OPERATING_RESULT"]),
+    revenueShareRate: z.coerce.number().gt(0, "Informe a participação da WeMob.").lt(1, "A participação deve ser menor que 100%.").optional(),
+    gatewayFeeBearer: z.enum(["PENDING_DECISION", "WEMOB", "PARTNER", "PROPORTIONAL"]).default("PENDING_DECISION"),
+    royaltyRate: rate.optional(),
+    royaltyBase: z.enum(["GROSS_REVENUE", "NET_REVENUE"]).optional(),
+    platformFeeRate: rate.optional(),
+    partnerShareRate: rate.optional(),
+    partnerShareBase: z.enum(["GROSS_REVENUE", "NET_REVENUE", "OPERATING_RESULT"]).optional(),
     lossTreatment: z.enum(["SHARE_MONTHLY", "CARRY_FORWARD"]).default("SHARE_MONTHLY"),
     paymentTermDays: z.coerce.number().int().min(0).max(120).default(10),
     conditions: z.string().trim().min(5, "Descreva as condições.").max(5000),
     reason: z.string().trim().min(5, "Informe o motivo.").max(500),
+  })
+  .superRefine((v, ctx) => {
+    if (v.revenueShareRate !== undefined) return;
+    const missing = (["royaltyRate", "royaltyBase", "platformFeeRate", "partnerShareRate", "partnerShareBase"] as const).filter((k) => v[k] === undefined);
+    for (const k of missing) ctx.addIssue({ code: "custom", path: [k], message: "Obrigatório no modelo antigo (royalty + taxa de sistema)." });
+  })
+  .transform((v) => {
+    if (v.revenueShareRate === undefined) {
+      return { ...v, revenueShareRate: null, royaltyRate: v.royaltyRate!, royaltyBase: v.royaltyBase!, platformFeeRate: v.platformFeeRate!, partnerShareRate: v.partnerShareRate!, partnerShareBase: v.partnerShareBase! };
+    }
+    // Participação: posto = 1 − participação (Decimal, sem erro de ponto flutuante); nada de royalty/taxa/compensação.
+    const partner = new Decimal(1).minus(v.revenueShareRate).toNumber();
+    return { ...v, royaltyRate: 0, royaltyBase: "GROSS_REVENUE" as const, platformFeeRate: 0, partnerShareRate: partner, partnerShareBase: "GROSS_REVENUE" as const, lossTreatment: "SHARE_MONTHLY" as const };
   })
   .refine((v) => !v.effectiveTo || v.effectiveTo > v.effectiveFrom, { message: "O término deve ser posterior ao início.", path: ["effectiveTo"] })
   .refine((v) => !(v.lossTreatment === "CARRY_FORWARD" && v.partnerShareBase !== "OPERATING_RESULT"), {

@@ -5,7 +5,7 @@ import "@/lib/zod-locale";
 import { ZodError } from "zod";
 import { DEFAULT_DAYS_PER_MONTH, runViability, type ParsedViabilityInput, type ViabilityInput } from "@/domain/viability/engine";
 import { SCENARIOS, type ScenarioKey } from "@/domain/viability/scenarios";
-import { FEE_BASE_LABEL, LOSS_TREATMENT_LABEL, type CommercialTerms } from "@/domain/commercial/types";
+import { FEE_BASE_LABEL, LOSS_TREATMENT_LABEL, isRevenueShare, type CommercialTerms } from "@/domain/commercial/types";
 import { Field, Input } from "@/components/ui/field";
 import { Button, ButtonLink } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
@@ -218,10 +218,16 @@ export function Simulator({
           </div>
           <ul className="mt-3 space-y-1 rounded-lg bg-navy-50 p-3 text-xs text-navy-600">
             <li>Aporte do investidor: <b>{pct(t.partnerCapitalShare, 0)}</b> do investimento · Resultado: <b>{pct(t.partnerResultShare, 0)}</b></li>
-            <li>Royalty: <b>{pct(t.royaltyRate)}</b> sobre {FEE_BASE_LABEL[t.royaltyBase].toLowerCase()}</li>
-            <li>Taxa de sistema + gateway: <b>{pct(t.platformFeeRate)}</b> sobre {FEE_BASE_LABEL[t.platformFeeBase].toLowerCase()}</li>
+            {isRevenueShare(t) ? (
+              <li>Participação WeMob: <b>{pct(t.revenueShareRate!, 0)}</b> do faturamento bruto · posto: <b>{pct(1 - t.revenueShareRate!, 0)}</b> (sem royalty nem taxa de sistema)</li>
+            ) : (
+              <>
+                <li>Royalty: <b>{pct(t.royaltyRate)}</b> sobre {FEE_BASE_LABEL[t.royaltyBase].toLowerCase()}</li>
+                <li>Taxa de sistema + gateway: <b>{pct(t.platformFeeRate)}</b> sobre {FEE_BASE_LABEL[t.platformFeeBase].toLowerCase()}</li>
+              </>
+            )}
             <li>Tributos estimados: <b>{pct(t.taxRate)}</b> sobre {FEE_BASE_LABEL[t.taxBase].toLowerCase()}</li>
-            <li>Gateway: {t.platformFeeIncludesGateway ? "incluso na taxa de sistema" : "cobrado à parte"} · Prejuízo: {LOSS_TREATMENT_LABEL[t.lossTreatment].toLowerCase()}</li>
+            <li>Gateway: {isRevenueShare(t) ? "à parte (quem suporta: a definir pela WAPE)" : t.platformFeeIncludesGateway ? "incluso na taxa de sistema" : "cobrado à parte"} · Prejuízo: {LOSS_TREATMENT_LABEL[t.lossTreatment].toLowerCase()}</li>
           </ul>
         </Section>
 

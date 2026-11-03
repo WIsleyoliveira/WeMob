@@ -36,7 +36,7 @@ export default async function FechamentoPage({ searchParams }: { searchParams: P
           {p.validations.warnings.map((w) => <Alert key={w} tone="warning">{w}</Alert>)}
           {p.validations.errors.length === 0 && <Alert tone="success">Nenhum impedimento encontrado.</Alert>}
           <dl className="grid gap-2 text-sm sm:grid-cols-3 lg:grid-cols-6">
-            {[["Bruto", t.gross], ["Líquida", t.netRevenue], ["Royalties", t.royalty], ["Repasses", t.partnerShare], ["Despesas da rede", t.networkExpenses], ["Resultado da rede", t.networkResult]].map(([k, v]) => (
+            {[["Bruto", t.gross], ["Participação WeMob (30/70)", t.wemobShare ?? "0"], ["Royalties (modelo antigo)", t.royalty], ["Repasses", t.partnerShare], ["Despesas da rede", t.networkExpenses], ["Resultado da rede", t.networkResult]].map(([k, v]) => (
               <div key={k} className="rounded-lg bg-navy-50/60 px-3 py-2"><dt className="text-xs text-navy-500">{k}</dt><dd className="tabular font-semibold text-navy-900">{brl(v)}</dd></div>
             ))}
           </dl>

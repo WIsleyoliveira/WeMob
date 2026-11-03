@@ -56,7 +56,7 @@ export async function computeClosing(operatorId: string, period: string, tx: Tx 
   if (laterClosed) errors.push(`Já existe período posterior fechado (${laterClosed.period}).`);
   if (anyEarlierClosed && !prevClosing) errors.push(`Feche os períodos em ordem: ${previousPeriod(period)} ainda está aberto.`);
 
-  const [sites, payments, entries, rules, pendingPayments] = await Promise.all([
+  const [sites, payments, entries, rules, pendingPayments, disputed] = await Promise.all([
     tx.site.findMany({
       where: { operatorId, deletedAt: null, isDemo: false },
       include: { partnerOrganization: { select: { id: true, name: true } }, contracts: { include: { contract: { include: { versions: true } } } } },
@@ -75,11 +75,16 @@ export async function computeClosing(operatorId: string, period: string, tx: Tx 
     tx.financialEntry.findMany({ where: { operatorId, competence: period, status: { not: "CANCELLED" }, category: { in: OPERATING_CATEGORIES } }, orderBy: { id: "asc" } }),
     tx.taxRule.findMany({ where: { operatorId }, orderBy: { name: "asc" } }),
     tx.payment.count({ where: { status: { in: ["PENDING", "AUTHORIZED"] }, environment: "PRODUCTION", session: { environment: "PRODUCTION", stoppedAt: { gte: start, lt: end }, station: { operatorId } } } }),
+    tx.payment.findMany({ where: { status: "DISPUTED", environment: "PRODUCTION", session: { environment: "PRODUCTION", stoppedAt: { gte: start, lt: end }, station: { operatorId } } }, select: { amountCaptured: true } }),
   ]);
 
   const taxRules = rules.filter((r) => overlapsPeriod({ from: r.effectiveFrom, to: r.effectiveTo }, period));
   for (const r of taxRules) if (!coversWholePeriod({ from: r.effectiveFrom, to: r.effectiveTo }, period)) errors.push(`Tributo "${r.name}" tem vigência parcial no período (rateio por dia não suportado).`);
   if (taxRules.length === 0) warnings.push("Nenhum tributo configurado para o período: valores calculados sem tributos.");
+  if (disputed.length > 0) {
+    const total = disputed.reduce((a, p) => a.plus(p.amountCaptured.toString()), new Decimal(0)).toFixed(2);
+    warnings.push(`${disputed.length} pagamento(s) em disputa (chargeback), total ${total}: bloqueados — fora da receita e de qualquer repasse até a decisão; se mantidos, entram por lançamento de ajuste.`);
+  }
   if (pendingPayments > 0) warnings.push(`${pendingPayments} pagamento(s) de sessões do período ainda não capturado(s): não entram na receita.`);
   const unreconciled = payments.filter((p) => !p.reconciledAt).length;
   if (unreconciled > 0) warnings.push(`${unreconciled} pagamento(s) incluído(s) ainda não conciliado(s) com o provedor.`);
@@ -128,6 +133,8 @@ export async function computeClosing(operatorId: string, period: string, tx: Tx 
         partnerShareBase: v.partnerShareBase,
         lossTreatment: v.lossTreatment,
         paymentTermDays: v.paymentTermDays,
+        revenueShareRate: v.revenueShareRate?.toString() ?? null,
+        gatewayFeeBearer: v.gatewayFeeBearer,
       };
     }
     const byStation = new Map<string, { stationId: string; identity: string; chargingRevenue: Decimal; paymentCount: number }>();
@@ -153,7 +160,15 @@ export async function computeClosing(operatorId: string, period: string, tx: Tx 
         : "0",
       gatewayFees: sitePayments.reduce((a, p) => a.plus(p.feeAmount?.toString() ?? 0), new Decimal(0)).toFixed(2),
     };
-    lines.push(computeSiteLine(input, taxRules.map((r) => ({ name: r.name, rate: r.rate.toString() }))));
+    const line = computeSiteLine(input, taxRules.map((r) => ({ name: r.name, rate: r.rate.toString() })));
+    if (line.shareModel === "REVENUE_SHARE") {
+      // Participação sobre o bruto: tarifa real do gateway sem responsável definido no contrato não pode ir a repasse.
+      if (Number(line.gatewayFeesUnallocated ?? 0) !== 0)
+        errors.push(`Contrato ${contract!.contractNumber}: tarifas do gateway de ${line.gatewayFeesUnallocated} sem responsável definido (WeMob, posto ou proporcional) — registre a decisão da WAPE em um aditivo antes de fechar.`);
+      if (Number(line.taxTotal) !== 0 || Number(line.expenses) !== 0)
+        warnings.push(`Contrato ${contract!.contractNumber} (participação ${new Decimal(contract!.revenueShareRate!).times(100).toString()}%): tributos e despesas da unidade aparecem à parte e não são descontados de nenhuma das partes.`);
+    }
+    lines.push(line);
   }
 
   const netExpensesTotal = networkExpenses.reduce((a, x) => a.plus(x.amount), new Decimal(0)).toFixed(2);

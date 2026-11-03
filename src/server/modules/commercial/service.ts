@@ -45,6 +45,7 @@ export function toTerms(v: CommercialModelVersion & { model: CommercialModel }):
     taxBase: v.taxBase,
     platformFeeIncludesGateway: v.platformFeeIncludesGateway,
     lossTreatment: v.lossTreatment,
+    revenueShareRate: v.revenueShareRate?.toNumber() ?? null,
   };
 }
 

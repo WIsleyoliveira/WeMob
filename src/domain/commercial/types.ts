@@ -35,6 +35,11 @@ export const commercialTermsSchema = z.object({
   platformFeeIncludesGateway: z.boolean().default(true),
   /** Base da partilha: resultado operacional mensal. Tratamento de prejuízo configurável. */
   lossTreatment: z.enum(LOSS_TREATMENTS).default("SHARE_MONTHLY"),
+  /**
+   * Modelo de PARTICIPAÇÃO (regra 30/70): fração da WeMob sobre o faturamento bruto. Quando presente, a "taxa de
+   * sistema" do cálculo É essa participação (mesmo valor), sem royalty, e o posto fica com todo o resultado após ela.
+   */
+  revenueShareRate: fraction.nullable().optional(),
 });
 export type CommercialTerms = z.infer<typeof commercialTermsSchema>;
 
@@ -48,5 +53,11 @@ export const commercialVersionDraftSchema = commercialTermsSchema
   .refine((v) => v.platformFeeBase === "GROSS_REVENUE", {
     message: "A taxa de sistema/gateway só pode incidir sobre o faturamento bruto (evita base circular).",
     path: ["platformFeeBase"],
+  })
+  .refine((v) => !isRevenueShare(v) || (v.platformFeeRate === v.revenueShareRate && v.royaltyRate === 0 && v.partnerResultShare === 1 && !v.platformFeeIncludesGateway), {
+    message: "Modelo de participação: a taxa de sistema deve ser igual à participação, sem royalty, com 100% do resultado ao posto e tarifas do gateway à parte.",
+    path: ["revenueShareRate"],
   });
+
+export const isRevenueShare = (t: { revenueShareRate?: number | null }) => t.revenueShareRate !== undefined && t.revenueShareRate !== null;
 export type CommercialVersionDraft = z.infer<typeof commercialVersionDraftSchema>;

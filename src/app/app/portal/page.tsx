@@ -1,6 +1,5 @@
 import { requirePage } from "@/server/auth/current";
 import { partnerContracts, partnerIndicators, partnerSplits, partnerStatements } from "@/server/modules/partner/portal";
-import { BASE_LABEL } from "@/server/modules/contracts/service";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
 import { Stat } from "@/components/ui/stat";
@@ -9,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table } from "@/components/ui/table";
 import { EmptyState } from "@/components/ui/empty-state";
 import { SettlementTable } from "@/components/app/settlement-table";
+import { describeTerms } from "@/domain/finance/contracts";
 import { brl, date, dateTime, num, pct } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +36,7 @@ export default async function PortalPage() {
             <Card key={c.id}>
               <CardHeader title={`${c.number} · ${c.title}`} description={c.sites.map((s) => s.site.name).join(", ")} />
               <CardBody className="space-y-3 text-sm">
-                {c.current ? <p>Condição vigente (v{c.current.version} desde {date(c.current.effectiveFrom)}): royalty {pct(c.current.royaltyRate.toString(), 2)} s/ {BASE_LABEL[c.current.royaltyBase].toLowerCase()} · taxa de sistema {pct(c.current.platformFeeRate.toString(), 2)} · sua participação {pct(c.current.partnerShareRate.toString(), 2)} s/ {BASE_LABEL[c.current.partnerShareBase].toLowerCase()}.</p> : <p className="text-amber-700">Sem versão aprovada vigente.</p>}
+                {c.current ? <p>Condição vigente (v{c.current.version} desde {date(c.current.effectiveFrom)}): {describeTerms(c.current)}.</p> : <p className="text-amber-700">Sem versão aprovada vigente.</p>}
                 <ul className="space-y-1">{c.documents.length === 0 ? <li className="text-navy-500">Nenhum documento disponibilizado.</li> : c.documents.map((d) => <li key={d.id}><a className="text-brand-700 hover:underline" href={`/api/anexos/${d.id}`}>{d.filename}</a> <span className="text-xs text-navy-400">({(d.size / 1024).toFixed(0)} KB)</span></li>)}</ul>
               </CardBody>
             </Card>

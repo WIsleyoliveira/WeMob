@@ -42,8 +42,14 @@ export default async function ModelosAdminPage() {
                       <td><Badge tone={STATUS[versionState(v)][1]}>{STATUS[versionState(v)][0]}</Badge></td>
                       <td className="tabular text-right">{brl(v.referenceInvestment.toString())}</td>
                       <td className="tabular text-right">{pct(v.partnerCapitalShare.toNumber(), 0)} / {pct(v.partnerResultShare.toNumber(), 0)}</td>
-                      <td>{pct(v.royaltyRate.toNumber())} <span className="text-xs text-navy-400">s/ {FEE_BASE_LABEL[v.royaltyBase].toLowerCase()}</span></td>
-                      <td>{pct(v.platformFeeRate.toNumber())} <span className="text-xs text-navy-500">{v.platformFeeIncludesGateway ? "c/ gateway" : "s/ gateway"}</span></td>
+                      {v.revenueShareRate !== null ? (
+                        <td colSpan={2}><b>Participação WeMob {pct(v.revenueShareRate.toNumber(), 0)}</b> <span className="text-xs text-navy-500">do bruto · posto {pct(1 - v.revenueShareRate.toNumber(), 0)} · gateway à parte</span></td>
+                      ) : (
+                        <>
+                          <td>{pct(v.royaltyRate.toNumber())} <span className="text-xs text-navy-400">s/ {FEE_BASE_LABEL[v.royaltyBase].toLowerCase()}</span></td>
+                          <td>{pct(v.platformFeeRate.toNumber())} <span className="text-xs text-navy-500">{v.platformFeeIncludesGateway ? "c/ gateway" : "s/ gateway"}</span>{v.platformFeeRate.toNumber() === 0.14 && <span className="block text-xs text-amber-700">14% substituído pela participação 30/70</span>}</td>
+                        </>
+                      )}
                       <td>{pct(v.taxRate.toNumber())} <span className="text-xs text-navy-400">s/ {FEE_BASE_LABEL[v.taxBase].toLowerCase()}</span></td>
                       <td className="text-xs">{v.lossTreatment === "CARRY_FORWARD" ? "compensa" : "rateio mensal"}</td>
                       <td className="text-xs">{v.effectiveFrom ? date(v.effectiveFrom) : "—"}{v.effectiveTo ? ` → ${date(v.effectiveTo)}` : ""}</td>
@@ -70,6 +76,11 @@ export default async function ModelosAdminPage() {
                         <Field label="Aporte do investidor (%)" htmlFor={`cs-${m.id}`}><Input id={`cs-${m.id}`} name="partnerCapitalShare" defaultValue={p100(current.partnerCapitalShare)} inputMode="decimal" /></Field>
                         <Field label="Resultado do investidor (%)" htmlFor={`rs-${m.id}`}><Input id={`rs-${m.id}`} name="partnerResultShare" defaultValue={p100(current.partnerResultShare)} inputMode="decimal" /></Field>
                         <Field label="Vigência a partir de" htmlFor={`ef-${m.id}`}><Input id={`ef-${m.id}`} name="effectiveFrom" type="date" /></Field>
+                        {current.revenueShareRate !== null && (
+                          <Field label="Participação WeMob sobre o bruto (%)" htmlFor={`rv-${m.id}`} hint="O posto fica com o restante. Royalty e taxa de sistema não se aplicam." className="sm:col-span-2">
+                            <Input id={`rv-${m.id}`} name="revenueShareRate" defaultValue={p100(current.revenueShareRate)} inputMode="decimal" required />
+                          </Field>
+                        )}
                         <Field label="Royalty (%)" htmlFor={`ro-${m.id}`}><Input id={`ro-${m.id}`} name="royaltyRate" defaultValue={p100(current.royaltyRate)} inputMode="decimal" /></Field>
                         <Field label="Base do royalty" htmlFor={`rb-${m.id}`}>
                           <Select id={`rb-${m.id}`} name="royaltyBase" defaultValue={current.royaltyBase}>{FEE_BASES.map((b) => <option key={b} value={b}>{FEE_BASE_LABEL[b]}</option>)}</Select>

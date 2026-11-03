@@ -1,12 +1,14 @@
 "use client";
 
 import type { ViabilityResult } from "@/domain/viability/engine";
-import { FEE_BASE_LABEL, LOSS_TREATMENT_LABEL, type CommercialTerms } from "@/domain/commercial/types";
+import Decimal from "decimal.js";
+import { FEE_BASE_LABEL, LOSS_TREATMENT_LABEL, isRevenueShare, type CommercialTerms } from "@/domain/commercial/types";
 import { Alert } from "@/components/ui/alert";
 import { Table } from "@/components/ui/table";
 import { brl, dateTime, kwh, num, pct } from "@/lib/format";
 import { cn } from "@/lib/cn";
 
+const sub = (a: string, b: string) => new Decimal(a).minus(b).toFixed(2);
 const DRIVER_LABEL = { utilization: "Utilização", price: "Preço de venda", energyCost: "Custo da energia", fixedCosts: "Custos fixos" } as const;
 
 export function SimulatorResults({
@@ -71,9 +73,10 @@ export function SimulatorResults({
             <Line label="Faturamento bruto" v={m1.grossRevenue} f={`${num(m1.energySoldKwh, 1)} kWh × preço de venda`} strong />
             <Line label="(−) Tributos estimados" v={m1.taxes} neg f={`${pct(terms.taxRate)} × ${FEE_BASE_LABEL[terms.taxBase].toLowerCase()}`} />
             <Line label="= Receita líquida" v={m1.netRevenue} f="bruto − tributos sobre a receita" />
-            <Line label={terms.platformFeeIncludesGateway ? "(−) Taxa de sistema + gateway" : "(−) Taxa de sistema"} v={m1.paymentFees} neg f={`${pct(terms.platformFeeRate)} × ${FEE_BASE_LABEL[terms.platformFeeBase].toLowerCase()}`} />
+            <Line label={isRevenueShare(terms) ? `(−) Participação WeMob (${pct(terms.revenueShareRate!, 0)} do bruto)` : terms.platformFeeIncludesGateway ? "(−) Taxa de sistema + gateway" : "(−) Taxa de sistema"} v={m1.paymentFees} neg f={`${pct(terms.platformFeeRate)} × ${FEE_BASE_LABEL[terms.platformFeeBase].toLowerCase()}`} />
+            {isRevenueShare(terms) && <Line label={`= Parte do posto (${pct(1 - terms.revenueShareRate!, 0)} do bruto)`} v={sub(m1.grossRevenue, m1.paymentFees)} f="bruto − participação WeMob (antes de tributos, energia e custos do posto)" />}
             {Number(m1.gatewayFees) > 0 && <Line label="(−) Gateway (contratado à parte)" v={m1.gatewayFees} neg f="% do bruto + tarifa × sessões" />}
-            <Line label="(−) Royalty" v={m1.royalty} neg f={`${pct(terms.royaltyRate)} × ${FEE_BASE_LABEL[terms.royaltyBase].toLowerCase()}`} />
+            {!isRevenueShare(terms) && <Line label="(−) Royalty" v={m1.royalty} neg f={`${pct(terms.royaltyRate)} × ${FEE_BASE_LABEL[terms.royaltyBase].toLowerCase()}`} />}
             {Number(m1.commission) > 0 && <Line label="(−) Comissões" v={m1.commission} neg f="% × bruto" />}
             <Line label="(−) Custo da energia" v={m1.energyCost} neg f={`${num(m1.energyPurchasedKwh, 1)} kWh comprados × custo/kWh`} />
             <Line label="(−) Custos fixos" v={m1.fixedCosts} neg f="soma dos custos fixos mensais" />
@@ -85,7 +88,7 @@ export function SimulatorResults({
         </Table>
         <p className="px-5 py-3 text-xs text-navy-400">
           Faturamento ≠ resultado operacional ≠ fluxo de caixa ≠ lucro distribuível. O resultado acima é gerencial e não substitui apuração contábil.
-          O royalty é devido à franqueadora e já está deduzido do resultado. Partilha: base = resultado operacional mensal; {LOSS_TREATMENT_LABEL[terms.lossTreatment].toLowerCase()}.
+          {isRevenueShare(terms) ? "A participação da WeMob incide sobre o faturamento bruto e não é lucro: tributos, energia, tarifas do gateway e custos estão nas linhas próprias." : "O royalty é devido à franqueadora e já está deduzido do resultado."} Partilha: base = resultado operacional mensal; {LOSS_TREATMENT_LABEL[terms.lossTreatment].toLowerCase()}.
           {Number(result.investment.workingCapitalTotal) > 0 && ` Capital de giro: ${brl(result.investment.workingCapitalPartner)} do investidor no mês 0, devolvido no último mês se marcado.`}
         </p>
       </section>
