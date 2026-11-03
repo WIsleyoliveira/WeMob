@@ -1,0 +1,13 @@
+/** Permissões em linguagem simples, agrupadas por área (exibição; a verificação continua em `requirePermission`). */
+export const PERMISSION_GROUPS: { label: string; permissions: { key: string; label: string }[] }[] = [
+  { label: "Painel", permissions: [{ key: "dashboard:read", label: "ver indicadores" }] },
+  { label: "CRM", permissions: [{ key: "lead:read", label: "ver leads" }, { key: "lead:write", label: "editar leads" }, { key: "lead:assign", label: "atribuir responsável" }, { key: "lead:export", label: "exportar" }, { key: "crm:configure", label: "configurar funil" }] },
+  { label: "Comercial", permissions: [{ key: "commercial_model:read", label: "ver modelos" }, { key: "commercial_model:write", label: "propor versões" }, { key: "commercial_model:approve", label: "aprovar versões" }, { key: "simulation:run", label: "simular" }, { key: "simulation:read", label: "ver simulações" }] },
+  { label: "Rede", permissions: [{ key: "site:read", label: "ver unidades e estações" }, { key: "site:write", label: "editar unidades e estações" }, { key: "station:command", label: "comandar carregadores de teste" }, { key: "station:command_production", label: "comandar carregadores de produção" }] },
+  { label: "Pagamentos", permissions: [{ key: "payment:read", label: "ver" }, { key: "payment:refund", label: "estornar" }, { key: "payment:reconcile", label: "conciliar" }, { key: "payment:review", label: "analisar" }, { key: "payment:split_configure", label: "configurar split" }, { key: "payment:recipients_manage", label: "gerenciar recebedores" }, { key: "payment:enable_production", label: "ativar produção" }] },
+  { label: "Contratos", permissions: [{ key: "contract:read", label: "ver" }, { key: "contract:write", label: "criar e propor aditivos" }, { key: "contract:approve", label: "aprovar versões" }] },
+  { label: "Financeiro", permissions: [{ key: "finance:read", label: "ver" }, { key: "finance:write", label: "lançar" }, { key: "finance:close", label: "pedir fechamento" }, { key: "finance:approve", label: "aprovar fechamento" }, { key: "finance:export", label: "exportar" }] },
+  { label: "Atendimento", permissions: [{ key: "support:read", label: "ver chamados" }, { key: "support:write", label: "atender chamados" }, { key: "support:configure", label: "configurar SLA" }, { key: "maintenance:read", label: "ver manutenção" }, { key: "maintenance:write", label: "registrar manutenção" }, { key: "alert:read", label: "ver alertas" }, { key: "alert:configure", label: "configurar alertas" }] },
+  { label: "Parceiro", permissions: [{ key: "partner_portal:read", label: "portal do parceiro" }] },
+  { label: "Administração", permissions: [{ key: "user:manage", label: "gerenciar usuários" }, { key: "audit:read", label: "ver auditoria" }] },
+];

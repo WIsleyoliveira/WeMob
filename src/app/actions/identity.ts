@@ -3,7 +3,7 @@ import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { getCurrentContext } from "@/server/auth/current";
 import { toActionState, type ActionState } from "@/server/action-result";
-import { revokeMembership } from "@/server/modules/identity/service";
+import { changeMemberRole, revokeMemberSessions, revokeMembership } from "@/server/modules/identity/service";
 import { changePassword, createPasswordResetLink, requestPasswordReset, resetPasswordWithToken } from "@/server/modules/identity/password-reset";
 
 async function baseUrl() {
@@ -17,6 +17,21 @@ export async function revokeMembershipAction(_prev: ActionState, f: FormData): P
   const res = await toActionState(() => revokeMembership(ctx, String(f.get("membershipId"))), "Acesso revogado e sessões encerradas.");
   revalidatePath("/app/usuarios");
   return res;
+}
+
+export async function changeMemberRoleAction(_prev: ActionState, f: FormData): Promise<ActionState> {
+  const ctx = await getCurrentContext();
+  const res = await toActionState(() => changeMemberRole(ctx, { membershipId: f.get("membershipId"), roleKey: f.get("roleKey") }), "Perfil alterado. As sessões abertas foram encerradas para o novo perfil valer no próximo acesso.");
+  revalidatePath("/app/usuarios");
+  return res;
+}
+
+export async function revokeMemberSessionsAction(_prev: ActionState, f: FormData): Promise<ActionState> {
+  const ctx = await getCurrentContext();
+  const res = await toActionState(() => revokeMemberSessions(ctx, String(f.get("membershipId"))));
+  revalidatePath("/app/usuarios");
+  if (res.status !== "ok") return res as ActionState;
+  return { status: "ok", message: res.data ? `${res.data} sessão(ões) encerrada(s).` : "Nenhuma sessão aberta." };
 }
 
 export async function createResetLinkAction(_prev: ActionState, f: FormData): Promise<ActionState> {
