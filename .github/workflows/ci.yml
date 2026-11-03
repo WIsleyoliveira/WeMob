@@ -24,9 +24,10 @@ jobs:
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
-      # Desde o P19: 0 vulnerabilidades (produção e desenvolvimento). Produção sem tolerância; desenvolvimento a partir de moderada.
+      # Produção sem tolerância. Desenvolvimento: zero a partir de moderada, salvo exceções explícitas, com
+      # justificativa e validade, em scripts/audit-gate.mjs (aviso novo ou exceção vencida → falha).
       - run: npm audit --omit=dev
-      - run: npm audit --audit-level=moderate
+      - run: node scripts/audit-gate.mjs
       - run: npm run build
       # E2E de navegador: banco temporário próprio no mesmo Postgres de teste, build de produção (.next-e2e)
       # servido como na imagem (node server.js) e gateway SIMULADO. Nenhum gateway real.

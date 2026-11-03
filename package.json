@@ -24,7 +24,8 @@
     "db:status": "prisma migrate status",
     "e2e:build": "node scripts/build-dist.mjs .next-e2e",
     "e2e:browser": "tsx --import ./scripts/load-env.mjs scripts/e2e-browser.ts",
-    "db:backup:verificar": "tsx --import ./scripts/load-env.mjs scripts/backup-verify.ts"
+    "db:backup:verificar": "tsx --import ./scripts/load-env.mjs scripts/backup-verify.ts",
+    "audit:gate": "node scripts/audit-gate.mjs"
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",
