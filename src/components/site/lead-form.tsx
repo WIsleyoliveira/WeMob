@@ -2,7 +2,7 @@
 
 import { useActionState, useState } from "react";
 import { submitLeadAction } from "@/app/actions/leads";
-import { idle, type ActionState } from "@/server/action-result";
+import { idle, type ActionState } from "@/lib/action-state";
 import { Field, Input, Select, Textarea } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";

@@ -5,7 +5,7 @@ import { driverLoginAction, driverSignupAction } from "@/app/actions/driver";
 import { Field, Input } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
-import type { ActionState } from "@/server/action-result";
+import type { ActionState } from "@/lib/action-state";
 
 export function DriverLoginForm({ voltar }: { voltar?: string }) {
   const [state, action, pending] = useActionState<ActionState, FormData>(driverLoginAction, { status: "idle" });

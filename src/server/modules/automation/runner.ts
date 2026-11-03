@@ -13,12 +13,18 @@ import { dispatchNotifications } from "@/server/modules/alerts/notifications";
 import { runPreventive } from "@/server/modules/maintenance/service";
 import { importDriverSupportRequests } from "@/server/modules/support/tickets";
 import { reconcileAutomatically } from "@/server/payments/service";
+import { withCorrelation } from "@/server/correlation";
 
 export async function runJob<T>(job: string, operatorId: string | null, fn: () => Promise<T>) {
   const lastRuns = await db.automationRun.findMany({ where: { job, operatorId }, orderBy: { startedAt: "desc" }, take: 20, select: { status: true } });
   const consecutiveFailures = lastRuns.findIndex((r) => r.status !== "FAILED");
   const attempt = (consecutiveFailures === -1 ? lastRuns.length : consecutiveFailures) + 1;
   const run = await db.automationRun.create({ data: { job, operatorId, status: "RUNNING", attempt } });
+  return withCorrelation(`job:${job}:${run.id}`, () => execute(run.id, job, operatorId, attempt, fn));
+}
+
+async function execute<T>(runId: string, job: string, operatorId: string | null, attempt: number, fn: () => Promise<T>) {
+  const run = { id: runId };
   try {
     const stats = await fn();
     await db.automationRun.update({ where: { id: run.id }, data: { status: "SUCCEEDED", stats: stats as unknown as Prisma.InputJsonValue, finishedAt: new Date() } });

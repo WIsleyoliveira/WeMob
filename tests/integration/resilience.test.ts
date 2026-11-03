@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "@/server/db";
 import { toActionState } from "@/server/action-result";
 import { GET as health } from "@/app/api/health/route";
+import { GET as metrics } from "@/app/api/metrics/route";
 import { previewClosing } from "@/server/modules/finance/closing";
 import { opsPanel } from "@/server/modules/support/panel";
 import { partnerStatements } from "@/server/modules/partner/portal";
@@ -50,6 +51,29 @@ describe("resiliência e estados vazios (P10)", () => {
     expect(await (await strict()).json()).toMatchObject({ automation: "stale" });
     await db.automationRun.create({ data: { job: "alerts.evaluate", status: "SUCCEEDED", startedAt: new Date(), finishedAt: new Date() } });
     expect((await strict()).status).toBe(200);
+  });
+
+  it("métricas: 404 sem token configurado ou errado; com token, números agregados sem dado pessoal", async () => {
+    const token = "t".repeat(40);
+    const call = (auth?: string) => metrics(new Request("http://localhost/api/metrics", { headers: auth ? { authorization: auth } : {} }));
+    const prev = process.env.METRICS_TOKEN;
+    try {
+      delete process.env.METRICS_TOKEN;
+      expect((await call(`Bearer ${token}`)).status).toBe(404);
+      process.env.METRICS_TOKEN = token;
+      expect((await call()).status).toBe(404);
+      expect((await call("Bearer errado")).status).toBe(404);
+      await bootstrapOperator();
+      const ok = await call(`Bearer ${token}`);
+      expect(ok.status).toBe(200);
+      expect(ok.headers.get("content-type")).toContain("text/plain");
+      const body = await ok.text();
+      for (const m of ["wemob_up 1", "wemob_db_latency_ms", 'wemob_schema_ok{state="ok"} 1', "wemob_automation_last_run_age_seconds", "wemob_webhook_events_pending 0", "wemob_payments_pending_production 0"]) expect(body).toContain(m);
+      expect(body).not.toMatch(/@|cpf|senha|token/i);
+    } finally {
+      if (prev === undefined) delete process.env.METRICS_TOKEN;
+      else process.env.METRICS_TOKEN = prev;
+    }
   });
 
   it("erro inesperado vira mensagem genérica para o usuário", async () => {

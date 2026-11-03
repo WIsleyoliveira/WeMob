@@ -5,7 +5,7 @@ import { CreditCard, QrCode } from "lucide-react";
 import { startChargeAction } from "@/app/actions/driver";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
-import type { ActionState } from "@/server/action-result";
+import type { ActionState } from "@/lib/action-state";
 import { parseAmount, quoteByAmount } from "@/domain/charging/purchase";
 import { cn } from "@/lib/cn";
 

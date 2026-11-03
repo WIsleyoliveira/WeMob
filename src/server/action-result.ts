@@ -2,16 +2,18 @@ import "@/lib/zod-locale";
 import { ZodError } from "zod";
 import { AppError } from "./errors";
 import { log } from "./log";
+import { withRequestCorrelation } from "./correlation";
 
-export type ActionState<T = unknown> =
-  | { status: "idle" }
-  | { status: "ok"; data?: T; message?: string }
-  | { status: "error"; message: string; fieldErrors?: Record<string, string> };
+import type { ActionState } from "@/lib/action-state";
 
-export const idle: ActionState = { status: "idle" };
+export { idle, type ActionState } from "@/lib/action-state";
 
 /** Converte exceções conhecidas em estado de formulário; erros inesperados são logados sem dados sensíveis. */
 export async function toActionState<T>(fn: () => Promise<T>, okMessage?: string): Promise<ActionState<T>> {
+  return withRequestCorrelation(() => runAction(fn, okMessage));
+}
+
+async function runAction<T>(fn: () => Promise<T>, okMessage?: string): Promise<ActionState<T>> {
   try {
     const data = await fn();
     return { status: "ok", data, message: okMessage };

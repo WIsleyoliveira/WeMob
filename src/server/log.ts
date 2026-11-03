@@ -1,4 +1,5 @@
-/** Logger estruturado (JSON em stdout) com remoção de campos sensíveis. */
+/** Logger estruturado (JSON em stdout) com remoção de campos sensíveis e ID de correlação (`requestId`). */
+import { correlationId } from "./correlation";
 const SENSITIVE = /pass(word)?|token|secret|authorization|cookie|card|cvv|apikey|api_key/i;
 
 function redact(v: unknown, depth = 0): unknown {
@@ -10,7 +11,8 @@ function redact(v: unknown, depth = 0): unknown {
 type Level = "debug" | "info" | "warn" | "error";
 function write(level: Level, msg: string, data?: Record<string, unknown>) {
   if (level === "debug" && process.env.NODE_ENV === "production") return;
-  const line = JSON.stringify({ level, msg, time: new Date().toISOString(), ...(redact(data) as object) });
+  const requestId = correlationId();
+  const line = JSON.stringify({ level, msg, time: new Date().toISOString(), ...(requestId ? { requestId } : {}), ...(redact(data) as object) });
   (level === "error" ? console.error : console.log)(line);
 }
 

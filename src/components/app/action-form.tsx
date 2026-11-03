@@ -4,7 +4,7 @@ import { useActionState, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
 import { ConfirmDialog } from "@/components/ui/confirm-dialog";
-import type { ActionState } from "@/server/action-result";
+import type { ActionState } from "@/lib/action-state";
 import { cn } from "@/lib/cn";
 
 /** Formulário ligado a uma server action, com estado de envio, confirmação opcional e mensagens de retorno. */

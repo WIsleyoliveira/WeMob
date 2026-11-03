@@ -4,7 +4,7 @@ import { loginAction } from "@/app/actions/auth";
 import { Field, Input } from "@/components/ui/field";
 import { Button } from "@/components/ui/button";
 import { Alert } from "@/components/ui/alert";
-import type { ActionState } from "@/server/action-result";
+import type { ActionState } from "@/lib/action-state";
 
 export function LoginForm() {
   const [state, action, pending] = useActionState<ActionState, FormData>(loginAction, { status: "idle" });

@@ -9,6 +9,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 import { db } from "@/server/db";
 import { log } from "@/server/log";
 import { verifyPassword } from "@/server/auth/password";
+import { newCorrelationId, withCorrelation } from "@/server/correlation";
 import { handleCall, markDisconnected, sweepConnectivity, type IdTagAuthorizer, type SessionHooks } from "./handler";
 import { OCPP16_SUBPROTOCOL, OcppError, REMOTE_ACTIONS, callFrame, errorFrame, parseFrame, resultFrame } from "./protocol";
 
@@ -71,8 +72,14 @@ export function startOcppServer(opts: OcppServerOptions) {
     log.info("ocpp_connected", { identity });
     void db.chargingStation.update({ where: { id: stationId }, data: { connectionState: "CONNECTED", lastSeenAt: new Date() } });
 
-    ws.on("message", async (data) => {
+    ws.on("message", (data) => {
       const raw = data.toString();
+      // Correlação por mensagem: ocpp:<estação>:<UniqueId> (o UniqueId vem do quadro, quando legível).
+      const uid = /^\[\s*\d\s*,\s*"([^"]{1,36})"/.exec(raw)?.[1];
+      void withCorrelation(`ocpp:${identity}:${uid ?? newCorrelationId()}`.slice(0, 128), () => onMessage(raw));
+    });
+
+    const onMessage = async (raw: string) => {
       let frame;
       try {
         frame = parseFrame(raw);
@@ -100,7 +107,7 @@ export function startOcppServer(opts: OcppServerOptions) {
         },
       });
       await db.ocppMessage.updateMany({ where: { stationId, direction: "OUT", messageId: frame.id }, data: { response: (frame.type === "RESULT" ? frame.payload : { error: frame.code }) as object } });
-    });
+    };
 
     ws.on("close", () => {
       if (sockets.get(identity)?.ws === ws) {
