@@ -5,7 +5,13 @@ import { getDriver } from "@/server/drivers/current";
 import { Logo } from "@/components/ui/logo";
 import { BottomNavLink } from "./bottom-nav-link";
 
-export const metadata: Metadata = { title: { default: "Motorista", template: "%s · Sansol Mob" }, robots: { index: false } };
+export const metadata: Metadata = {
+  title: { default: "Motorista", template: "%s · Sansol Mob" },
+  robots: { index: false },
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Sansol Mob", statusBarStyle: "black-translucent" },
+  icons: { apple: "/icons/apple-touch-icon.png" },
+};
 
 export default async function DriverLayout({ children }: { children: React.ReactNode }) {
   const driver = await getDriver();

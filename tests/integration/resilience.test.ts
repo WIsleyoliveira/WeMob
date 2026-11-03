@@ -12,17 +12,44 @@ afterEach(() => vi.restoreAllMocks());
 
 describe("resiliência e estados vazios (P10)", () => {
   it("health: 200 com banco; 503 sem banco, sem detalhes internos", async () => {
-    const ok = await health();
+    const ok = await health(new Request("http://localhost/api/health"));
     expect(ok.status).toBe(200);
     expect(await ok.json()).toMatchObject({ status: "ok", db: "ok", automation: "never" });
     // Banco indisponível: sobrescreve só nesta chamada (o método vem do protótipo do cliente Prisma).
     const client = db as unknown as Record<string, unknown>;
     client.$queryRaw = () => Promise.reject(new Error("connect ECONNREFUSED 127.0.0.1:5432 senha=xyz"));
-    const down = await health().finally(() => delete client.$queryRaw);
+    const down = await health(new Request("http://localhost/api/health")).finally(() => delete client.$queryRaw);
     expect(down.status).toBe(503);
     const body = await down.text();
     expect(body).toContain("unreachable");
     expect(body).not.toMatch(/ECONNREFUSED|senha|5432/);
+  });
+
+  it("health: migração pendente ou com falha num banco já populado → 503 (sem tráfego sobre schema errado)", async () => {
+    expect(await (await health(new Request("http://localhost/api/health"))).json()).toMatchObject({ status: "ok", schema: "ok" });
+    const client = db as unknown as Record<string, unknown>;
+    const real = db.$queryRaw.bind(db);
+    // Simula só a leitura de _prisma_migrations; o banco de teste não é tocado.
+    const fake = (rows: unknown[]) => (strings: TemplateStringsArray, ...v: unknown[]) => (strings.join("?").includes("_prisma_migrations") ? Promise.resolve(rows) : real(strings, ...v));
+    client.$queryRaw = fake([{ migration_name: "20261027125541_init", finished_at: new Date(), rolled_back_at: null }]);
+    const pending = await health(new Request("http://localhost/api/health")).finally(() => delete client.$queryRaw);
+    expect(pending.status).toBe(503);
+    expect(await pending.json()).toMatchObject({ status: "degraded", db: "ok", schema: "migrations_pending" });
+    client.$queryRaw = fake([{ migration_name: "20261027125541_init", finished_at: null, rolled_back_at: null }]);
+    const failed = await health(new Request("http://localhost/api/health")).finally(() => delete client.$queryRaw);
+    expect(failed.status).toBe(503);
+    expect(await failed.json()).toMatchObject({ schema: "migration_failed" });
+  });
+
+  it("health para monitor externo: ?exigir=automacao dá 503 com o ciclo parado; o padrão continua 200", async () => {
+    const strict = (q = "?exigir=automacao") => health(new Request(`http://localhost/api/health${q}`));
+    expect((await strict()).status).toBe(503); // nunca rodou
+    expect(await (await strict()).json()).toMatchObject({ status: "degraded", automation: "never" });
+    expect((await strict("")).status).toBe(200);
+    await db.automationRun.create({ data: { job: "alerts.evaluate", status: "SUCCEEDED", startedAt: new Date(Date.now() - 10 * 60_000), finishedAt: new Date() } });
+    expect(await (await strict()).json()).toMatchObject({ automation: "stale" });
+    await db.automationRun.create({ data: { job: "alerts.evaluate", status: "SUCCEEDED", startedAt: new Date(), finishedAt: new Date() } });
+    expect((await strict()).status).toBe(200);
   });
 
   it("erro inesperado vira mensagem genérica para o usuário", async () => {
