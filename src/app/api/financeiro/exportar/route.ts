@@ -1,6 +1,7 @@
 import { getCurrentContext } from "@/server/auth/current";
 import { exportEntries, exportStatement } from "@/server/modules/finance/statement";
 import { errorResponse, exportResponse } from "@/server/http";
+import { exportCostPlanXlsx } from "@/server/modules/costs/service";
 
 export const dynamic = "force-dynamic";
 
@@ -10,6 +11,7 @@ export async function GET(req: Request) {
   try {
     const ctx = await getCurrentContext();
     const format = sp.get("formato") === "xlsx" ? "xlsx" : "csv";
+    if (sp.get("tipo") === "custos") return exportResponse(await exportCostPlanXlsx(ctx)); // orçamento da plataforma: só Excel
     if (sp.get("tipo") === "lancamentos")
       return exportResponse(await exportEntries(ctx, { competence: sp.get("competencia") || undefined, kind: sp.get("sentido") || undefined, status: sp.get("situacao") || undefined }, format));
     return exportResponse(await exportStatement(ctx, sp.get("periodo") ?? "", format));

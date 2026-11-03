@@ -1,6 +1,7 @@
 import type { PrismaClient } from "@prisma/client";
 import { SYSTEM_ROLES } from "@/server/auth/permissions";
 import { ensureDefaultAlertRules } from "@/server/modules/alerts/rules";
+import { ensurePlatformCostDefaults } from "@/server/modules/costs/service";
 import { LEGACY_14_MODEL_KEYS, OFFICIAL_REVENUE_SHARE, PORTFOLIO_SOURCE_NOTE, REFERENCE_RESPONSIBILITIES, REFERENCE_TERMS, REVENUE_SHARE_TERMS } from "@/domain/commercial/reference";
 
 /** Estrutura mínima idempotente: perfis de sistema, operadora, funil e modelos de referência. */
@@ -104,6 +105,8 @@ export const DEFAULT_SLA = [
 ] as const;
 
 export async function ensureOperationsDefaults(db: PrismaClient, operatorId: string) {
+  // Orçamento de custos da plataforma: premissas da planilha (editáveis), só se ainda não houver.
+  await ensurePlatformCostDefaults(db, operatorId);
   await ensureDefaultAlertRules(db, operatorId);
   for (const p of DEFAULT_SLA) {
     const exists = await db.slaPolicy.findFirst({ where: { operatorId, priority: p.priority, contractId: null, active: true } });

@@ -1776,3 +1776,68 @@ model GatewayActivation {
 
   @@index([provider, operatorId, status])
 }
+
+// ── Custos operacionais da PLATAFORMA WeMob (orçamento de despesa). Separado da receita de participação 30/70 e do
+//    fechamento dos postos: nada daqui entra em repasse, demonstrativo ou fechamento.
+
+enum PlatformCostCategory {
+  INFRASTRUCTURE
+  SERVICES
+  OPERATIONS
+  OTHER
+}
+
+/// Item do orçamento mensal (premissa de planejamento, editável e auditada).
+model PlatformCostItem {
+  id          String               @id @default(cuid())
+  operatorId  String
+  key         String
+  name        String
+  category    PlatformCostCategory
+  /// R$/mês sem a alta cambial de stress.
+  baseMonthly Decimal              @db.Decimal(14, 2)
+  /// Fração exposta ao dólar (0–1).
+  fxExposure  Decimal              @db.Decimal(9, 6)
+  active      Boolean              @default(true)
+  sortOrder   Int                  @default(0)
+  updatedById String?
+  createdAt   DateTime             @default(now())
+  updatedAt   DateTime             @updatedAt
+
+  @@unique([operatorId, key])
+}
+
+/// Premissas do orçamento (uma por operadora): câmbio de stress, reserva, custo e reserva por posto, tolerância do alerta.
+model PlatformCostAssumptions {
+  operatorId        String   @id
+  fxStressRate      Decimal  @db.Decimal(9, 6)
+  reserveRate       Decimal  @db.Decimal(9, 6)
+  perStationCost    Decimal  @db.Decimal(14, 2)
+  perStationReserve Decimal  @db.Decimal(14, 2)
+  budgetTolerance   Decimal  @db.Decimal(9, 6)
+  sourceNote        String?
+  updatedById       String?
+  updatedAt         DateTime @updatedAt
+}
+
+/// Custo REALIZADO da plataforma num mês (fatura de fornecedor etc.). Em dólar: guarda o valor original e o câmbio usado.
+model PlatformCostActual {
+  id             String               @id @default(cuid())
+  operatorId     String
+  /// Competência "AAAA-MM".
+  competence     String
+  itemKey        String?
+  category       PlatformCostCategory
+  description    String
+  /// Valor em R$ (convertido, se a fatura for em dólar).
+  amount         Decimal              @db.Decimal(14, 2)
+  currency       String               @default("BRL")
+  originalAmount Decimal?             @db.Decimal(14, 2)
+  fxRate         Decimal?             @db.Decimal(12, 6)
+  createdById    String
+  createdAt      DateTime             @default(now())
+  cancelledAt    DateTime?
+  cancelReason   String?
+
+  @@index([operatorId, competence])
+}

@@ -13,6 +13,7 @@ export default async function FinanceLayout({ children }: { children: React.Reac
           { href: "/app/financeiro/fechamento", label: "Fechamento" },
           { href: "/app/financeiro/demonstrativo", label: "Demonstrativo" },
           { href: "/app/financeiro/tributos", label: "Tributos" },
+          { href: "/app/financeiro/custos", label: "Custos da plataforma" },
         ]}
       />
       {children}
