@@ -56,7 +56,7 @@ Testes novos relevantes: estorno agendado→concluído uma vez; timeout após pr
 | Confirmação nunca pelo retorno do checkout | **CONCLUÍDO COM EVIDÊNCIA** | status só por `GET /payments/{id}` (webhook/consulta); página do cartão abre em outra aba sem retorno |
 | Webhook: autenticação, gravação antes de processar, duplicado, fora de ordem, falha e reenvio | **CONCLUÍDO COM EVIDÊNCIA** | sandbox real (P15: aprovado, falha+reenvio) + chamadas simuladas + testes; espera crescente: testes |
 | Estorno: estados, tentativas, incerteza, saldo, revisão manual | **CONCLUÍDO COM EVIDÊNCIA** (código/testes) | 5 testes + sandbox real até `SCHEDULED` |
-| Estorno parcial de cartão concluído após a janela | **PENDENTE** (externo, data) | agendado para 2026-10-29 06:00 BRT; executar `retryDueRefunds` (ciclo OCPP ou "Tentar agora") e conferir `DONE`/`confirmedAmount` |
+| Estorno parcial de cartão concluído após a janela | **NÃO HOMOLOGADO** (estorno cancelado; pagamento já estornado integralmente) | antes: agendado para 2026-10-29 06:00 BRT. Execução de `retryDueRefunds` em 2026-10-29 22:32 BRT (01:32 UTC de 30/10): retorno `[]`, nenhum envio ao Asaas — o estorno `cmvs5o69u0001z1lujwc501g1` já estava `FAILED`/`CANCELLED_BY_STAFF` (cancelado em 29/10 14:32 BRT, motivo "nao deu certo") e o pagamento `pay_fzvllcs4rjfnze8h` `REFUNDED` por estorno integral de R$ 100,00 (`cmvtu2tvn0003jkphlgnhd2wj`, `DONE`, 29/10 14:55 BRT). O estorno **parcial** de cartão após a janela precisa de novo pagamento de teste |
 | Conciliação | **CONCLUÍDO COM EVIDÊNCIA** (código/testes) | manual + horária; nunca ajusta sozinha |
 | Split no sandbox | **PARCIAL / BLOQUEADO** | falta `walletId` de segunda conta sandbox; Asaas não informa elegibilidade Pix/cartão |
 | Split em produção | **CONCLUÍDO COM EVIDÊNCIA** (trava) | bloqueado sem política aprovada e recebedor de produção (teste) |
@@ -72,7 +72,7 @@ Testes novos relevantes: estorno agendado→concluído uma vez; timeout após pr
 ## 5. Dependências externas (não concluíveis sem terceiros)
 | Item | Responsável pela próxima ação | Bloqueio |
 |---|---|---|
-| Estorno parcial de cartão após a janela | equipe técnica, a partir de 29/10 06:00 BRT | data |
+| Estorno parcial de cartão após a janela | equipe técnica: novo pagamento de cartão no sandbox + estorno parcial no dia seguinte (o de `pay_fzvllcs4rjfnze8h` foi cancelado e o pagamento estornado integralmente em 29/10) | novo teste (dois dias) |
 | Permissão de estornos na conta de produção ("autorização de ação crítica") | responsável comercial + Asaas | conta de produção |
 | Segundo recebedor e split no sandbox; elegibilidade por método | responsável comercial / Asaas | credencial (carteira) |
 | Base do 50/50 | sócios/jurídico | decisão comercial |
@@ -449,6 +449,14 @@ Procedimento na janela (a executar por uma pessoa ou tarefa autorizada):
 4. Para executar: **ou** subir `npm run ocpp:server` (retentativa automática, consulta o gateway pelo `refundMarker` antes de reenviar), **ou** um único "Tentar agora" na tela — nunca os dois.
 5. Se o Asaas exigir autorização no painel → registrar `BLOQUEADO` e aguardar o dono da conta.
 6. Declarar sucesso só com o estorno `DONE` no gateway **e** o pagamento conciliado no WeMob (`reconcile()` sem divergência).
+
+**Execução em 29/10/2026 22:32 BRT (01:32 UTC de 30/10), tarefa agendada `wemob-estorno-cartao-sandbox`** — sandbox (`ASAAS_ENVIRONMENT=sandbox`), banco `sansol_dev`, `retryDueRefunds(new Date(), "cmvs5o69u0001z1lujwc501g1")` rodado duas vezes por script temporário fora do repositório:
+- Retorno nas duas execuções: `[]` (o estorno não está mais elegível; **nenhuma chamada de estorno ao Asaas**).
+- Estorno `cmvs5o69u0001z1lujwc501g1` (R$ 75,10): `FAILED`, `remoteStatus CANCELLED_BY_STAFF`, `attempts 2`, `lastError "Cancelado pela equipe: nao deu certo"`, `nextAttemptAt null`, `confirmedAmount null`, `completedAt 2026-10-29T17:32:31Z` — cancelado pela equipe antes desta execução.
+- Pagamento `cmvs3es4h0006z1h3y2sj2rcf` (`pay_fzvllcs4rjfnze8h`, cartão): `REFUNDED`/`REFUNDED`, capturado 100,00, estornado 100,00, líquido 97,52, tarifa 2,48.
+- Estornos do pagamento (3): `cmvs42uzb0001z1t3x0w6ltbo` R$ 75,10 `FAILED`/`REJECTED` (P15, 28/10); `cmvs5o69u0001z1lujwc501g1` acima; `cmvtu2tvn0003jkphlgnhd2wj` R$ 100,00 `SUCCEEDED`/`DONE`, `confirmedAmount 100`, motivo "Estorno integral: recarga não iniciou" (criado 29/10 17:45 UTC, concluído 17:55 UTC).
+- Idempotência: segunda execução idêntica — retorno `[]`, `attempts` 2, `amountRefunded` 100 e 3 estornos (nada mudou).
+- **Conclusão**: o estorno parcial de cartão após a janela **não foi homologado** com este pagamento (não há saldo; nada a reenviar). Ficaram com evidência real o cancelamento de estorno agendado e o estorno integral de cartão (`DONE`). Para homologar o parcial: novo pagamento de cartão no sandbox, estorno parcial (recusa "próximo dia" → `SCHEDULED`) e retentativa no dia seguinte.
 
 ## 6. Pendências externas
 | Pendência | Status | Evidência necessária | Risco | Responsável | Próxima ação |

@@ -148,6 +148,12 @@ Relatório com evidências, inventário P0–P3 e dependências externas: `docs/
 - Migrations do zero: 12 aplicadas, sem diferença com o schema; `down.sql` do P16 revertido com sucesso em banco temporário.
 - `npm audit --omit=dev` → 0; `npm audit` → 2 moderadas (`@vitest/mocker`/`vitest`), 0 críticas/altas.
 
+### Retentativa do estorno agendado (2026-10-29 22:32 BRT / 2026-10-30 01:32 UTC)
+- Sandbox oficial, banco `sansol_dev`; `retryDueRefunds(new Date(), "cmvs5o69u0001z1lujwc501g1")` executado 2× (script temporário, fora do repositório): retorno `[]` nas duas — **nenhum envio ao Asaas**.
+- Motivo: o estorno de R$ 75,10 já estava `FAILED`/`CANCELLED_BY_STAFF` (cancelado pela equipe em 2026-10-29 17:32 UTC, "nao deu certo"), e o pagamento `pay_fzvllcs4rjfnze8h` foi estornado integralmente (`cmvtu2tvn0003jkphlgnhd2wj`, R$ 100,00, `DONE`, 17:55 UTC): pagamento `REFUNDED`, capturado 100,00 / estornado 100,00 / líquido 97,52 / tarifa 2,48.
+- Idempotência: 2ª execução sem mudança (`attempts` 2, `amountRefunded` 100, 3 estornos).
+- **Estorno parcial de cartão após a janela: NÃO homologado** — exige novo pagamento de cartão no sandbox. Detalhes: `docs/RELATORIO_FINAL_TECNICO.md` §5.
+
 ## P15 — Homologação financeira, segurança e preparação para staging (2026-10-28)
 
 Relatório completo com evidências: `docs/RELATORIO_P15.md`. Plano de staging: `docs/staging.md`.
