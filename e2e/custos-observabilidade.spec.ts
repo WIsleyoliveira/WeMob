@@ -16,7 +16,7 @@ test("custos da plataforma, Excel nativo e correlação (perfil financeiro)", as
   const items = page.getByRole("table").first();
   await expect(items).toContainText("Servidor app e API");
   await expect(items).toContainText("R$ 1.952,32");
-  await page.getByLabel("Postos").fill("10");
+  await page.getByLabel("Postos", { exact: true }).fill("10");
   await page.getByRole("button", { name: "Recalcular" }).click();
   await expect(page).toHaveURL(/postos=10/);
   await expect(page.getByText("R$ 5.952,32").first()).toBeVisible(); // cenário "Rede média" da planilha

@@ -1841,3 +1841,45 @@ model PlatformCostActual {
 
   @@index([operatorId, competence])
 }
+
+/// Orçamento CONGELADO de uma competência (versionado): itens, premissas e postos do momento. Uma versão ativa por
+/// mês (índice parcial na migração); nova versão substitui a anterior com motivo, que fica no histórico.
+model PlatformCostBudget {
+  id             String    @id @default(cuid())
+  operatorId     String
+  competence     String
+  version        Int
+  status         String    @default("ACTIVE") // ACTIVE | SUPERSEDED
+  stations       Int
+  /// { items: [...], assumptions: {...} } usados no cálculo.
+  snapshot       Json
+  base           Decimal   @db.Decimal(14, 2)
+  prudential     Decimal   @db.Decimal(14, 2)
+  totalMonthly   Decimal   @db.Decimal(14, 2)
+  reason         String
+  createdById    String
+  createdAt      DateTime  @default(now())
+  supersededAt   DateTime?
+  supersededById String?
+
+  @@unique([operatorId, competence, version])
+  @@index([operatorId, competence])
+}
+
+/// Importação de nova versão da planilha de custos: prévia (conteúdo já validado) → aplicada ou descartada.
+model PlatformCostImport {
+  id          String    @id @default(cuid())
+  operatorId  String
+  filename    String
+  sha256      String
+  bytes       Int
+  status      String    @default("PREVIEW") // PREVIEW | APPLIED | DISCARDED
+  parsed      Json
+  createdById String
+  createdAt   DateTime  @default(now())
+  decidedById String?
+  decidedAt   DateTime?
+  reason      String?
+
+  @@index([operatorId, createdAt])
+}

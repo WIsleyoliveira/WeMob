@@ -1,6 +1,6 @@
 import { requirePage } from "@/server/auth/current";
-import { getCostPlan } from "@/server/modules/costs/service";
-import { cancelCostActualAction, deactivateCostItemAction, recordCostActualAction, updateCostAssumptionsAction, upsertCostItemAction } from "@/app/actions/costs";
+import { costChangeHistory, getCostImport, getCostPlan, listBudgetVersions } from "@/server/modules/costs/service";
+import { applyCostImportAction, cancelCostActualAction, deactivateCostItemAction, discardCostImportAction, freezeBudgetAction, previewCostImportAction, recordCostActualAction, updateCostAssumptionsAction, upsertCostItemAction } from "@/app/actions/costs";
 import { COST_CATEGORIES, COST_CATEGORY_LABEL } from "@/domain/costs/platform";
 import { PageHeader } from "@/components/ui/page-header";
 import { Card, CardBody, CardHeader } from "@/components/ui/card";
@@ -17,11 +17,31 @@ export const dynamic = "force-dynamic";
 
 const p100 = (v: { toString(): string }) => String(+(Number(v.toString()) * 100).toFixed(4));
 
-export default async function CustosPlataformaPage({ searchParams }: { searchParams: Promise<{ postos?: string }> }) {
+const ACTION_LABEL: Record<string, string> = {
+  "platform_cost.assumptions_updated": "Premissas alteradas",
+  "platform_cost.item_updated": "Item alterado",
+  "platform_cost.item_created": "Item criado",
+  "platform_cost.item_deactivated": "Item retirado",
+  "platform_cost.actual_recorded": "Custo realizado lançado",
+  "platform_cost.actual_cancelled": "Lançamento cancelado",
+  "platform_cost.budget_frozen": "Orçamento do mês congelado",
+  "platform_cost.import_previewed": "Planilha enviada (prévia)",
+  "platform_cost.import_applied": "Planilha aplicada",
+  "platform_cost.import_discarded": "Importação descartada",
+  "platform_cost.exported": "Orçamento exportado",
+};
+const signed = (v: string | null) => (v === null ? "—" : `${Number(v) > 0 ? "+" : ""}${brl(v)}`);
+
+export default async function CustosPlataformaPage({ searchParams }: { searchParams: Promise<{ postos?: string; importacao?: string }> }) {
   const ctx = await requirePage("finance:read");
   const sp = await searchParams;
   const asked = sp.postos !== undefined && /^\d{1,4}$/.test(sp.postos) ? Number(sp.postos) : undefined;
-  const v = await getCostPlan(ctx, { stations: asked });
+  const [v, versions, changes, imp] = await Promise.all([
+    getCostPlan(ctx, { stations: asked }),
+    listBudgetVersions(ctx),
+    costChangeHistory(ctx),
+    sp.importacao && /^[a-z0-9]{20,40}$/.test(sp.importacao) ? getCostImport(ctx, sp.importacao).catch(() => null) : null,
+  ]);
   const canWrite = ctx.permissions.has("finance:write");
   const canExport = ctx.permissions.has("finance:export");
   const thisMonth = v.history[0];
@@ -128,7 +148,7 @@ export default async function CustosPlataformaPage({ searchParams }: { searchPar
       </div>
 
       <Card className="mb-6">
-        <CardHeader title="Realizado × orçado" description="Orçado com as premissas e postos atuais (o orçamento não é versionado por mês)." />
+        <CardHeader title="Realizado × orçado" description="Orçado do mês = versão congelada da competência; sem versão, as premissas atuais (marcado)." />
         <CardBody>
           <BarChart
             title="Custo realizado da plataforma"
@@ -141,11 +161,16 @@ export default async function CustosPlataformaPage({ searchParams }: { searchPar
           />
         </CardBody>
         <Table>
-          <thead><tr><th>Competência</th><th className="text-right">Orçado</th><th className="text-right">Realizado</th><th className="text-right">Diferença</th><th>Situação</th></tr></thead>
+          <thead><tr><th>Competência</th><th>Orçamento</th><th className="text-right">Orçado</th><th className="text-right">Δ mês anterior</th><th className="text-right">Realizado</th><th className="text-right">Δ mês anterior</th><th className="text-right">Diferença</th><th>Situação</th></tr></thead>
           <tbody>
             {v.history.slice(0, 6).map((h) => (
               <tr key={h.competence}>
-                <td>{h.competence}</td><td className="tabular text-right">{brl(h.budget)}</td><td className="tabular text-right">{h.actual ? brl(h.actual) : "—"}</td>
+                <td>{h.competence}</td>
+                <td className="text-xs">{h.budgetSource === "VERSION" ? <Badge tone="navy">versão {h.budgetVersion}</Badge> : <span className="text-navy-500">premissas atuais</span>}</td>
+                <td className="tabular text-right">{brl(h.budget)}</td>
+                <td className="tabular text-right text-xs text-navy-600">{signed(h.budgetDelta)}</td>
+                <td className="tabular text-right">{h.actual ? brl(h.actual) : "—"}</td>
+                <td className="tabular text-right text-xs text-navy-600">{signed(h.actualDelta)}</td>
                 <td className="tabular text-right">{h.variance ? brl(h.variance) : "—"}</td>
                 <td>{h.state === "OVER" ? <Badge tone="red">acima do orçado</Badge> : h.state === "WITHIN" ? <Badge tone="green">dentro</Badge> : <Badge>sem lançamento</Badge>}</td>
               </tr>
@@ -153,6 +178,84 @@ export default async function CustosPlataformaPage({ searchParams }: { searchPar
           </tbody>
         </Table>
         {thisMonth && <p className="px-5 py-3 text-xs text-navy-500">Mês atual ({thisMonth.competence}): {thisMonth.byCategory.length ? thisMonth.byCategory.map((c) => `${COST_CATEGORY_LABEL[c.category]} ${brl(c.amount)}`).join(" · ") : "nenhum lançamento"}.</p>}
+      </Card>
+
+      <div className="mb-6 grid gap-6 lg:grid-cols-2 [&>*]:min-w-0">
+        <Card>
+          <CardHeader title="Orçamento por competência" description="Congele o orçamento do mês: a comparação com o realizado passa a usar essa versão, mesmo que as premissas mudem depois." />
+          {canWrite && (
+            <CardBody>
+              <ActionForm action={freezeBudgetAction} submitLabel="Congelar orçamento do mês" variant="secondary" confirm="Congelar o orçamento com as premissas atuais? Uma versão anterior do mesmo mês fica como substituída (histórico mantido).">
+                <div className="grid gap-3 sm:grid-cols-3">
+                  <Field label="Competência" htmlFor="freeze-competence"><Input id="freeze-competence" name="competence" type="month" required defaultValue={v.history[0]?.competence} /></Field>
+                  <Field label="Postos considerados" htmlFor="freeze-stations" hint="Vazio = produção atual."><Input id="freeze-stations" name="stations" type="number" min={0} max={9999} /></Field>
+                  <Field label="Motivo" htmlFor="freeze-reason"><Input id="freeze-reason" name="reason" required minLength={5} maxLength={500} placeholder="Ex.: orçamento aprovado em reunião" /></Field>
+                </div>
+              </ActionForm>
+            </CardBody>
+          )}
+          <Table>
+            <thead><tr><th>Competência</th><th>Versão</th><th className="text-right">Postos</th><th className="text-right">Total/mês</th><th>Motivo</th></tr></thead>
+            <tbody>
+              {versions.length === 0 && <tr><td colSpan={5} className="text-navy-500">Nenhum mês congelado ainda: o realizado é comparado às premissas atuais.</td></tr>}
+              {versions.map((b) => (
+                <tr key={b.id} className={b.status === "SUPERSEDED" ? "text-navy-400" : undefined}>
+                  <td>{b.competence}</td><td>v{b.version} {b.status === "ACTIVE" ? <Badge tone="green">ativa</Badge> : <Badge>substituída</Badge>}</td>
+                  <td className="tabular text-right">{num(b.stations)}</td><td className="tabular text-right">{brl(b.totalMonthly.toString())}</td><td className="text-xs">{b.reason}</td>
+                </tr>
+              ))}
+            </tbody>
+          </Table>
+        </Card>
+
+        <Card id="importacao" className="scroll-mt-24">
+          <CardHeader title="Importar nova versão da planilha" description="Mesmo layout da WeMob_Custos_Mensais_Detalhados.xlsx. Só os valores de entrada são lidos (nenhuma fórmula é executada); você vê a diferença antes de aplicar." />
+          <CardBody className="space-y-4">
+            {canWrite && (
+              <ActionForm action={previewCostImportAction} submitLabel="Ler e pré-visualizar" variant="secondary">
+                <Field label="Planilha (.xlsx, até 1 MB)" htmlFor="file"><Input id="file" name="file" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required /></Field>
+              </ActionForm>
+            )}
+            {imp && (
+              <div className="rounded-lg border border-navy-200 p-4">
+                <p className="text-sm font-medium text-navy-900">{imp.import.filename} <span className="text-xs text-navy-500">· sha256 {imp.import.sha256.slice(0, 12)}… · {dateTime(imp.import.createdAt)}</span></p>
+                <p className="mt-1 text-sm text-navy-700">Total mensal com {imp.stations} posto(s): <b className="tabular">{brl(imp.current)}</b> → <b className="tabular">{brl(imp.next)}</b></p>
+                <ul className="mt-2 space-y-1 text-xs">
+                  {imp.diff.map((d) => (
+                    <li key={d.name} className="flex justify-between gap-2">
+                      <span>{d.name} {d.change === "NEW" ? <Badge tone="green">novo</Badge> : d.change === "CHANGED" ? <Badge tone="amber">alterado</Badge> : null}</span>
+                      <span className="tabular text-navy-600">{d.before && d.change !== "SAME" ? `${brl(d.before.baseMonthly)} → ` : ""}{brl(d.after.baseMonthly)} · {pct(d.after.fxExposure, 0)} dólar</span>
+                    </li>
+                  ))}
+                  {imp.removed.map((n) => <li key={n} className="text-red-700">{n} <Badge tone="red">sai do orçamento</Badge></li>)}
+                </ul>
+                <p className="mt-2 text-xs text-navy-600">Premissas: câmbio {pct(imp.data.assumptions.fxStressRate, 0)} · reserva {pct(imp.data.assumptions.reserveRate, 0)} · por posto {brl(imp.data.assumptions.perStationCost)} + {brl(imp.data.assumptions.perStationReserve)}</p>
+                {imp.import.status === "PREVIEW" && canWrite ? (
+                  <div className="mt-3 flex flex-wrap items-end gap-3">
+                    <ActionForm action={applyCostImportAction} submitLabel="Aplicar ao orçamento" confirm="Aplicar esta versão da planilha? Itens e premissas atuais serão substituídos (meses já congelados não mudam).">
+                      <input type="hidden" name="id" value={imp.import.id} />
+                      <Field label="Motivo" htmlFor="import-reason"><Input id="import-reason" name="reason" required minLength={5} maxLength={300} placeholder="Ex.: revisão de fornecedores de novembro" /></Field>
+                    </ActionForm>
+                    <ActionForm action={discardCostImportAction} submitLabel="Descartar" variant="secondary"><input type="hidden" name="id" value={imp.import.id} /></ActionForm>
+                  </div>
+                ) : (
+                  <p className="mt-3 text-xs font-medium text-navy-700">Situação: {imp.import.status === "APPLIED" ? "aplicada" : imp.import.status === "DISCARDED" ? "descartada" : "prévia"}</p>
+                )}
+              </div>
+            )}
+          </CardBody>
+        </Card>
+      </div>
+
+      <Card className="mb-6">
+        <CardHeader title="Histórico de alterações" description="Quem mudou o quê no orçamento (auditoria)." />
+        <Table>
+          <thead><tr><th>Quando</th><th>Quem</th><th>O quê</th></tr></thead>
+          <tbody>
+            {changes.length === 0 && <tr><td colSpan={3} className="text-navy-500">Nenhuma alteração registrada.</td></tr>}
+            {changes.map((c) => <tr key={c.id}><td className="text-xs">{dateTime(c.createdAt)}</td><td className="text-xs">{c.actorName}</td><td className="text-sm">{ACTION_LABEL[c.action] ?? c.action}</td></tr>)}
+          </tbody>
+        </Table>
       </Card>
 
       {v.entries.length > 0 && (

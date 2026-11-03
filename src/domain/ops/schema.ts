@@ -4,7 +4,7 @@
  *
  * LATEST_MIGRATION precisa ser a última pasta de `prisma/migrations` (garantido por tests/unit/schema-status.test.ts).
  */
-export const LATEST_MIGRATION = "20261103180000_platform_costs";
+export const LATEST_MIGRATION = "20261103200000_cost_budget_versions";
 
 export interface MigrationRow {
   migration_name: string;
