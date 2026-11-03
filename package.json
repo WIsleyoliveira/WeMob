@@ -23,7 +23,8 @@
     "e2e:rotas": "tsx --import ./scripts/load-env.mjs scripts/e2e-rotas.ts",
     "db:status": "prisma migrate status",
     "e2e:build": "node scripts/build-dist.mjs .next-e2e",
-    "e2e:browser": "tsx --import ./scripts/load-env.mjs scripts/e2e-browser.ts"
+    "e2e:browser": "tsx --import ./scripts/load-env.mjs scripts/e2e-browser.ts",
+    "db:backup:verificar": "tsx --import ./scripts/load-env.mjs scripts/backup-verify.ts"
   },
   "dependencies": {
     "@prisma/client": "^6.16.2",
